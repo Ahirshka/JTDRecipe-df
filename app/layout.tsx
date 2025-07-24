@@ -3,15 +3,15 @@ import type { Metadata } from "next"
 import { Inter } from "next/font/google"
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
-import { Toaster } from "@/components/ui/toaster"
+import { Toaster } from "@/components/ui/sonner"
 import { AuthProvider } from "@/contexts/auth-context"
 
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
   title: "Just The Damn Recipe",
-  description: "Simple recipes without the life stories - just the damn recipe!",
-  keywords: ["recipes", "cooking", "food", "simple", "quick"],
+  description: "Simple, straightforward recipes without the life stories",
+  keywords: "recipes, cooking, food, simple recipes, quick meals",
   authors: [{ name: "Aaron Hirshka" }],
   creator: "Aaron Hirshka",
   publisher: "Just The Damn Recipe",
@@ -19,6 +19,43 @@ export const metadata: Metadata = {
     email: false,
     address: false,
     telephone: false,
+  },
+  metadataBase: new URL("https://www.justhtedamnrecipe.net"),
+  openGraph: {
+    title: "Just The Damn Recipe",
+    description: "Simple, straightforward recipes without the life stories",
+    url: "https://www.justhtedamnrecipe.net",
+    siteName: "Just The Damn Recipe",
+    images: [
+      {
+        url: "/placeholder-logo.png",
+        width: 1200,
+        height: 630,
+        alt: "Just The Damn Recipe",
+      },
+    ],
+    locale: "en_US",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Just The Damn Recipe",
+    description: "Simple, straightforward recipes without the life stories",
+    images: ["/placeholder-logo.png"],
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
+  verification: {
+    google: "your-google-verification-code",
   },
     generator: 'v0.dev'
 }

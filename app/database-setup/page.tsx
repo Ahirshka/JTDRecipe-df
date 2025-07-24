@@ -3,266 +3,268 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Loader2, Database, Users, ChefHat, MessageSquare, Star, Trash2 } from "lucide-react"
-
-interface DatabaseStatus {
-  success: boolean
-  message: string
-  data?: {
-    users: number
-    approvedRecipes: number
-    pendingRecipes: number
-    comments: number
-    ratings: number
-    flaggedComments: number
-  }
-}
+import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
+import {
+  AlertCircle,
+  Database,
+  Users,
+  ChefHat,
+  MessageSquare,
+  Trash2,
+  SproutIcon as Seedling,
+  CheckCircle,
+} from "lucide-react"
 
 export default function DatabaseSetupPage() {
-  const [isInitializing, setIsInitializing] = useState(false)
-  const [isSeeding, setIsSeeding] = useState(false)
-  const [isClearing, setIsClearing] = useState(false)
-  const [initStatus, setInitStatus] = useState<DatabaseStatus | null>(null)
-  const [seedStatus, setSeedStatus] = useState<DatabaseStatus | null>(null)
-  const [clearStatus, setClearStatus] = useState<DatabaseStatus | null>(null)
+  const [status, setStatus] = useState<string>("")
+  const [loading, setLoading] = useState<string>("")
+  const [results, setResults] = useState<any>(null)
 
-  const handleInitialize = async () => {
-    setIsInitializing(true)
-    setInitStatus(null)
+  const handleInitDatabase = async () => {
+    setLoading("init")
+    setStatus("Initializing database...")
 
     try {
-      const response = await fetch("/api/init-db", { method: "POST" })
-      const result = await response.json()
-      setInitStatus(result)
-    } catch (error) {
-      setInitStatus({
-        success: false,
-        message: "Failed to connect to initialization endpoint",
+      const response = await fetch("/api/init-db", {
+        method: "POST",
       })
+      const result = await response.json()
+
+      if (result.success) {
+        setStatus("✅ Database initialized successfully!")
+        setResults(result.data)
+      } else {
+        setStatus(`❌ Initialization failed: ${result.message}`)
+      }
+    } catch (error) {
+      setStatus(`❌ Error: ${error instanceof Error ? error.message : "Unknown error"}`)
     } finally {
-      setIsInitializing(false)
+      setLoading("")
     }
   }
 
   const handleSeedDatabase = async () => {
-    setIsSeeding(true)
-    setSeedStatus(null)
+    setLoading("seed")
+    setStatus("Seeding database with sample data...")
 
     try {
-      const response = await fetch("/api/seed-database", { method: "POST" })
-      const result = await response.json()
-      setSeedStatus(result)
-    } catch (error) {
-      setSeedStatus({
-        success: false,
-        message: "Failed to connect to seeding endpoint",
+      const response = await fetch("/api/seed-database", {
+        method: "POST",
       })
+      const result = await response.json()
+
+      if (result.success) {
+        setStatus("✅ Database seeded successfully!")
+        setResults(result.data)
+      } else {
+        setStatus(`❌ Seeding failed: ${result.message}`)
+      }
+    } catch (error) {
+      setStatus(`❌ Error: ${error instanceof Error ? error.message : "Unknown error"}`)
     } finally {
-      setIsSeeding(false)
+      setLoading("")
     }
   }
 
   const handleClearDatabase = async () => {
-    if (!confirm("Are you sure you want to clear all data? This cannot be undone.")) {
+    if (!confirm("Are you sure? This will delete all data except the owner account.")) {
       return
     }
 
-    setIsClearing(true)
-    setClearStatus(null)
+    setLoading("clear")
+    setStatus("Clearing database...")
 
     try {
-      const response = await fetch("/api/clear-database", { method: "POST" })
-      const result = await response.json()
-      setClearStatus(result)
-    } catch (error) {
-      setClearStatus({
-        success: false,
-        message: "Failed to connect to clearing endpoint",
+      const response = await fetch("/api/clear-database", {
+        method: "POST",
       })
+      const result = await response.json()
+
+      if (result.success) {
+        setStatus("✅ Database cleared successfully!")
+        setResults(result.data)
+      } else {
+        setStatus(`❌ Clear failed: ${result.message}`)
+      }
+    } catch (error) {
+      setStatus(`❌ Error: ${error instanceof Error ? error.message : "Unknown error"}`)
     } finally {
-      setIsClearing(false)
+      setLoading("")
+    }
+  }
+
+  const handleAutoInit = async () => {
+    setLoading("auto")
+    setStatus("Running auto-initialization...")
+
+    try {
+      const response = await fetch("/api/auto-init", {
+        method: "POST",
+      })
+      const result = await response.json()
+
+      if (result.success) {
+        setStatus("✅ Auto-initialization completed!")
+        setResults(result.data)
+      } else {
+        setStatus(`❌ Auto-init failed: ${result.message}`)
+      }
+    } catch (error) {
+      setStatus(`❌ Error: ${error instanceof Error ? error.message : "Unknown error"}`)
+    } finally {
+      setLoading("")
     }
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12">
-      <div className="max-w-4xl mx-auto px-4">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Database Management</h1>
-          <p className="text-gray-600">Initialize, seed, or clear your recipe database</p>
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 to-red-50 p-4">
+      <div className="max-w-4xl mx-auto space-y-6">
+        <div className="text-center space-y-2">
+          <h1 className="text-3xl font-bold text-gray-900">Database Setup</h1>
+          <p className="text-gray-600">Initialize and manage your recipe database</p>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-1 lg:grid-cols-3">
-          {/* Initialize Database */}
+        <div className="grid md:grid-cols-2 gap-6">
+          {/* Database Operations */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Database className="h-5 w-5" />
-                Initialize Database
+                Database Operations
               </CardTitle>
-              <CardDescription>Create database tables and owner account</CardDescription>
+              <CardDescription>Initialize, seed, or clear your database</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Button onClick={handleInitialize} disabled={isInitializing} className="w-full">
-                {isInitializing ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Initializing...
-                  </>
-                ) : (
-                  "Initialize Database"
-                )}
+              <Button onClick={handleAutoInit} disabled={loading === "auto"} className="w-full" variant="default">
+                <CheckCircle className="h-4 w-4 mr-2" />
+                {loading === "auto" ? "Running..." : "Auto-Initialize (Recommended)"}
               </Button>
 
-              {initStatus && (
-                <Alert className={initStatus.success ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}>
-                  <AlertDescription className={initStatus.success ? "text-green-800" : "text-red-800"}>
-                    {initStatus.message}
-                  </AlertDescription>
-                </Alert>
-              )}
-            </CardContent>
-          </Card>
+              <Separator />
 
-          {/* Seed Database */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ChefHat className="h-5 w-5" />
-                Seed Sample Data
-              </CardTitle>
-              <CardDescription>Add sample users, recipes, and comments for testing</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
               <Button
-                onClick={handleSeedDatabase}
-                disabled={isSeeding}
+                onClick={handleInitDatabase}
+                disabled={loading === "init"}
                 className="w-full bg-transparent"
                 variant="outline"
               >
-                {isSeeding ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Seeding...
-                  </>
-                ) : (
-                  "Seed Database"
-                )}
+                <Database className="h-4 w-4 mr-2" />
+                {loading === "init" ? "Initializing..." : "Initialize Database"}
               </Button>
 
-              {seedStatus && (
-                <Alert className={seedStatus.success ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}>
-                  <AlertDescription className={seedStatus.success ? "text-green-800" : "text-red-800"}>
-                    {seedStatus.message}
-                  </AlertDescription>
-                </Alert>
-              )}
+              <Button
+                onClick={handleSeedDatabase}
+                disabled={loading === "seed"}
+                className="w-full bg-transparent"
+                variant="outline"
+              >
+                <Seedling className="h-4 w-4 mr-2" />
+                {loading === "seed" ? "Seeding..." : "Seed Sample Data"}
+              </Button>
 
-              {seedStatus?.success && seedStatus.data && (
-                <div className="mt-4 space-y-2 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-1">
-                      <Users className="h-4 w-4" />
-                      Users
-                    </span>
-                    <span className="font-medium">{seedStatus.data.users}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-1">
-                      <ChefHat className="h-4 w-4" />
-                      Approved Recipes
-                    </span>
-                    <span className="font-medium">{seedStatus.data.approvedRecipes}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-1">
-                      <Database className="h-4 w-4" />
-                      Pending Recipes
-                    </span>
-                    <span className="font-medium">{seedStatus.data.pendingRecipes}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-1">
-                      <MessageSquare className="h-4 w-4" />
-                      Comments
-                    </span>
-                    <span className="font-medium">{seedStatus.data.comments}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-1">
-                      <Star className="h-4 w-4" />
-                      Ratings
-                    </span>
-                    <span className="font-medium">{seedStatus.data.ratings}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-red-600">
-                    <span className="flex items-center gap-1">
-                      <MessageSquare className="h-4 w-4" />
-                      Flagged Comments
-                    </span>
-                    <span className="font-medium">{seedStatus.data.flaggedComments}</span>
-                  </div>
-                </div>
-              )}
+              <Button
+                onClick={handleClearDatabase}
+                disabled={loading === "clear"}
+                className="w-full"
+                variant="destructive"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                {loading === "clear" ? "Clearing..." : "Clear Database"}
+              </Button>
             </CardContent>
           </Card>
 
-          {/* Clear Database */}
+          {/* Sample Data Info */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Trash2 className="h-5 w-5" />
-                Clear Database
+                <Seedling className="h-5 w-5" />
+                Sample Data Includes
               </CardTitle>
-              <CardDescription>Remove all data from the database (destructive)</CardDescription>
+              <CardDescription>What gets created when you seed the database</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Button onClick={handleClearDatabase} disabled={isClearing} className="w-full" variant="destructive">
-                {isClearing ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Clearing...
-                  </>
-                ) : (
-                  "Clear All Data"
-                )}
-              </Button>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Users className="h-4 w-4" />
+                  <span>Sample Users</span>
+                </div>
+                <Badge variant="secondary">7 users</Badge>
+              </div>
 
-              {clearStatus && (
-                <Alert className={clearStatus.success ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}>
-                  <AlertDescription className={clearStatus.success ? "text-green-800" : "text-red-800"}>
-                    {clearStatus.message}
-                  </AlertDescription>
-                </Alert>
-              )}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <ChefHat className="h-4 w-4" />
+                  <span>Approved Recipes</span>
+                </div>
+                <Badge variant="secondary">5 recipes</Badge>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>Pending Recipes</span>
+                </div>
+                <Badge variant="secondary">3 recipes</Badge>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <MessageSquare className="h-4 w-4" />
+                  <span>Comments</span>
+                </div>
+                <Badge variant="secondary">8 comments</Badge>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 text-red-500" />
+                  <span>Flagged Comments</span>
+                </div>
+                <Badge variant="destructive">3 flagged</Badge>
+              </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Instructions */}
-        <Card className="mt-8">
+        {/* Status Display */}
+        {status && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Status</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="font-mono text-sm">{status}</p>
+
+              {results && (
+                <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+                  <pre className="text-sm overflow-auto">{JSON.stringify(results, null, 2)}</pre>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Owner Account Info */}
+        <Card>
           <CardHeader>
-            <CardTitle>Setup Instructions</CardTitle>
+            <CardTitle>Owner Account</CardTitle>
+            <CardDescription>Default owner account created during initialization</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent>
             <div className="space-y-2">
-              <h3 className="font-semibold">1. Initialize Database</h3>
-              <p className="text-sm text-gray-600">
-                Creates all necessary database tables and the owner account (aaronhirshka@gmail.com / Morton2121)
+              <p>
+                <strong>Email:</strong> aaronhirshka@gmail.com
               </p>
-            </div>
-            <div className="space-y-2">
-              <h3 className="font-semibold">2. Seed Sample Data</h3>
-              <p className="text-sm text-gray-600">
-                Adds sample users, approved recipes, pending recipes for moderation, comments, ratings, and flagged
-                comments for testing the admin panel
+              <p>
+                <strong>Password:</strong> Morton2121
               </p>
-            </div>
-            <div className="space-y-2">
-              <h3 className="font-semibold">3. Test the System</h3>
+              <p>
+                <strong>Role:</strong> Owner (Full Admin Access)
+              </p>
               <p className="text-sm text-gray-600">
-                Login as owner, test recipe submission, user management, and comment moderation features
+                Use these credentials to access the admin panel at <code>/admin</code>
               </p>
             </div>
           </CardContent>

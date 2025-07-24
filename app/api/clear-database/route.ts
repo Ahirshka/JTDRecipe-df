@@ -1,39 +1,53 @@
-import { NextResponse } from "next/server"
-import { sql } from "@/lib/neon"
+import { type NextRequest, NextResponse } from "next/server"
+import { neon } from "@neondatabase/serverless"
 
-export async function POST() {
+const sql = neon(process.env.DATABASE_URL!)
+
+export async function POST(request: NextRequest) {
   try {
-    console.log("🗑️ Clearing database...")
+    console.log("🗑️ Starting database cleanup...")
 
-    // Clear all data in correct order (respecting foreign key constraints)
-    await sql`DELETE FROM ratings`
+    // Clear all data except owner account
     await sql`DELETE FROM comments`
-    await sql`DELETE FROM recipes`
-    await sql`DELETE FROM user_sessions`
-    await sql`DELETE FROM users`
+    await sql`DELETE FROM recipes WHERE user_id != 1`
+    await sql`DELETE FROM users WHERE id != 1`
 
     // Reset sequences
-    await sql`ALTER SEQUENCE users_id_seq RESTART WITH 1`
-    await sql`ALTER SEQUENCE recipes_id_seq RESTART WITH 1`
-    await sql`ALTER SEQUENCE comments_id_seq RESTART WITH 1`
-    await sql`ALTER SEQUENCE ratings_id_seq RESTART WITH 1`
-    await sql`ALTER SEQUENCE user_sessions_id_seq RESTART WITH 1`
+    await sql`SELECT setval('users_id_seq', (SELECT MAX(id) FROM users))`
+    await sql`SELECT setval('recipes_id_seq', (SELECT MAX(id) FROM recipes))`
+    await sql`SELECT setval('comments_id_seq', (SELECT MAX(id) FROM comments))`
 
-    console.log("✅ Database cleared successfully")
+    console.log("✅ Database cleared successfully!")
 
     return NextResponse.json({
       success: true,
-      message: "Database cleared successfully",
+      message: "Database cleared (owner account preserved)",
+      data: {
+        preserved: "Owner account and any owner recipes",
+        cleared: "All other users, recipes, and comments",
+      },
     })
   } catch (error) {
-    console.error("Database clearing error:", error)
+    console.error("❌ Database cleanup failed:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Failed to clear database",
-        details: error instanceof Error ? error.message : "Unknown error",
+        message: "Failed to clear database",
+        error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )
   }
+}
+
+export async function GET() {
+  return NextResponse.json({
+    message: "Use POST to clear all database data (except owner)",
+    warning: "This action is destructive and cannot be undone",
+    endpoints: {
+      clear: "POST /api/clear-database",
+      seed: "POST /api/seed-database",
+      init: "POST /api/init-db",
+    },
+  })
 }

@@ -1,28 +1,51 @@
-import { NextResponse } from "next/server"
-import { autoInitializeDatabase } from "@/lib/auto-init"
+import { type NextRequest, NextResponse } from "next/server"
+import { initializeDatabase, checkDatabaseStatus } from "@/lib/auto-init"
 
-export async function GET() {
+export async function POST(request: NextRequest) {
   try {
-    const success = await autoInitializeDatabase()
+    console.log("🚀 Auto-initialization requested...")
 
-    return NextResponse.json({
-      success,
-      message: success ? "Database auto-initialized successfully" : "Database auto-initialization failed",
-      timestamp: new Date().toISOString(),
-    })
+    // First check if already initialized
+    const status = await checkDatabaseStatus()
+
+    if (status.initialized) {
+      console.log("✅ Database already initialized")
+      return NextResponse.json({
+        success: true,
+        message: "Database already initialized",
+        data: status.data,
+      })
+    }
+
+    // Initialize the database
+    const result = await initializeDatabase()
+
+    return NextResponse.json(result)
   } catch (error) {
+    console.error("❌ Auto-initialization failed:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Auto-initialization failed",
-        details: error instanceof Error ? error.message : "Unknown error",
-        timestamp: new Date().toISOString(),
+        message: "Auto-initialization failed",
+        error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )
   }
 }
 
-export async function POST() {
-  return GET() // Same logic for POST requests
+export async function GET() {
+  try {
+    const status = await checkDatabaseStatus()
+    return NextResponse.json(status)
+  } catch (error) {
+    return NextResponse.json(
+      {
+        initialized: false,
+        message: "Failed to check database status",
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    )
+  }
 }
