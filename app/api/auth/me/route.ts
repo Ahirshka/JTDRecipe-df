@@ -3,11 +3,23 @@ import { getCurrentUser } from "@/lib/server-auth"
 
 export async function GET() {
   try {
+    console.log("🔍 Checking authentication status...")
+
     const user = await getCurrentUser()
 
     if (!user) {
-      return NextResponse.json({ success: false, error: "Not authenticated" }, { status: 401 })
+      console.log("❌ No authenticated user found")
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Not authenticated",
+          user: null,
+        },
+        { status: 401 },
+      )
     }
+
+    console.log(`✅ Authenticated user: ${user.username}`)
 
     return NextResponse.json({
       success: true,
@@ -16,13 +28,21 @@ export async function GET() {
         username: user.username,
         email: user.email,
         role: user.role,
-        avatar: user.avatar,
+        status: user.status,
         is_verified: user.is_verified,
+        avatar_url: user.avatar_url,
         created_at: user.created_at,
       },
     })
   } catch (error) {
-    console.error("Get current user error:", error)
-    return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 })
+    console.error("❌ Auth check error:", error)
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Authentication check failed",
+        user: null,
+      },
+      { status: 500 },
+    )
   }
 }

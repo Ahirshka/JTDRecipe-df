@@ -73,35 +73,90 @@ export async function POST(request: NextRequest) {
     console.log("🔍 Creating new recipe...")
     await initializeDatabase()
 
-    // Get authenticated user
+    // Get authenticated user using server-side auth
     const user = await getCurrentUser()
     if (!user) {
       console.log("❌ No authenticated user found")
-      return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Authentication required. Please log in to submit recipes.",
+        },
+        { status: 401 },
+      )
     }
 
     console.log(`✅ Authenticated user: ${user.username} (ID: ${user.id})`)
 
     // Parse request body
     const body = await request.json()
-    console.log("📝 Recipe data received:", body)
+    console.log("📝 Recipe data received:", {
+      title: body.title,
+      category: body.category,
+      difficulty: body.difficulty,
+      ingredientCount: Array.isArray(body.ingredients) ? body.ingredients.length : 0,
+      instructionCount: Array.isArray(body.instructions) ? body.instructions.length : 0,
+    })
 
     // Validate required fields
     const requiredFields = ["title", "category", "difficulty", "ingredients", "instructions"]
     for (const field of requiredFields) {
       if (!body[field]) {
         console.log(`❌ Missing required field: ${field}`)
-        return NextResponse.json({ success: false, error: `Missing required field: ${field}` }, { status: 400 })
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Missing required field: ${field}`,
+          },
+          { status: 400 },
+        )
       }
     }
 
-    // Validate ingredients and instructions arrays
-    if (!Array.isArray(body.ingredients) || body.ingredients.length === 0) {
-      return NextResponse.json({ success: false, error: "At least one ingredient is required" }, { status: 400 })
+    // Parse ingredients and instructions if they're strings
+    let ingredients = body.ingredients
+    let instructions = body.instructions
+
+    if (typeof ingredients === "string") {
+      ingredients = ingredients
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line, index) => ({
+          ingredient: line.trim(),
+          amount: "",
+          unit: "",
+        }))
     }
 
-    if (!Array.isArray(body.instructions) || body.instructions.length === 0) {
-      return NextResponse.json({ success: false, error: "At least one instruction is required" }, { status: 400 })
+    if (typeof instructions === "string") {
+      instructions = instructions
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line, index) => ({
+          instruction: line.trim(),
+          step_number: index + 1,
+        }))
+    }
+
+    // Validate ingredients and instructions arrays
+    if (!Array.isArray(ingredients) || ingredients.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "At least one ingredient is required",
+        },
+        { status: 400 },
+      )
+    }
+
+    if (!Array.isArray(instructions) || instructions.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "At least one instruction is required",
+        },
+        { status: 400 },
+      )
     }
 
     // Generate unique recipe ID
@@ -138,15 +193,16 @@ export async function POST(request: NextRequest) {
 
       // Insert ingredients
       console.log("🥕 Inserting ingredients...")
-      for (const ingredient of body.ingredients) {
-        if (ingredient.ingredient && ingredient.ingredient.trim()) {
+      for (const ingredient of ingredients) {
+        const ingredientText = typeof ingredient === "string" ? ingredient : ingredient.ingredient
+        if (ingredientText && ingredientText.trim()) {
           await sql`
             INSERT INTO recipe_ingredients (recipe_id, ingredient, amount, unit)
             VALUES (
               ${recipeId}, 
-              ${ingredient.ingredient.trim()}, 
-              ${ingredient.amount || ""}, 
-              ${ingredient.unit || ""}
+              ${ingredientText.trim()}, 
+              ${typeof ingredient === "object" ? ingredient.amount || "" : ""}, 
+              ${typeof ingredient === "object" ? ingredient.unit || "" : ""}
             )
           `
         }
@@ -154,14 +210,16 @@ export async function POST(request: NextRequest) {
 
       // Insert instructions
       console.log("📋 Inserting instructions...")
-      for (const instruction of body.instructions) {
-        if (instruction.instruction && instruction.instruction.trim()) {
+      for (let i = 0; i < instructions.length; i++) {
+        const instruction = instructions[i]
+        const instructionText = typeof instruction === "string" ? instruction : instruction.instruction
+        if (instructionText && instructionText.trim()) {
           await sql`
             INSERT INTO recipe_instructions (recipe_id, instruction, step_number)
             VALUES (
               ${recipeId}, 
-              ${instruction.instruction.trim()}, 
-              ${instruction.step_number || 1}
+              ${instructionText.trim()}, 
+              ${i + 1}
             )
           `
         }
@@ -183,48 +241,15 @@ export async function POST(request: NextRequest) {
 
     console.log("✅ Recipe created successfully and sent for moderation")
 
-    // Fetch the created recipe with all details for response
-    const createdRecipe = await sql`
-      SELECT 
-        r.*,
-        u.username as author_username,
-        COALESCE(
-          json_agg(
-            DISTINCT jsonb_build_object(
-              'ingredient', ri.ingredient,
-              'amount', ri.amount,
-              'unit', ri.unit
-            )
-          ) FILTER (WHERE ri.ingredient IS NOT NULL), 
-          '[]'::json
-        ) as ingredients,
-        COALESCE(
-          json_agg(
-            DISTINCT jsonb_build_object(
-              'instruction', inst.instruction,
-              'step_number', inst.step_number
-            )
-            ORDER BY inst.step_number
-          ) FILTER (WHERE inst.instruction IS NOT NULL), 
-          '[]'::json
-        ) as instructions,
-        COALESCE(
-          array_agg(DISTINCT rt.tag) FILTER (WHERE rt.tag IS NOT NULL), 
-          ARRAY[]::text[]
-        ) as tags
-      FROM recipes r
-      JOIN users u ON r.author_id = u.id
-      LEFT JOIN recipe_ingredients ri ON r.id = ri.recipe_id
-      LEFT JOIN recipe_instructions inst ON r.id = inst.recipe_id
-      LEFT JOIN recipe_tags rt ON r.id = rt.recipe_id
-      WHERE r.id = ${recipeId}
-      GROUP BY r.id, u.username
-    `
-
     return NextResponse.json({
       success: true,
       message: "Recipe submitted successfully and is pending moderation",
-      recipe: createdRecipe[0] || { id: recipeId, title: body.title, moderation_status: "pending" },
+      recipe: {
+        id: recipeId,
+        title: body.title,
+        moderation_status: "pending",
+        author_username: user.username,
+      },
     })
   } catch (error) {
     console.error("❌ Error creating recipe:", error)
