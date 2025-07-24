@@ -1,91 +1,73 @@
 "use client"
 
 import type React from "react"
+
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { ChefHat, ArrowRight, Lock } from "lucide-react"
-import { useAuth } from "@/contexts/auth-context"
+import { Eye, EyeOff, Mail, Lock } from "lucide-react"
 
 export default function LoginPage() {
-  const [formData, setFormData] = useState({
-    email: "",
-    password: "",
-  })
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [showPassword, setShowPassword] = useState(false)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
-  const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
-  const { login } = useAuth()
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }))
-    setError("")
-  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setLoading(true)
     setError("")
-    setIsLoading(true)
 
-    if (!formData.email || !formData.password) {
-      setError("Email and password are required")
-      setIsLoading(false)
-      return
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({ email, password }),
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        // Redirect based on user role
+        if (data.user.role === "admin" || data.user.role === "owner") {
+          router.push("/admin")
+        } else {
+          router.push("/")
+        }
+      } else {
+        setError(data.error || "Login failed")
+      }
+    } catch (error) {
+      console.error("Login error:", error)
+      setError("An error occurred during login")
+    } finally {
+      setLoading(false)
     }
-
-    console.log("Submitting login form for:", formData.email)
-
-    const result = await login(formData.email, formData.password)
-
-    if (result.success) {
-      console.log("Login successful, redirecting to home")
-      router.push("/")
-    } else {
-      console.log("Login failed:", result.error)
-      setError(result.error || "Login failed")
-    }
-
-    setIsLoading(false)
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-orange-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-4xl grid md:grid-cols-2 gap-8 items-center">
-        {/* Welcome Back Section */}
-        <div className="space-y-6 text-center md:text-left">
-          <div className="space-y-4">
-            <div className="flex items-center justify-center md:justify-start space-x-2">
-              <ChefHat className="h-8 w-8 text-orange-500" />
-              <h1 className="text-4xl font-bold text-gray-900">Welcome Back, Chef! 👨‍🍳</h1>
-            </div>
-            <p className="text-xl text-gray-600">Continue your culinary journey and discover new flavors</p>
-          </div>
-
-          <div className="bg-white/50 backdrop-blur-sm rounded-2xl p-6 border border-gray-200">
-            <h3 className="font-semibold text-gray-900 mb-3">Ready to cook something amazing?</h3>
-            <p className="text-gray-600 mb-4">
-              Access your saved recipes, continue where you left off, and explore new culinary adventures.
-            </p>
-            <div className="flex items-center space-x-2 text-sm text-orange-600">
-              <Lock className="h-4 w-4" />
-              <span>Your account is secure and your recipes are waiting</span>
-            </div>
-          </div>
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 to-red-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-8">
+          <Link href="/" className="text-3xl font-bold text-orange-600">
+            JTDRecipe
+          </Link>
+          <p className="text-gray-600 mt-2">Welcome back to Just The Damn Recipe</p>
         </div>
 
-        {/* Login Form */}
-        <Card className="w-full max-w-md mx-auto shadow-xl border-0">
-          <CardHeader className="space-y-1 text-center">
-            <CardTitle className="text-2xl font-bold">Sign In</CardTitle>
+        <Card>
+          <CardHeader>
+            <CardTitle>Sign In</CardTitle>
             <CardDescription>Enter your credentials to access your account</CardDescription>
           </CardHeader>
           <CardContent>
@@ -98,60 +80,60 @@ export default function LoginPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  name="email"
-                  type="email"
-                  placeholder="your@email.com"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  required
-                />
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="Enter your email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="pl-10"
+                    required
+                  />
+                </div>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  name="password"
-                  type="password"
-                  placeholder="Enter your password"
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  required
-                />
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                  <Input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="pl-10 pr-10"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
-              <div className="text-right">
-                <Link href="/forgot-password" className="text-sm text-orange-500 hover:text-orange-600">
-                  Forgot your password?
-                </Link>
-              </div>
-
-              <Button
-                type="submit"
-                className="w-full bg-orange-500 hover:bg-orange-600 text-white font-semibold py-2 px-4 rounded-lg transition-all duration-200"
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  "Signing In..."
-                ) : (
-                  <div className="flex items-center justify-center space-x-2">
-                    <span>Sign In</span>
-                    <ArrowRight className="h-4 w-4" />
-                  </div>
-                )}
+              <Button type="submit" className="w-full" disabled={loading}>
+                {loading ? "Signing in..." : "Sign In"}
               </Button>
             </form>
-          </CardContent>
-          <CardFooter className="text-center">
-            <p className="text-sm text-gray-600">
-              New to our community?{" "}
-              <Link href="/signup" className="text-orange-500 hover:text-orange-600 font-medium">
-                Join us today!
+
+            <div className="mt-6 text-center space-y-2">
+              <Link href="/forgot-password" className="text-sm text-orange-600 hover:underline">
+                Forgot your password?
               </Link>
-            </p>
-          </CardFooter>
+              <p className="text-sm text-gray-600">
+                Don't have an account?{" "}
+                <Link href="/signup" className="text-orange-600 hover:underline">
+                  Sign up
+                </Link>
+              </p>
+            </div>
+          </CardContent>
         </Card>
       </div>
     </div>

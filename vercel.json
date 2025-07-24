@@ -1,12 +1,22 @@
 {
+  "buildCommand": "pnpm build",
+  "devCommand": "pnpm dev",
+  "installCommand": "pnpm install",
   "framework": "nextjs",
-  "buildCommand": "npm run build",
-  "devCommand": "npm run dev",
-  "installCommand": "npm install",
-  "outputDirectory": ".next",
   "functions": {
-    "app/api/**/*.ts": {
+    "app/api/auto-init/route.ts": {
       "maxDuration": 30
+    },
+    "app/api/init-db/route.ts": {
+      "maxDuration": 30
+    }
+  },
+  "env": {
+    "DATABASE_URL": "@database_url"
+  },
+  "build": {
+    "env": {
+      "DATABASE_URL": "@database_url"
     }
   }
 }

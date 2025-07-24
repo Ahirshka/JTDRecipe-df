@@ -2,6 +2,8 @@ import { type NextRequest, NextResponse } from "next/server"
 import { sql } from "@/lib/neon"
 import jwt from "jsonwebtoken"
 
+const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
+
 export async function GET(request: NextRequest) {
   try {
     // Check authentication
@@ -12,7 +14,7 @@ export async function GET(request: NextRequest) {
 
     let adminUserId: number
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || "fallback-secret") as { userId: number }
+      const decoded = jwt.verify(token, JWT_SECRET) as { userId: number }
       adminUserId = decoded.userId
     } catch {
       return NextResponse.json({ success: false, error: "Invalid token" }, { status: 401 })
@@ -35,9 +37,9 @@ export async function GET(request: NextRequest) {
 
     // Build query with filters
     let query = `
-      SELECT id, username, email, role, is_verified, created_at, 
-             COALESCE(status, 'active') as status,
-             COALESCE(last_login_at, created_at) as last_login_at
+      SELECT id, username, email, role, is_verified, is_profile_verified, avatar_url, 
+             created_at, updated_at, last_login_at,
+             COALESCE(status, 'active') as status
       FROM users 
       WHERE 1=1
     `
@@ -64,7 +66,19 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      users: users,
+      users: users.map((user: any) => ({
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        status: user.status || "active",
+        is_verified: user.is_verified,
+        is_profile_verified: user.is_profile_verified,
+        avatar_url: user.avatar_url,
+        created_at: user.created_at,
+        updated_at: user.updated_at,
+        last_login_at: user.last_login_at || user.created_at,
+      })),
     })
   } catch (error) {
     console.error("Get users error:", error)
@@ -82,7 +96,7 @@ export async function PATCH(request: NextRequest) {
 
     let adminUserId: number
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || "fallback-secret") as { userId: number }
+      const decoded = jwt.verify(token, JWT_SECRET) as { userId: number }
       adminUserId = decoded.userId
     } catch {
       return NextResponse.json({ success: false, error: "Invalid token" }, { status: 401 })
@@ -109,27 +123,27 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Cannot modify your own account" }, { status: 400 })
     }
 
-    let updateQuery = ""
-    let params: any[] = []
-
+    let newStatus = ""
     switch (action) {
       case "block":
-        updateQuery = `UPDATE users SET status = 'blocked', updated_at = NOW() WHERE id = $1 RETURNING *`
-        params = [userId]
+        newStatus = "blocked"
         break
       case "unblock":
-        updateQuery = `UPDATE users SET status = 'active', updated_at = NOW() WHERE id = $1 RETURNING *`
-        params = [userId]
+        newStatus = "active"
         break
       case "suspend":
-        updateQuery = `UPDATE users SET status = 'suspended', updated_at = NOW() WHERE id = $1 RETURNING *`
-        params = [userId]
+        newStatus = "suspended"
         break
       default:
         return NextResponse.json({ success: false, error: "Invalid action" }, { status: 400 })
     }
 
-    const result = await sql.unsafe(updateQuery, params)
+    const result = await sql`
+      UPDATE users 
+      SET status = ${newStatus}, updated_at = NOW() 
+      WHERE id = ${userId}
+      RETURNING id, username, email, role, status, is_verified, is_profile_verified, avatar_url, created_at, updated_at
+    `
 
     if (!result[0]) {
       return NextResponse.json({ success: false, error: "User not found" }, { status: 404 })

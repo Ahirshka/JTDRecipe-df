@@ -73,9 +73,17 @@ export async function POST(request: NextRequest) {
     }
 
     let userId: number
+    let username: string
     try {
       const decoded = jwt.verify(token, JWT_SECRET) as { userId: number }
       userId = decoded.userId
+
+      // Get username from database
+      const user = await sql`SELECT username FROM users WHERE id = ${userId}`
+      if (!user.length) {
+        return NextResponse.json({ success: false, error: "User not found" }, { status: 404 })
+      }
+      username = user[0].username
     } catch (error) {
       return NextResponse.json({ success: false, error: "Invalid token" }, { status: 401 })
     }
@@ -84,7 +92,10 @@ export async function POST(request: NextRequest) {
 
     // Validate required fields
     if (!recipeData.title || !recipeData.category || !recipeData.difficulty) {
-      return NextResponse.json({ success: false, error: "Missing required fields" }, { status: 400 })
+      return NextResponse.json(
+        { success: false, error: "Missing required fields: title, category, difficulty" },
+        { status: 400 },
+      )
     }
 
     // Validate ingredients and instructions
@@ -96,82 +107,57 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "At least one instruction is required" }, { status: 400 })
     }
 
-    // Start transaction
-    const result = await sql.begin(async (sql) => {
-      // Insert main recipe
-      const [recipe] = await sql`
-        INSERT INTO recipes (
-          title, description, author_id, category, difficulty,
-          prep_time_minutes, cook_time_minutes, servings, image_url,
-          moderation_status, is_published, created_at, updated_at
-        ) VALUES (
-          ${recipeData.title}, 
-          ${recipeData.description || null}, 
-          ${userId},
-          ${recipeData.category}, 
-          ${recipeData.difficulty}, 
-          ${recipeData.prep_time_minutes || 0},
-          ${recipeData.cook_time_minutes || 0}, 
-          ${recipeData.servings || 1}, 
-          ${recipeData.image_url || null},
-          'pending', 
-          false, 
-          NOW(), 
-          NOW()
-        )
-        RETURNING id
-      `
+    // Convert arrays to text for storage
+    const ingredientsText = recipeData.ingredients
+      .map((ing: any) => `${ing.amount || ""} ${ing.unit || ""} ${ing.ingredient || ""}`.trim())
+      .filter((ing: string) => ing.length > 0)
+      .join("\n")
 
-      const recipeId = recipe.id
+    const instructionsText = recipeData.instructions
+      .map((inst: any, index: number) => `${index + 1}. ${inst.instruction || inst}`)
+      .filter((inst: string) => inst.length > 3)
+      .join("\n")
 
-      // Insert ingredients
-      for (const ingredient of recipeData.ingredients) {
-        if (ingredient.ingredient && ingredient.ingredient.trim()) {
-          await sql`
-            INSERT INTO recipe_ingredients (recipe_id, ingredient, amount, unit)
-            VALUES (
-              ${recipeId}, 
-              ${ingredient.ingredient.trim()}, 
-              ${ingredient.amount || ""}, 
-              ${ingredient.unit || ""}
-            )
-          `
-        }
-      }
+    if (!ingredientsText || !instructionsText) {
+      return NextResponse.json(
+        { success: false, error: "Valid ingredients and instructions are required" },
+        { status: 400 },
+      )
+    }
 
-      // Insert instructions
-      for (const instruction of recipeData.instructions) {
-        if (instruction.instruction && instruction.instruction.trim()) {
-          await sql`
-            INSERT INTO recipe_instructions (recipe_id, instruction, step_number)
-            VALUES (
-              ${recipeId}, 
-              ${instruction.instruction.trim()}, 
-              ${instruction.step_number || 1}
-            )
-          `
-        }
-      }
+    // Insert recipe
+    const result = await sql`
+      INSERT INTO recipes (
+        title, description, author_id, author_username, category, difficulty,
+        prep_time_minutes, cook_time_minutes, servings, image_url,
+        ingredients, instructions, moderation_status, is_published, created_at, updated_at
+      ) VALUES (
+        ${recipeData.title}, 
+        ${recipeData.description || null}, 
+        ${userId},
+        ${username},
+        ${recipeData.category}, 
+        ${recipeData.difficulty}, 
+        ${recipeData.prep_time_minutes || 0},
+        ${recipeData.cook_time_minutes || 0}, 
+        ${recipeData.servings || 1}, 
+        ${recipeData.image_url || null},
+        ${ingredientsText},
+        ${instructionsText},
+        'pending', 
+        false, 
+        NOW(), 
+        NOW()
+      )
+      RETURNING id
+    `
 
-      // Insert tags
-      if (recipeData.tags && Array.isArray(recipeData.tags)) {
-        for (const tag of recipeData.tags) {
-          if (tag && typeof tag === "string" && tag.trim()) {
-            await sql`
-              INSERT INTO recipe_tags (recipe_id, tag)
-              VALUES (${recipeId}, ${tag.trim()})
-            `
-          }
-        }
-      }
-
-      return recipeId
-    })
+    const recipeId = result[0].id
 
     return NextResponse.json({
       success: true,
       message: "Recipe submitted successfully! It will be reviewed by our moderators before being published.",
-      recipeId: result,
+      recipeId: recipeId,
     })
   } catch (error) {
     console.error("Failed to create recipe:", error)
