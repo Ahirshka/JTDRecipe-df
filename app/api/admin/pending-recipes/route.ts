@@ -1,14 +1,21 @@
 import { NextResponse } from "next/server"
 import { sql, initializeDatabase } from "@/lib/neon"
+import { requireAdmin } from "@/lib/server-auth"
 
 export async function GET() {
   try {
+    // Ensure user is admin
+    await requireAdmin()
+
     await initializeDatabase()
+
+    console.log("🔍 Fetching pending recipes for admin review...")
 
     const recipes = await sql`
       SELECT 
         r.*,
         u.username as author_username,
+        u.email as author_email,
         COALESCE(
           json_agg(
             DISTINCT jsonb_build_object(
@@ -39,7 +46,7 @@ export async function GET() {
       LEFT JOIN recipe_instructions inst ON r.id = inst.recipe_id
       LEFT JOIN recipe_tags rt ON r.id = rt.recipe_id
       WHERE r.moderation_status = 'pending'
-      GROUP BY r.id, u.username
+      GROUP BY r.id, u.username, u.email
       ORDER BY r.created_at ASC
     `
 
@@ -49,6 +56,7 @@ export async function GET() {
       description: row.description,
       author_id: row.author_id,
       author_username: row.author_username,
+      author_email: row.author_email,
       category: row.category,
       difficulty: row.difficulty,
       prep_time_minutes: row.prep_time_minutes || 0,
@@ -68,22 +76,24 @@ export async function GET() {
       tags: Array.isArray(row.tags) ? row.tags : [],
     }))
 
+    console.log(`✅ Found ${formattedRecipes.length} pending recipes`)
+
     return NextResponse.json({
       success: true,
       recipes: formattedRecipes,
       count: formattedRecipes.length,
     })
   } catch (error) {
-    console.error("Failed to get pending recipes:", error)
+    console.error("❌ Failed to get pending recipes:", error)
     return NextResponse.json(
       {
         success: false,
         error: "Failed to get pending recipes",
-        details: error instanceof Error ? error.message : "Unknown error",
+        details: error instanceof Error ? error.message : "Access denied",
         recipes: [],
         count: 0,
       },
-      { status: 500 },
+      { status: error.message === "Admin access required" ? 403 : 500 },
     )
   }
 }

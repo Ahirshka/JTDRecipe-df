@@ -1,9 +1,8 @@
 import { cookies } from "next/headers"
-import { verifyToken, type AuthUser } from "./auth"
-import { findUserById } from "./neon"
+import jwt from "jsonwebtoken"
+import { findUserById, type User } from "@/lib/neon"
 
-// Get current user from request - Server Component only
-export async function getCurrentUser(): Promise<AuthUser | null> {
+export async function getCurrentUser(): Promise<User | null> {
   try {
     const cookieStore = cookies()
     const token = cookieStore.get("auth-token")?.value
@@ -12,51 +11,43 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
       return null
     }
 
-    const user = verifyToken(token)
-    if (!user) {
-      return null
-    }
+    const payload = jwt.verify(token, process.env.JWT_SECRET || "fallback-secret") as { userId: number }
+    const user = await findUserById(payload.userId)
 
-    // Verify user still exists in database
-    const dbUser = await findUserById(user.id)
-    if (!dbUser) {
-      return null
-    }
-
-    return {
-      id: dbUser.id,
-      username: dbUser.username,
-      email: dbUser.email,
-      role: dbUser.role,
-      status: dbUser.status,
-      is_verified: dbUser.is_verified,
-      is_profile_verified: dbUser.is_profile_verified,
-      avatar_url: dbUser.avatar_url,
-      bio: dbUser.bio,
-      location: dbUser.location,
-      website: dbUser.website,
-      created_at: dbUser.created_at,
-      updated_at: dbUser.updated_at,
-      last_login_at: dbUser.last_login_at,
-    }
+    return user
   } catch (error) {
-    console.error("Error getting current user:", error)
+    console.error("Get current user error:", error)
     return null
   }
 }
 
-// Middleware helper - Server Component only
-export async function requireAuth(requiredRole?: string): Promise<{ user: AuthUser | null; error?: string }> {
-  const { hasPermission } = await import("./auth")
+export async function requireAuth(): Promise<User> {
   const user = await getCurrentUser()
-
   if (!user) {
-    return { user: null, error: "Authentication required" }
+    throw new Error("Authentication required")
   }
+  return user
+}
 
-  if (requiredRole && !hasPermission(user.role, requiredRole)) {
-    return { user: null, error: "Insufficient permissions" }
+export async function requireAdmin(): Promise<User> {
+  const user = await requireAuth()
+  if (user.role !== "admin" && user.role !== "owner") {
+    throw new Error("Admin access required")
   }
+  return user
+}
 
-  return { user }
+export async function setAuthCookie(token: string): Promise<void> {
+  const cookieStore = cookies()
+  cookieStore.set("auth-token", token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 60 * 60 * 24 * 7, // 7 days
+  })
+}
+
+export async function clearAuthCookie(): Promise<void> {
+  const cookieStore = cookies()
+  cookieStore.delete("auth-token")
 }
