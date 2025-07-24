@@ -5,7 +5,7 @@ import bcrypt from "bcryptjs"
 export const sql = process.env.DATABASE_URL ? neon(process.env.DATABASE_URL) : null
 
 export interface User {
-  id: string
+  id: number // Changed from string to number
   username: string
   email: string
   password_hash: string
@@ -19,10 +19,10 @@ export interface User {
 }
 
 export interface Recipe {
-  id: string
+  id: number // Changed from string to number
   title: string
   description?: string
-  author_id: string
+  author_id: number // Changed from string to number
   author_username: string
   category: string
   difficulty: string
@@ -42,17 +42,17 @@ export interface Recipe {
 }
 
 export interface Session {
-  id: string
-  user_id: string
+  id: number // Changed from string to number
+  user_id: number // Changed from string to number
   token: string
   expires_at: string
   created_at: string
 }
 
 // Mock data for when database is not available
-const mockUsers = new Map<string, User>()
-const mockRecipes = new Map<string, Recipe>()
-const mockSessions = new Map<string, Session>()
+const mockUsers = new Map<number, User>()
+const mockRecipes = new Map<number, Recipe>()
+const mockSessions = new Map<number, Session>()
 
 // Initialize mock data
 const initializeMockData = async () => {
@@ -60,7 +60,7 @@ const initializeMockData = async () => {
 
   const ownerPasswordHash = await bcrypt.hash("Morton2121", 12)
   const ownerUser: User = {
-    id: "owner-1",
+    id: 1,
     username: "Aaron Hirshka",
     email: "aaronhirshka@gmail.com",
     password_hash: ownerPasswordHash,
@@ -74,7 +74,7 @@ const initializeMockData = async () => {
 
   const adminPasswordHash = await bcrypt.hash("admin123", 12)
   const adminUser: User = {
-    id: "admin-1",
+    id: 2,
     username: "Admin User",
     email: "admin@justthedamnrecipe.net",
     password_hash: adminPasswordHash,
@@ -91,10 +91,10 @@ const initializeMockData = async () => {
 
   // Add sample recipes
   const sampleRecipe: Recipe = {
-    id: "1",
+    id: 1,
     title: "Perfect Scrambled Eggs",
     description: "Creamy, fluffy scrambled eggs made the right way",
-    author_id: "owner-1",
+    author_id: 1,
     author_username: "Aaron Hirshka",
     category: "Breakfast",
     difficulty: "Easy",
@@ -139,7 +139,7 @@ export async function findUserByEmail(email: string): Promise<User | null> {
   }
 }
 
-export async function findUserById(id: string): Promise<User | null> {
+export async function findUserById(id: number): Promise<User | null> {
   try {
     if (sql) {
       const result = await sql`
@@ -174,7 +174,7 @@ export async function createUser(userData: {
       // Use mock data
       const newUser: User = {
         ...userData,
-        id: String(mockUsers.size + 1),
+        id: mockUsers.size + 1,
         created_at: new Date().toISOString(),
         bio: "",
         location: "",
@@ -189,7 +189,7 @@ export async function createUser(userData: {
   }
 }
 
-export async function updateUser(id: string, updates: Partial<User>): Promise<User | null> {
+export async function updateUser(id: number, updates: Partial<User>): Promise<User | null> {
   try {
     if (sql) {
       const setClause = Object.keys(updates)
@@ -218,7 +218,7 @@ export async function updateUser(id: string, updates: Partial<User>): Promise<Us
   }
 }
 
-export async function createSession(userId: string, token: string): Promise<Session> {
+export async function createSession(userId: number, token: string): Promise<Session> {
   try {
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
 
@@ -231,7 +231,7 @@ export async function createSession(userId: string, token: string): Promise<Sess
       return result[0] as Session
     } else {
       const session: Session = {
-        id: String(mockSessions.size + 1),
+        id: mockSessions.size + 1,
         user_id: userId,
         token,
         expires_at: expiresAt.toISOString(),
@@ -328,7 +328,7 @@ export async function getAllRecipes(): Promise<Recipe[]> {
   }
 }
 
-export async function getRecipeById(id: string): Promise<Recipe | null> {
+export async function getRecipeById(id: number): Promise<Recipe | null> {
   try {
     if (sql) {
       const result = await sql`
@@ -364,7 +364,7 @@ export async function createRecipe(recipeData: any): Promise<Recipe> {
     } else {
       const newRecipe: Recipe = {
         ...recipeData,
-        id: String(mockRecipes.size + 1),
+        id: mockRecipes.size + 1,
         moderation_status: "pending",
         is_published: false,
         rating: 0,
@@ -399,9 +399,9 @@ export async function getPendingRecipes(): Promise<Recipe[]> {
 }
 
 export async function moderateRecipe(
-  id: string,
+  id: number,
   action: "approve" | "reject",
-  moderatorId: string,
+  moderatorId: number,
 ): Promise<Recipe | null> {
   try {
     const status = action === "approve" ? "approved" : "rejected"

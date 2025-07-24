@@ -3,26 +3,14 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { CheckCircle, XCircle, Database, RefreshCw, AlertCircle, Play } from "lucide-react"
-import { useToast } from "@/hooks/use-toast"
+import { CheckCircle, XCircle, Database, User, Settings } from "lucide-react"
 
-interface ConnectionResult {
+interface TestResult {
   success: boolean
   message: string
-  connection?: {
-    current_time: string
-    database_version: string
-    database_url_configured: boolean
-  }
   error?: string
-  details?: string
-  fallback?: string
-  environment_check?: {
-    database_url: boolean
-    node_env: string
-  }
+  details?: any
 }
 
 interface InitResult {
@@ -32,341 +20,226 @@ interface InitResult {
     email: string
     password: string
     role: string
+    created?: boolean
   }
-  database_url_configured: boolean
+  tables_created?: string[]
   error?: string
 }
 
 export default function DatabaseSetupPage() {
-  const [connectionResult, setConnectionResult] = useState<ConnectionResult | null>(null)
+  const [testResult, setTestResult] = useState<TestResult | null>(null)
   const [initResult, setInitResult] = useState<InitResult | null>(null)
-  const [testing, setTesting] = useState(false)
-  const [initializing, setInitializing] = useState(false)
-  const { toast } = useToast()
+  const [isTestingConnection, setIsTestingConnection] = useState(false)
+  const [isInitializing, setIsInitializing] = useState(false)
 
-  const testConnection = async () => {
-    setTesting(true)
+  const testDatabaseConnection = async () => {
+    setIsTestingConnection(true)
+    setTestResult(null)
+
     try {
-      const response = await fetch("/api/test/database-connection")
-      const data = await response.json()
-      setConnectionResult(data)
+      const response = await fetch("/api/test/database", {
+        method: "GET",
+      })
 
-      if (data.success) {
-        toast({
-          title: "Connection Successful!",
-          description: "Database is connected and ready",
-        })
-      } else {
-        toast({
-          title: "Connection Failed",
-          description: data.error || "Unable to connect to database",
-          variant: "destructive",
-        })
-      }
+      const data = await response.json()
+      setTestResult(data)
     } catch (error) {
-      const errorResult: ConnectionResult = {
+      setTestResult({
         success: false,
-        error: "Network error",
-        details: error instanceof Error ? error.message : "Unknown error",
-        message: "Failed to test connection",
-        fallback: "Using mock data instead",
-      }
-      setConnectionResult(errorResult)
-      toast({
-        title: "Test Failed",
-        description: "Unable to test database connection",
-        variant: "destructive",
+        message: "Failed to test database connection",
+        error: error instanceof Error ? error.message : "Unknown error",
       })
     } finally {
-      setTesting(false)
+      setIsTestingConnection(false)
     }
   }
 
   const initializeDatabase = async () => {
-    setInitializing(true)
+    setIsInitializing(true)
+    setInitResult(null)
+
     try {
-      const response = await fetch("/api/init-db", { method: "POST" })
+      const response = await fetch("/api/init-db", {
+        method: "POST",
+      })
+
       const data = await response.json()
       setInitResult(data)
-
-      if (data.success) {
-        toast({
-          title: "Database Initialized!",
-          description: "Tables created and owner account set up",
-        })
-      } else {
-        toast({
-          title: "Initialization Failed",
-          description: data.error || "Unable to initialize database",
-          variant: "destructive",
-        })
-      }
     } catch (error) {
-      const errorResult: InitResult = {
+      setInitResult({
         success: false,
-        error: "Network error",
         message: "Failed to initialize database",
-        database_url_configured: false,
-      }
-      setInitResult(errorResult)
-      toast({
-        title: "Initialization Failed",
-        description: "Unable to initialize database",
-        variant: "destructive",
+        error: error instanceof Error ? error.message : "Unknown error",
       })
     } finally {
-      setInitializing(false)
+      setIsInitializing(false)
     }
   }
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-4xl mx-auto px-4">
-        <div className="mb-8">
+        <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Database Setup</h1>
-          <p className="text-gray-600">Test your database connection and initialize your recipe site</p>
+          <p className="text-gray-600">Test your database connection and initialize the recipe site database</p>
         </div>
 
-        {/* Connection Test */}
-        <Card className="mb-8">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Database className="w-5 h-5" />
-              Database Connection Test
-            </CardTitle>
-            <CardDescription>Test your DATABASE_URL environment variable and verify connectivity</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <Button onClick={testConnection} disabled={testing} className="w-full">
-                {testing ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                    Testing Connection...
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-4 h-4 mr-2" />
-                    Test Database Connection Now
-                  </>
-                )}
+        <div className="grid gap-6 md:grid-cols-2">
+          {/* Database Connection Test */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Database className="h-5 w-5" />
+                Database Connection
+              </CardTitle>
+              <CardDescription>
+                Test your Neon database connection using the DATABASE_URL environment variable
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Button onClick={testDatabaseConnection} disabled={isTestingConnection} className="w-full">
+                {isTestingConnection ? "Testing Connection..." : "Test Database Connection Now"}
               </Button>
 
-              {connectionResult && (
-                <div className="mt-4">
-                  {connectionResult.success ? (
-                    <Alert className="border-green-200 bg-green-50">
+              {testResult && (
+                <Alert className={testResult.success ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}>
+                  <div className="flex items-center gap-2">
+                    {testResult.success ? (
                       <CheckCircle className="h-4 w-4 text-green-600" />
-                      <AlertDescription className="text-green-800">
-                        <strong>✅ Connection Successful!</strong>
-                        <div className="mt-2 space-y-1 text-sm">
-                          <p>
-                            <strong>Database:</strong> {connectionResult.connection?.database_version}
-                          </p>
-                          <p>
-                            <strong>Time:</strong> {connectionResult.connection?.current_time}
-                          </p>
-                          <p>
-                            <strong>Status:</strong> Ready for initialization
-                          </p>
-                        </div>
-                      </AlertDescription>
-                    </Alert>
-                  ) : (
-                    <Alert className="border-red-200 bg-red-50">
+                    ) : (
                       <XCircle className="h-4 w-4 text-red-600" />
-                      <AlertDescription className="text-red-800">
-                        <strong>❌ Connection Failed</strong>
-                        <div className="mt-2 space-y-1 text-sm">
-                          <p>
-                            <strong>Error:</strong> {connectionResult.error}
-                          </p>
-                          {connectionResult.details && (
-                            <p>
-                              <strong>Details:</strong> {connectionResult.details}
-                            </p>
-                          )}
-                          <p>
-                            <strong>Fallback:</strong> {connectionResult.fallback}
-                          </p>
-                          {connectionResult.environment_check && (
-                            <div className="mt-2">
-                              <p>
-                                <strong>Environment Check:</strong>
-                              </p>
-                              <p>
-                                • DATABASE_URL configured:{" "}
-                                {connectionResult.environment_check.database_url ? "✅" : "❌"}
-                              </p>
-                              <p>• Node environment: {connectionResult.environment_check.node_env}</p>
-                            </div>
-                          )}
-                        </div>
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                </div>
+                    )}
+                    <AlertDescription className={testResult.success ? "text-green-800" : "text-red-800"}>
+                      <div className="font-medium">{testResult.message}</div>
+                      {testResult.error && <div className="text-sm mt-1 opacity-80">{testResult.error}</div>}
+                      {testResult.details && (
+                        <pre className="text-xs mt-2 p-2 bg-white rounded border overflow-auto">
+                          {JSON.stringify(testResult.details, null, 2)}
+                        </pre>
+                      )}
+                    </AlertDescription>
+                  </div>
+                </Alert>
               )}
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        {/* Database Initialization */}
-        <Card className="mb-8">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Database className="w-5 h-5" />
-              Database Initialization
-            </CardTitle>
-            <CardDescription>Create tables and set up your owner account (only run this once)</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
+          {/* Database Initialization */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Settings className="h-5 w-5" />
+                Database Initialization
+              </CardTitle>
+              <CardDescription>Create database tables and set up the owner account</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
               <Button
                 onClick={initializeDatabase}
-                disabled={initializing || (connectionResult && !connectionResult.success)}
+                disabled={isInitializing || (testResult && !testResult.success)}
                 className="w-full"
-                variant={connectionResult?.success ? "default" : "secondary"}
+                variant={testResult?.success ? "default" : "secondary"}
               >
-                {initializing ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                    Initializing Database...
-                  </>
-                ) : (
-                  <>
-                    <Database className="w-4 h-4 mr-2" />
-                    Initialize Database & Create Owner Account
-                  </>
-                )}
+                {isInitializing ? "Initializing Database..." : "Initialize Database & Create Owner Account"}
               </Button>
 
-              {!connectionResult?.success && connectionResult && (
-                <Alert>
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>Test your database connection first before initializing</AlertDescription>
-                </Alert>
+              {!testResult?.success && testResult && (
+                <p className="text-sm text-gray-600">⚠️ Please test the database connection first</p>
               )}
 
               {initResult && (
-                <div className="mt-4">
-                  {initResult.success ? (
-                    <Alert className="border-green-200 bg-green-50">
+                <Alert className={initResult.success ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}>
+                  <div className="flex items-center gap-2">
+                    {initResult.success ? (
                       <CheckCircle className="h-4 w-4 text-green-600" />
-                      <AlertDescription className="text-green-800">
-                        <strong>✅ Database Initialized Successfully!</strong>
-                        {initResult.owner && (
-                          <div className="mt-3 p-3 bg-white border border-green-200 rounded">
-                            <p className="font-medium mb-2">Owner Account Created:</p>
-                            <div className="space-y-1 text-sm font-mono">
-                              <p>
-                                <strong>Email:</strong> {initResult.owner.email}
-                              </p>
-                              <p>
-                                <strong>Password:</strong> {initResult.owner.password}
-                              </p>
-                              <p>
-                                <strong>Role:</strong> {initResult.owner.role}
-                              </p>
-                            </div>
-                            <p className="text-xs mt-2 text-green-700">
-                              Save these credentials! You can now log in and access admin features.
-                            </p>
-                          </div>
-                        )}
-                      </AlertDescription>
-                    </Alert>
-                  ) : (
-                    <Alert className="border-red-200 bg-red-50">
+                    ) : (
                       <XCircle className="h-4 w-4 text-red-600" />
-                      <AlertDescription className="text-red-800">
-                        <strong>❌ Initialization Failed</strong>
-                        <div className="mt-2 space-y-1 text-sm">
-                          <p>
-                            <strong>Error:</strong> {initResult.error}
-                          </p>
-                          <p>
-                            <strong>Database URL Configured:</strong>{" "}
-                            {initResult.database_url_configured ? "Yes" : "No"}
-                          </p>
+                    )}
+                    <AlertDescription className={initResult.success ? "text-green-800" : "text-red-800"}>
+                      <div className="font-medium">{initResult.message}</div>
+                      {initResult.error && <div className="text-sm mt-1 opacity-80">{initResult.error}</div>}
+                      {initResult.owner && (
+                        <div className="mt-3 p-3 bg-white rounded border">
+                          <div className="font-medium text-gray-900 mb-2">Owner Account Details:</div>
+                          <div className="text-sm space-y-1">
+                            <div>
+                              <strong>Email:</strong> {initResult.owner.email}
+                            </div>
+                            <div>
+                              <strong>Password:</strong> {initResult.owner.password}
+                            </div>
+                            <div>
+                              <strong>Role:</strong> {initResult.owner.role}
+                            </div>
+                            {initResult.owner.created && <div className="text-green-600">✅ New account created</div>}
+                          </div>
                         </div>
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                </div>
+                      )}
+                      {initResult.tables_created && (
+                        <div className="mt-2 text-sm">
+                          <strong>Tables created:</strong> {initResult.tables_created.join(", ")}
+                        </div>
+                      )}
+                    </AlertDescription>
+                  </div>
+                </Alert>
               )}
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
 
-        {/* Status Summary */}
-        <Card>
+        {/* Next Steps */}
+        {initResult?.success && (
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <User className="h-5 w-5" />
+                Next Steps
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                  <span>Database successfully initialized with all tables</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                  <span>Owner account created and ready to use</span>
+                </div>
+                <div className="mt-4 p-4 bg-blue-50 rounded-lg">
+                  <h4 className="font-medium text-blue-900 mb-2">Ready to login!</h4>
+                  <p className="text-blue-800 text-sm">
+                    You can now go to the{" "}
+                    <a href="/login" className="underline font-medium">
+                      login page
+                    </a>{" "}
+                    and sign in with:
+                  </p>
+                  <div className="mt-2 text-sm font-mono bg-white p-2 rounded border">
+                    <div>Email: aaronhirshka@gmail.com</div>
+                    <div>Password: Morton2121</div>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Environment Status */}
+        <Card className="mt-6">
           <CardHeader>
-            <CardTitle>Setup Status</CardTitle>
-            <CardDescription>Current status of your database setup</CardDescription>
+            <CardTitle>Environment Status</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="text-center">
-                <div className="mb-2">
-                  {connectionResult?.success ? (
-                    <CheckCircle className="w-8 h-8 text-green-500 mx-auto" />
-                  ) : connectionResult ? (
-                    <XCircle className="w-8 h-8 text-red-500 mx-auto" />
-                  ) : (
-                    <Database className="w-8 h-8 text-gray-400 mx-auto" />
-                  )}
-                </div>
-                <p className="font-medium">Connection</p>
-                <Badge variant={connectionResult?.success ? "default" : "secondary"}>
-                  {connectionResult?.success ? "Connected" : connectionResult ? "Failed" : "Not Tested"}
-                </Badge>
-              </div>
-
-              <div className="text-center">
-                <div className="mb-2">
-                  {initResult?.success ? (
-                    <CheckCircle className="w-8 h-8 text-green-500 mx-auto" />
-                  ) : initResult ? (
-                    <XCircle className="w-8 h-8 text-red-500 mx-auto" />
-                  ) : (
-                    <Database className="w-8 h-8 text-gray-400 mx-auto" />
-                  )}
-                </div>
-                <p className="font-medium">Database</p>
-                <Badge variant={initResult?.success ? "default" : "secondary"}>
-                  {initResult?.success ? "Initialized" : initResult ? "Failed" : "Not Initialized"}
-                </Badge>
-              </div>
-
-              <div className="text-center">
-                <div className="mb-2">
-                  {initResult?.success ? (
-                    <CheckCircle className="w-8 h-8 text-green-500 mx-auto" />
-                  ) : (
-                    <Database className="w-8 h-8 text-gray-400 mx-auto" />
-                  )}
-                </div>
-                <p className="font-medium">Ready</p>
-                <Badge variant={initResult?.success ? "default" : "secondary"}>
-                  {initResult?.success ? "Ready to Use" : "Setup Required"}
-                </Badge>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span>DATABASE_URL</span>
+                <span className={process.env.DATABASE_URL ? "text-green-600" : "text-red-600"}>
+                  {typeof window === "undefined" && process.env.DATABASE_URL ? "✅ Configured" : "❌ Not configured"}
+                </span>
               </div>
             </div>
-
-            {initResult?.success && (
-              <div className="mt-6 text-center">
-                <p className="text-green-600 font-medium mb-2">🎉 Your recipe site is ready!</p>
-                <div className="space-x-2">
-                  <Button asChild>
-                    <a href="/login">Login as Owner</a>
-                  </Button>
-                  <Button variant="outline" asChild>
-                    <a href="/">View Site</a>
-                  </Button>
-                </div>
-              </div>
-            )}
           </CardContent>
         </Card>
       </div>
