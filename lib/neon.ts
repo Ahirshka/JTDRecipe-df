@@ -1,6 +1,5 @@
 import { neon } from "@neondatabase/serverless"
 import bcrypt from "bcryptjs"
-import type { Session } from "./session" // Assuming Session is defined in a separate file
 
 if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL environment variable is not set")
@@ -66,6 +65,24 @@ export interface Rating {
   user_id: number
   rating: number
   created_at: string
+}
+
+export interface Session {
+  id: number
+  user_id: number
+  token: string
+  expires_at: string
+  created_at: string
+}
+
+// Stack Auth configuration
+export function getStackAuthConfig() {
+  return {
+    projectId: process.env.STACK_PROJECT_ID || "",
+    jwksUrl: process.env.STACK_JWKS_URL || "",
+    apiUrl: process.env.STACK_API_URL || "",
+    clientId: process.env.GOOGLE_CLIENT_ID || "",
+  }
 }
 
 // Mock data for when database is not available
@@ -298,7 +315,6 @@ export async function initializeOwnerAccount() {
         role: "owner",
         is_verified: true,
         is_profile_verified: true,
-        status: "active",
       })
 
       console.log("Owner account created successfully for Aaron Hirshka")

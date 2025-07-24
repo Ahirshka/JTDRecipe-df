@@ -3,20 +3,46 @@
   "devCommand": "pnpm dev",
   "installCommand": "pnpm install",
   "framework": "nextjs",
+  "regions": ["iad1"],
   "functions": {
-    "app/api/auto-init/route.ts": {
-      "maxDuration": 30
-    },
-    "app/api/init-db/route.ts": {
+    "app/api/**/*.ts": {
       "maxDuration": 30
     }
   },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET, POST, PUT, DELETE, OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type, Authorization"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/health",
+      "destination": "/api/health"
+    }
+  ],
   "env": {
-    "DATABASE_URL": "@database_url"
-  },
-  "build": {
-    "env": {
-      "DATABASE_URL": "@database_url"
-    }
+    "DATABASE_URL": "@database_url",
+    "VERCEL_REGION": "@vercel_region",
+    "VERCEL_GIT_REPO_SLUG": "@vercel_git_repo_slug",
+    "VERCEL_GIT_REPO_OWNER": "@vercel_git_repo_owner",
+    "SUPPORT_EMAIL": "@support_email",
+    "GOOGLE_CLIENT_ID": "@google_client_id",
+    "STACK_PROJECT_ID": "@stack_project_id",
+    "STACK_JWKS_URL": "@stack_jwks_url",
+    "STACK_API_URL": "@stack_api_url"
   }
 }
