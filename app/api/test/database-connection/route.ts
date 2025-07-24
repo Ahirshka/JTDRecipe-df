@@ -14,26 +14,44 @@ export async function GET() {
         error: "DATABASE_URL not configured",
         message: "Please set your DATABASE_URL environment variable",
         fallback: "Using mock data instead",
+        environment_check: {
+          database_url: !!process.env.DATABASE_URL,
+          node_env: process.env.NODE_ENV,
+        },
       })
     }
 
     // Test database connection
     if (sql) {
-      const result = await sql`SELECT NOW() as current_time, version() as db_version`
+      try {
+        const result = await sql`SELECT NOW() as current_time, version() as db_version`
 
-      return NextResponse.json({
-        success: true,
-        message: "Database connection successful!",
-        connection: {
-          current_time: result[0].current_time,
-          database_version: result[0].db_version,
-          database_url_configured: true,
-        },
-      })
+        return NextResponse.json({
+          success: true,
+          message: "Database connection successful!",
+          connection: {
+            current_time: result[0].current_time,
+            database_version: result[0].db_version,
+            database_url_configured: true,
+          },
+        })
+      } catch (dbError) {
+        console.error("Database query failed:", dbError)
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Database query failed",
+            details: dbError instanceof Error ? dbError.message : "Unknown database error",
+            fallback: "Using mock data instead",
+          },
+          { status: 500 },
+        )
+      }
     } else {
       return NextResponse.json({
         success: false,
         error: "Database connection failed to initialize",
+        message: "SQL client is null - check DATABASE_URL format",
         fallback: "Using mock data instead",
       })
     }

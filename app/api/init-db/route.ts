@@ -2,7 +2,6 @@ import { NextResponse } from "next/server"
 import { initializeDatabase } from "@/lib/neon"
 
 export const dynamic = "force-dynamic"
-export const runtime = "nodejs"
 
 export async function POST() {
   try {
@@ -22,7 +21,15 @@ export async function POST() {
     })
   } catch (error) {
     console.error("Database initialization error:", error)
-    return NextResponse.json({ success: false, error: "Failed to initialize database" }, { status: 500 })
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Failed to initialize database",
+        details: error instanceof Error ? error.message : "Unknown error",
+        database_url_configured: !!process.env.DATABASE_URL,
+      },
+      { status: 500 },
+    )
   }
 }
 
