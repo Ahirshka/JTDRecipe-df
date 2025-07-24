@@ -534,15 +534,6 @@ export async function initializeDatabase(): Promise<boolean> {
   }
 }
 
-export function getStackAuthConfig() {
-  return {
-    projectId: process.env.STACK_PROJECT_ID || "",
-    jwksUrl: process.env.STACK_JWKS_URL || "",
-    apiUrl: process.env.STACK_API_URL || "",
-    configured: !!(process.env.STACK_PROJECT_ID && process.env.STACK_JWKS_URL && process.env.STACK_API_URL),
-  }
-}
-
 export const mockDatabase = {
   users: mockUsers,
   recipes: mockRecipes,
