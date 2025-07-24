@@ -211,6 +211,39 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
   }
 }
 
+// Find user by email - REQUIRED EXPORT
+export async function findUserByEmail(email: string): Promise<User | null> {
+  try {
+    const dbUser = await findUserByEmailInDB(email)
+    if (!dbUser) return null
+
+    return {
+      id: dbUser.id.toString(),
+      username: dbUser.username,
+      email: dbUser.email,
+      role: dbUser.role as UserRole,
+      status: dbUser.status as UserStatus,
+      createdAt: dbUser.created_at,
+      updatedAt: dbUser.updated_at,
+      favorites: [],
+      ratings: [],
+      myRecipes: [],
+      isVerified: dbUser.is_verified,
+      isSuspended: dbUser.status === "suspended",
+      warningCount: dbUser.warning_count || 0,
+      avatar: dbUser.avatar_url,
+      provider: undefined,
+      socialId: undefined,
+      lastLoginAt: dbUser.last_login_at,
+      suspensionReason: dbUser.suspension_reason,
+      suspensionExpiresAt: dbUser.suspension_expires_at,
+    }
+  } catch (error) {
+    console.error("Error finding user by email:", error)
+    return null
+  }
+}
+
 // Login user
 export async function loginUser(
   email: string,
