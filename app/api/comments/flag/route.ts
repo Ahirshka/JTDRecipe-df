@@ -1,12 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { sql } from "@/lib/neon"
 import jwt from "jsonwebtoken"
-import { unlink } from "fs/promises"
-import { join } from "path"
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
-export async function DELETE(request: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
     // Get user from JWT token
     const token = request.cookies.get("auth-token")?.value
@@ -22,43 +20,38 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Invalid token" }, { status: 401 })
     }
 
-    // Get current avatar URL
+    // Check if user is moderator/admin/owner
     const [user] = await sql`
-      SELECT avatar_url FROM users WHERE id = ${userId}
+      SELECT role FROM users WHERE id = ${userId}
     `
 
-    if (!user) {
-      return NextResponse.json({ success: false, error: "User not found" }, { status: 404 })
+    if (!user || !["moderator", "admin", "owner"].includes(user.role)) {
+      return NextResponse.json({ success: false, error: "Insufficient permissions" }, { status: 403 })
     }
 
-    // Delete file from disk if it exists
-    if (user.avatar_url && user.avatar_url.startsWith("/uploads/")) {
-      try {
-        const filePath = join(process.cwd(), "public", user.avatar_url)
-        await unlink(filePath)
-      } catch (error) {
-        // File might not exist, continue anyway
-        console.log("Could not delete file:", error)
-      }
+    const { commentId, reason } = await request.json()
+
+    if (!commentId) {
+      return NextResponse.json({ success: false, error: "Comment ID is required" }, { status: 400 })
     }
 
-    // Update user avatar in database
+    // Flag the comment
     await sql`
-      UPDATE users 
-      SET avatar_url = NULL, updated_at = NOW()
-      WHERE id = ${userId}
+      UPDATE comments 
+      SET is_flagged = true, flag_reason = ${reason || "Flagged by moderator"}, updated_at = NOW()
+      WHERE id = ${commentId}
     `
 
     return NextResponse.json({
       success: true,
-      message: "Profile picture removed successfully",
+      message: "Comment flagged successfully",
     })
   } catch (error) {
-    console.error("Delete avatar error:", error)
+    console.error("Flag comment error:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Failed to remove profile picture",
+        error: "Failed to flag comment",
         details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },

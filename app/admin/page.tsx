@@ -213,7 +213,7 @@ export default function AdminPage() {
               <CardDescription>Manage user accounts, roles, and permissions</CardDescription>
             </CardHeader>
             <CardContent>
-              <Button className="w-full bg-transparent" variant="outline">
+              <Button className="w-full" onClick={() => router.push("/admin/users")}>
                 Manage Users
               </Button>
             </CardContent>
@@ -228,7 +228,7 @@ export default function AdminPage() {
               <CardDescription>Review and moderate user-submitted recipes</CardDescription>
             </CardHeader>
             <CardContent>
-              <Button className="w-full bg-transparent" variant="outline">
+              <Button className="w-full" onClick={() => router.push("/admin/recipes")}>
                 Review Recipes
               </Button>
             </CardContent>

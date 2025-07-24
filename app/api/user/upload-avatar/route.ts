@@ -1,16 +1,26 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { getCurrentUser } from "@/lib/auth-actions"
 import { sql } from "@/lib/neon"
+import jwt from "jsonwebtoken"
 import { writeFile, mkdir } from "fs/promises"
 import { join } from "path"
 import { v4 as uuidv4 } from "uuid"
 
+const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
+
 export async function POST(request: NextRequest) {
   try {
-    const user = await getCurrentUser()
+    // Get user from JWT token
+    const token = request.cookies.get("auth-token")?.value
+    if (!token) {
+      return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
+    }
 
-    if (!user) {
-      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 })
+    let userId: number
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as { userId: number }
+      userId = decoded.userId
+    } catch (error) {
+      return NextResponse.json({ success: false, error: "Invalid token" }, { status: 401 })
     }
 
     const formData = await request.formData()
@@ -22,16 +32,16 @@ export async function POST(request: NextRequest) {
 
     // Validate file type
     if (!file.type.startsWith("image/")) {
-      return NextResponse.json({ success: false, error: "Invalid file type" }, { status: 400 })
+      return NextResponse.json({ success: false, error: "Invalid file type. Please upload an image." }, { status: 400 })
     }
 
     // Validate file size (5MB max)
     if (file.size > 5 * 1024 * 1024) {
-      return NextResponse.json({ success: false, error: "File too large" }, { status: 400 })
+      return NextResponse.json({ success: false, error: "File too large. Maximum size is 5MB." }, { status: 400 })
     }
 
     // Create unique filename
-    const fileExtension = file.name.split(".").pop()
+    const fileExtension = file.name.split(".").pop() || "jpg"
     const fileName = `${uuidv4()}.${fileExtension}`
 
     // Create uploads directory if it doesn't exist
@@ -54,17 +64,24 @@ export async function POST(request: NextRequest) {
 
     await sql`
       UPDATE users 
-      SET avatar = ${avatarUrl}, updated_at = NOW()
-      WHERE id = ${user.id}
+      SET avatar_url = ${avatarUrl}, updated_at = NOW()
+      WHERE id = ${userId}
     `
 
     return NextResponse.json({
       success: true,
-      avatar: avatarUrl,
+      avatar_url: avatarUrl,
       message: "Profile picture updated successfully",
     })
   } catch (error) {
     console.error("Upload avatar error:", error)
-    return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 })
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Failed to upload profile picture",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    )
   }
 }

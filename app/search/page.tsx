@@ -12,13 +12,16 @@ import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import Link from "next/link"
 import Image from "next/image"
 import { searchEngine, type SearchFilters, type SearchResult } from "@/lib/search"
+import { useIsMobile } from "@/hooks/use-mobile"
 
 export default function SearchPage() {
   const searchParams = useSearchParams()
   const router = useRouter()
+  const isMobile = useIsMobile()
 
   const [searchResults, setSearchResults] = useState<SearchResult | null>(null)
   const [loading, setLoading] = useState(false)
@@ -31,6 +34,7 @@ export default function SearchPage() {
   })
   const [currentPage, setCurrentPage] = useState(1)
   const [popularTags, setPopularTags] = useState<{ name: string; count: number }[]>([])
+  const [isFiltersOpen, setIsFiltersOpen] = useState(!isMobile) // Minimize on mobile by default
 
   const performSearch = useCallback(
     async (newFilters: SearchFilters, page = 1) => {
@@ -94,111 +98,135 @@ export default function SearchPage() {
   const FilterContent = () => (
     <div className="space-y-6">
       {/* Category Filter */}
-      <div>
-        <h3 className="font-medium mb-3">Category</h3>
-        <Select value={filters.category || "all"} onValueChange={(value) => updateFilter("category", value)}>
-          <SelectTrigger>
-            <SelectValue placeholder="All Categories" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Categories</SelectItem>
-            {searchResults?.filters.categories.map((category) => (
-              <SelectItem key={category.name} value={category.name.toLowerCase()}>
-                {category.name} ({category.count})
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      <Collapsible defaultOpen={!isMobile}>
+        <CollapsibleTrigger className="flex items-center justify-between w-full p-2 hover:bg-gray-50 rounded">
+          <h3 className="font-medium">Category</h3>
+          <Filter className="w-4 h-4" />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="pt-3">
+          <Select value={filters.category || "all"} onValueChange={(value) => updateFilter("category", value)}>
+            <SelectTrigger>
+              <SelectValue placeholder="All Categories" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Categories</SelectItem>
+              {searchResults?.filters.categories.map((category) => (
+                <SelectItem key={category.name} value={category.name.toLowerCase()}>
+                  {category.name} ({category.count})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </CollapsibleContent>
+      </Collapsible>
 
       {/* Difficulty Filter */}
-      <div>
-        <h3 className="font-medium mb-3">Difficulty</h3>
-        <Select value={filters.difficulty || "all"} onValueChange={(value) => updateFilter("difficulty", value)}>
-          <SelectTrigger>
-            <SelectValue placeholder="All Difficulties" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Difficulties</SelectItem>
-            {searchResults?.filters.difficulties.map((difficulty) => (
-              <SelectItem key={difficulty.name} value={difficulty.name.toLowerCase()}>
-                {difficulty.name} ({difficulty.count})
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      <Collapsible defaultOpen={!isMobile}>
+        <CollapsibleTrigger className="flex items-center justify-between w-full p-2 hover:bg-gray-50 rounded">
+          <h3 className="font-medium">Difficulty</h3>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="pt-3">
+          <Select value={filters.difficulty || "all"} onValueChange={(value) => updateFilter("difficulty", value)}>
+            <SelectTrigger>
+              <SelectValue placeholder="All Difficulties" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Difficulties</SelectItem>
+              {searchResults?.filters.difficulties.map((difficulty) => (
+                <SelectItem key={difficulty.name} value={difficulty.name.toLowerCase()}>
+                  {difficulty.name} ({difficulty.count})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </CollapsibleContent>
+      </Collapsible>
 
       {/* Popular Tags */}
-      <div>
-        <h3 className="font-medium mb-3">Popular Tags</h3>
-        <div className="flex flex-wrap gap-2">
-          {popularTags.map((tag) => (
-            <Badge
-              key={tag.name}
-              variant={filters.tags?.includes(tag.name) ? "default" : "outline"}
-              className="cursor-pointer hover:bg-orange-100"
-              onClick={() => toggleTag(tag.name)}
-            >
-              {tag.name} ({tag.count})
-            </Badge>
-          ))}
-        </div>
-      </div>
+      <Collapsible defaultOpen={!isMobile}>
+        <CollapsibleTrigger className="flex items-center justify-between w-full p-2 hover:bg-gray-50 rounded">
+          <h3 className="font-medium">Popular Tags</h3>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="pt-3">
+          <div className="flex flex-wrap gap-2">
+            {popularTags.map((tag) => (
+              <Badge
+                key={tag.name}
+                variant={filters.tags?.includes(tag.name) ? "default" : "outline"}
+                className="cursor-pointer hover:bg-orange-100"
+                onClick={() => toggleTag(tag.name)}
+              >
+                {tag.name} ({tag.count})
+              </Badge>
+            ))}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
 
       {/* Time Filters */}
-      <div>
-        <h3 className="font-medium mb-3">Max Prep Time</h3>
-        <Slider
-          value={[filters.maxPrepTime || 120]}
-          onValueChange={([value]) => updateFilter("maxPrepTime", value === 120 ? undefined : value)}
-          max={120}
-          min={5}
-          step={5}
-          className="w-full"
-        />
-        <div className="flex justify-between text-sm text-gray-500 mt-1">
-          <span>5 min</span>
-          <span>{filters.maxPrepTime || 120} min</span>
-        </div>
-      </div>
+      <Collapsible defaultOpen={!isMobile}>
+        <CollapsibleTrigger className="flex items-center justify-between w-full p-2 hover:bg-gray-50 rounded">
+          <h3 className="font-medium">Time Filters</h3>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="pt-3 space-y-4">
+          <div>
+            <h4 className="text-sm font-medium mb-2">Max Prep Time</h4>
+            <Slider
+              value={[filters.maxPrepTime || 120]}
+              onValueChange={([value]) => updateFilter("maxPrepTime", value === 120 ? undefined : value)}
+              max={120}
+              min={5}
+              step={5}
+              className="w-full"
+            />
+            <div className="flex justify-between text-sm text-gray-500 mt-1">
+              <span>5 min</span>
+              <span>{filters.maxPrepTime || 120} min</span>
+            </div>
+          </div>
 
-      <div>
-        <h3 className="font-medium mb-3">Max Cook Time</h3>
-        <Slider
-          value={[filters.maxCookTime || 180]}
-          onValueChange={([value]) => updateFilter("maxCookTime", value === 180 ? undefined : value)}
-          max={180}
-          min={5}
-          step={5}
-          className="w-full"
-        />
-        <div className="flex justify-between text-sm text-gray-500 mt-1">
-          <span>5 min</span>
-          <span>{filters.maxCookTime || 180} min</span>
-        </div>
-      </div>
+          <div>
+            <h4 className="text-sm font-medium mb-2">Max Cook Time</h4>
+            <Slider
+              value={[filters.maxCookTime || 180]}
+              onValueChange={([value]) => updateFilter("maxCookTime", value === 180 ? undefined : value)}
+              max={180}
+              min={5}
+              step={5}
+              className="w-full"
+            />
+            <div className="flex justify-between text-sm text-gray-500 mt-1">
+              <span>5 min</span>
+              <span>{filters.maxCookTime || 180} min</span>
+            </div>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
 
       {/* Rating Filter */}
-      <div>
-        <h3 className="font-medium mb-3">Minimum Rating</h3>
-        <Select
-          value={filters.minRating?.toString() || "all"}
-          onValueChange={(value) => updateFilter("minRating", value === "all" ? undefined : Number.parseFloat(value))}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Any Rating" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Any Rating</SelectItem>
-            <SelectItem value="4">4+ Stars</SelectItem>
-            <SelectItem value="3">3+ Stars</SelectItem>
-            <SelectItem value="2">2+ Stars</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+      <Collapsible defaultOpen={!isMobile}>
+        <CollapsibleTrigger className="flex items-center justify-between w-full p-2 hover:bg-gray-50 rounded">
+          <h3 className="font-medium">Minimum Rating</h3>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="pt-3">
+          <Select
+            value={filters.minRating?.toString() || "all"}
+            onValueChange={(value) => updateFilter("minRating", value === "all" ? undefined : Number.parseFloat(value))}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Any Rating" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Any Rating</SelectItem>
+              <SelectItem value="4">4+ Stars</SelectItem>
+              <SelectItem value="3">3+ Stars</SelectItem>
+              <SelectItem value="2">2+ Stars</SelectItem>
+            </SelectContent>
+          </Select>
+        </CollapsibleContent>
+      </Collapsible>
 
-      <Button variant="outline" onClick={clearFilters} className="w-full">
+      <Button variant="outline" onClick={clearFilters} className="w-full bg-transparent">
         Clear All Filters
       </Button>
     </div>
@@ -257,7 +285,9 @@ export default function SearchPage() {
               <CardContent className="p-6">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="font-semibold">Filters</h2>
-                  <Filter className="w-4 h-4" />
+                  <Button variant="ghost" size="sm" onClick={() => setIsFiltersOpen(!isFiltersOpen)}>
+                    <Filter className="w-4 h-4" />
+                  </Button>
                 </div>
                 <FilterContent />
               </CardContent>
@@ -283,7 +313,7 @@ export default function SearchPage() {
                 {/* Mobile Filter Button */}
                 <Sheet>
                   <SheetTrigger asChild>
-                    <Button variant="outline" size="sm" className="lg:hidden">
+                    <Button variant="outline" size="sm" className="lg:hidden bg-transparent">
                       <Filter className="w-4 h-4 mr-2" />
                       Filters
                     </Button>
