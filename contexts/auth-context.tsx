@@ -4,12 +4,15 @@ import type React from "react"
 import { createContext, useContext, useEffect, useState } from "react"
 
 interface User {
-  id: string
+  id: number
   username: string
   email: string
   role: string
+  status: string
+  email_verified: boolean
   avatar?: string
-  is_verified: boolean
+  created_at: string
+  last_login_at?: string
 }
 
 interface AuthContextType {
@@ -34,17 +37,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         credentials: "include",
       })
 
-      if (response.ok) {
-        const data = await response.json()
-        if (data.success && data.user) {
-          console.log("User authenticated:", data.user)
-          setUser(data.user)
-        } else {
-          console.log("User not authenticated")
-          setUser(null)
-        }
+      const data = await response.json()
+      console.log("Auth check response:", data)
+
+      if (data.success && data.authenticated && data.user) {
+        console.log("User authenticated:", data.user)
+        setUser(data.user)
       } else {
-        console.log("Auth check failed with status:", response.status)
+        console.log("User not authenticated")
         setUser(null)
       }
     } catch (error) {
@@ -68,6 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       })
 
       const data = await response.json()
+      console.log("Login response:", data)
 
       if (data.success && data.user) {
         console.log("Login successful, setting user:", data.user)

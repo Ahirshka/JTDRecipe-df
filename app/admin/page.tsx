@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useAuth } from "@/contexts/auth-context"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -9,9 +8,24 @@ import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Shield, Users, BookOpen, Settings, Crown, AlertTriangle } from "lucide-react"
 
+interface User {
+  id: number
+  username: string
+  email: string
+  role: string
+  status: string
+  email_verified: boolean
+  avatar?: string
+  created_at: string
+  last_login_at?: string
+}
+
 export default function AdminPage() {
-  const { user, isLoading } = useAuth()
+  const [user, setUser] = useState<User | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const router = useRouter()
+
   const [stats, setStats] = useState({
     totalUsers: 0,
     totalRecipes: 0,
@@ -20,28 +34,54 @@ export default function AdminPage() {
   })
 
   useEffect(() => {
-    if (!isLoading && !user) {
-      router.push("/login")
-      return
-    }
+    checkAuthAndLoadData()
+  }, [])
 
-    if (user && user.role !== "admin" && user.role !== "owner") {
-      router.push("/")
-      return
-    }
+  const checkAuthAndLoadData = async () => {
+    try {
+      console.log("Checking authentication...")
+      const response = await fetch("/api/auth/me", {
+        credentials: "include",
+      })
 
-    // Load admin stats
-    loadStats()
-  }, [user, isLoading, router])
+      const data = await response.json()
+      console.log("Auth response:", data)
+
+      if (!data.success || !data.authenticated || !data.user) {
+        console.log("Not authenticated, redirecting to login")
+        router.push("/login")
+        return
+      }
+
+      const userData = data.user
+      console.log("User data:", userData)
+
+      // Check if user has admin privileges
+      if (userData.role !== "admin" && userData.role !== "owner") {
+        console.log("User role:", userData.role, "- not admin/owner")
+        setError("Access denied. You need administrator privileges to view this page.")
+        setIsLoading(false)
+        return
+      }
+
+      setUser(userData)
+      await loadStats()
+    } catch (error) {
+      console.error("Auth check failed:", error)
+      setError("Failed to verify authentication")
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   const loadStats = async () => {
     try {
-      // Mock stats for now
+      // Mock stats for now - you can implement real API endpoints later
       setStats({
-        totalUsers: 3,
-        totalRecipes: 2,
+        totalUsers: 1,
+        totalRecipes: 1,
         pendingRecipes: 0,
-        activeUsers: 3,
+        activeUsers: 1,
       })
     } catch (error) {
       console.error("Failed to load stats:", error)
@@ -55,6 +95,17 @@ export default function AdminPage() {
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4"></div>
           <p>Loading admin panel...</p>
         </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Alert variant="destructive" className="max-w-md">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       </div>
     )
   }
@@ -251,7 +302,7 @@ export default function AdminPage() {
               <div className="flex items-center space-x-4 p-4 bg-gray-50 rounded-lg">
                 <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
                 <div>
-                  <p className="font-medium">System initialized with mock data</p>
+                  <p className="font-medium">Database initialized successfully</p>
                   <p className="text-sm text-gray-600">Today</p>
                 </div>
               </div>
