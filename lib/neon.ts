@@ -23,6 +23,9 @@ export interface User {
   created_at: string
   updated_at: string
   last_login_at?: string
+  warning_count?: number
+  suspension_reason?: string
+  suspension_expires_at?: string
 }
 
 export interface Recipe {
@@ -79,7 +82,7 @@ export interface Session {
   created_at: string
 }
 
-// Stack Auth configuration
+// Stack Auth configuration - REQUIRED EXPORT
 export function getStackAuthConfig() {
   return {
     projectId: process.env.STACK_PROJECT_ID || "",
@@ -199,7 +202,7 @@ initializeMockData()
 export async function findUserById(id: number) {
   try {
     const users = await sql`
-      SELECT id, username, email, role, status, is_verified, is_profile_verified, avatar_url, bio, location, website, created_at, updated_at, last_login_at
+      SELECT id, username, email, role, status, is_verified, is_profile_verified, avatar_url, bio, location, website, created_at, updated_at, last_login_at, warning_count, suspension_reason, suspension_expires_at
       FROM users 
       WHERE id = ${id}
     `
@@ -214,13 +217,48 @@ export async function findUserById(id: number) {
 export async function findUserByEmail(email: string) {
   try {
     const users = await sql`
-      SELECT id, username, email, password_hash, role, status, is_verified, is_profile_verified, avatar_url, bio, location, website, created_at
+      SELECT id, username, email, password_hash, role, status, is_verified, is_profile_verified, avatar_url, bio, location, website, created_at, warning_count, suspension_reason, suspension_expires_at
       FROM users 
       WHERE email = ${email}
     `
     return users[0] || null
   } catch (error) {
     console.error("Error finding user by email:", error)
+    return null
+  }
+}
+
+// Get all users - REQUIRED EXPORT
+export async function getAllUsers(): Promise<User[]> {
+  try {
+    const users = await sql`
+      SELECT id, username, email, role, status, is_verified, is_profile_verified, avatar_url, bio, location, website, created_at, updated_at, last_login_at, warning_count, suspension_reason, suspension_expires_at
+      FROM users 
+      ORDER BY created_at DESC
+    `
+    return users as User[]
+  } catch (error) {
+    console.error("Error getting all users:", error)
+    return Array.from(mockUsers.values())
+  }
+}
+
+// Update user by ID - REQUIRED EXPORT
+export async function updateUserById(id: number, updates: Partial<User>): Promise<User | null> {
+  try {
+    const setClause = Object.keys(updates)
+      .map((key, index) => `${key} = $${index + 2}`)
+      .join(", ")
+
+    const values = [id, ...Object.values(updates)]
+
+    const result = await sql`
+      UPDATE users SET ${sql.unsafe(setClause)}, updated_at = NOW() WHERE id = $1 RETURNING *
+    `.apply(null, values)
+
+    return (result[0] as User) || null
+  } catch (error) {
+    console.error("Error updating user by ID:", error)
     return null
   }
 }
@@ -255,7 +293,7 @@ export async function updateUser(id: number, updates: Partial<User>): Promise<Us
     const values = [id, ...Object.values(updates)]
 
     const result = await sql`
-      UPDATE users SET ${sql.unsafe(setClause)} WHERE id = $1 RETURNING *
+      UPDATE users SET ${sql.unsafe(setClause)}, updated_at = NOW() WHERE id = $1 RETURNING *
     `.apply(null, values)
 
     return (result[0] as User) || null
@@ -333,11 +371,43 @@ export async function initializeOwnerAccount() {
 export async function getAllRecipes(): Promise<Recipe[]> {
   try {
     const recipes = await sql`
-      SELECT * FROM recipes 
-      WHERE moderation_status = 'approved'
+      SELECT 
+        id,
+        title,
+        description,
+        author_id,
+        author_username,
+        category,
+        difficulty,
+        prep_time_minutes,
+        cook_time_minutes,
+        servings,
+        ingredients,
+        instructions,
+        image_url,
+        COALESCE(rating::DECIMAL, 0.0) as rating,
+        COALESCE(rating_count, 0) as rating_count,
+        COALESCE(review_count, 0) as review_count,
+        COALESCE(view_count, 0) as view_count,
+        moderation_status,
+        is_published,
+        created_at,
+        updated_at
+      FROM recipes 
+      WHERE moderation_status = 'approved' AND is_published = true
       ORDER BY created_at DESC
     `
-    return recipes as Recipe[]
+
+    return recipes.map((recipe) => ({
+      ...recipe,
+      rating: Number(recipe.rating) || 0,
+      rating_count: Number(recipe.rating_count) || 0,
+      review_count: Number(recipe.review_count) || 0,
+      view_count: Number(recipe.view_count) || 0,
+      prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
+      cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
+      servings: Number(recipe.servings) || 1,
+    })) as Recipe[]
   } catch (error) {
     console.error("Error getting recipes:", error)
     return Array.from(mockRecipes.values()).filter((r) => r.moderation_status === "approved")
@@ -347,34 +417,109 @@ export async function getAllRecipes(): Promise<Recipe[]> {
 export async function getRecipeById(id: number): Promise<Recipe | null> {
   try {
     const recipes = await sql`
-      SELECT * FROM recipes 
+      SELECT 
+        id,
+        title,
+        description,
+        author_id,
+        author_username,
+        category,
+        difficulty,
+        prep_time_minutes,
+        cook_time_minutes,
+        servings,
+        ingredients,
+        instructions,
+        image_url,
+        COALESCE(rating::DECIMAL, 0.0) as rating,
+        COALESCE(rating_count, 0) as rating_count,
+        COALESCE(review_count, 0) as review_count,
+        COALESCE(view_count, 0) as view_count,
+        moderation_status,
+        is_published,
+        created_at,
+        updated_at
+      FROM recipes 
       WHERE id = ${id}
     `
-    return (recipes[0] as Recipe) || null
+
+    if (recipes[0]) {
+      const recipe = recipes[0]
+      return {
+        ...recipe,
+        rating: Number(recipe.rating) || 0,
+        rating_count: Number(recipe.rating_count) || 0,
+        review_count: Number(recipe.review_count) || 0,
+        view_count: Number(recipe.view_count) || 0,
+        prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
+        cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
+        servings: Number(recipe.servings) || 1,
+      } as Recipe
+    }
+
+    return null
   } catch (error) {
     console.error("Error getting recipe by ID:", error)
     return mockRecipes.get(id) || null
   }
 }
 
-export async function createRecipe(recipeData: any): Promise<Recipe> {
+export async function createRecipe(recipeData: {
+  title: string
+  description?: string
+  author_id: number
+  author_username: string
+  category: string
+  difficulty: string
+  prep_time_minutes: number
+  cook_time_minutes: number
+  servings: number
+  ingredients: string
+  instructions: string
+  image_url?: string
+}): Promise<Recipe> {
   try {
+    console.log("🔍 Creating recipe with data:", recipeData)
+
     const result = await sql`
       INSERT INTO recipes (
         title, description, author_id, author_username, category, difficulty,
         prep_time_minutes, cook_time_minutes, servings, ingredients, instructions,
-        image_url, moderation_status, is_published, created_at, updated_at
+        image_url, rating, rating_count, review_count, view_count,
+        moderation_status, is_published, created_at, updated_at
       ) VALUES (
-        ${recipeData.title}, ${recipeData.description}, ${recipeData.author_id},
-        ${recipeData.author_username}, ${recipeData.category}, ${recipeData.difficulty},
-        ${recipeData.prep_time_minutes}, ${recipeData.cook_time_minutes}, ${recipeData.servings},
-        ${recipeData.ingredients}, ${recipeData.instructions}, ${recipeData.image_url},
+        ${recipeData.title}, 
+        ${recipeData.description || ""}, 
+        ${recipeData.author_id},
+        ${recipeData.author_username}, 
+        ${recipeData.category}, 
+        ${recipeData.difficulty},
+        ${recipeData.prep_time_minutes}, 
+        ${recipeData.cook_time_minutes}, 
+        ${recipeData.servings},
+        ${recipeData.ingredients}, 
+        ${recipeData.instructions}, 
+        ${recipeData.image_url || ""},
+        0.0, 0, 0, 0,
         'pending', false, NOW(), NOW()
       ) RETURNING *
     `
-    return result[0] as Recipe
+
+    console.log("✅ Recipe created successfully:", result[0])
+
+    const recipe = result[0]
+    return {
+      ...recipe,
+      rating: Number(recipe.rating) || 0,
+      rating_count: Number(recipe.rating_count) || 0,
+      review_count: Number(recipe.review_count) || 0,
+      view_count: Number(recipe.view_count) || 0,
+      prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
+      cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
+      servings: Number(recipe.servings) || 1,
+    } as Recipe
   } catch (error) {
-    console.error("Error creating recipe:", error)
+    console.error("❌ Error creating recipe:", error)
     throw error
   }
 }
@@ -382,9 +527,43 @@ export async function createRecipe(recipeData: any): Promise<Recipe> {
 export async function getPendingRecipes(): Promise<Recipe[]> {
   try {
     const result = await sql`
-      SELECT * FROM recipes WHERE moderation_status = 'pending' ORDER BY created_at DESC
+      SELECT 
+        id,
+        title,
+        description,
+        author_id,
+        author_username,
+        category,
+        difficulty,
+        prep_time_minutes,
+        cook_time_minutes,
+        servings,
+        ingredients,
+        instructions,
+        image_url,
+        COALESCE(rating::DECIMAL, 0.0) as rating,
+        COALESCE(rating_count, 0) as rating_count,
+        COALESCE(review_count, 0) as review_count,
+        COALESCE(view_count, 0) as view_count,
+        moderation_status,
+        is_published,
+        created_at,
+        updated_at
+      FROM recipes 
+      WHERE moderation_status = 'pending' 
+      ORDER BY created_at DESC
     `
-    return result as Recipe[]
+
+    return result.map((recipe) => ({
+      ...recipe,
+      rating: Number(recipe.rating) || 0,
+      rating_count: Number(recipe.rating_count) || 0,
+      review_count: Number(recipe.review_count) || 0,
+      view_count: Number(recipe.view_count) || 0,
+      prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
+      cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
+      servings: Number(recipe.servings) || 1,
+    })) as Recipe[]
   } catch (error) {
     console.error("Error getting pending recipes:", error)
     return Array.from(mockRecipes.values()).filter((r) => r.moderation_status === "pending")
@@ -406,7 +585,22 @@ export async function moderateRecipe(
       WHERE id = ${id}
       RETURNING *
     `
-    return (result[0] as Recipe) || null
+
+    if (result[0]) {
+      const recipe = result[0]
+      return {
+        ...recipe,
+        rating: Number(recipe.rating) || 0,
+        rating_count: Number(recipe.rating_count) || 0,
+        review_count: Number(recipe.review_count) || 0,
+        view_count: Number(recipe.view_count) || 0,
+        prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
+        cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
+        servings: Number(recipe.servings) || 1,
+      } as Recipe
+    }
+
+    return null
   } catch (error) {
     console.error("Error moderating recipe:", error)
     return null
@@ -453,6 +647,9 @@ export async function initializeDatabase() {
         bio TEXT,
         location VARCHAR(255),
         website VARCHAR(255),
+        warning_count INTEGER DEFAULT 0,
+        suspension_reason TEXT,
+        suspension_expires_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW(),
         last_login_at TIMESTAMP
@@ -540,6 +737,9 @@ export async function initializeDatabase() {
         created_at TIMESTAMP DEFAULT NOW()
       )
     `
+
+    // Initialize owner account
+    await initializeOwnerAccount()
 
     console.log("✅ Database tables created successfully")
     return true

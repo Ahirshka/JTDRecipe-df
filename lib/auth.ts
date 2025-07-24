@@ -1,373 +1,296 @@
-export interface User {
-  id: string
+import jwt from "jsonwebtoken"
+import bcrypt from "bcryptjs"
+import {
+  findUserById,
+  findUserByEmail,
+  createUser,
+  updateUser,
+  createSession,
+  findSessionByToken,
+  deleteSession,
+} from "./neon"
+
+const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
+
+export interface AuthUser {
+  id: number
   username: string
   email: string
-  password?: string
-  avatar?: string
-  provider?: string
-  socialId?: string
-  role: UserRole
-  status: UserStatus
-  createdAt: string
-  updatedAt: string
-  lastLoginAt?: string
-  moderationNotes?: ModerationNote[]
-  favorites: string[]
-  ratings: UserRating[]
-  myRecipes: string[]
-  isVerified: boolean
-  isSuspended: boolean
-  suspensionReason?: string
-  suspensionExpiresAt?: string
-  warningCount: number
+  role: string
+  status: string
+  is_verified: boolean
+  is_profile_verified: boolean
+  avatar_url?: string
+  bio?: string
+  location?: string
+  website?: string
+  created_at: string
+  updated_at: string
+  last_login_at?: string
 }
 
-export type UserRole = "user" | "moderator" | "admin" | "owner"
-export type UserStatus = "active" | "suspended" | "banned" | "pending"
-
-export interface ModerationNote {
-  id: string
-  moderatorId: string
-  moderatorName: string
-  note: string
-  action: ModerationAction
-  createdAt: string
+export interface LoginCredentials {
+  email: string
+  password: string
 }
 
-export type ModerationAction = "warning" | "suspension" | "ban" | "note" | "verification" | "role_change"
-
-export interface UserRating {
-  recipeId: string
-  rating: number
-  createdAt: string
+export interface RegisterData {
+  username: string
+  email: string
+  password: string
 }
 
-export interface AuthState {
-  isAuthenticated: boolean
-  user: User | null
+// Role hierarchy for permission checking
+export const ROLE_HIERARCHY = {
+  user: 1,
+  moderator: 2,
+  admin: 3,
+  owner: 4,
 }
 
-// Define role hierarchy with explicit levels
-export const ROLE_HIERARCHY: Record<UserRole, number> = {
-  user: 0,
-  moderator: 1,
-  admin: 2,
-  owner: 3,
-} as const
+// Generate JWT token
+export function generateToken(user: AuthUser): string {
+  return jwt.sign(
+    {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      username: user.username,
+    },
+    JWT_SECRET,
+    { expiresIn: "7d" },
+  )
+}
 
-// Define role permissions
-export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
-  user: ["view_recipes", "create_recipes", "rate_recipes", "favorite_recipes"],
-  moderator: [
-    "view_recipes",
-    "create_recipes",
-    "rate_recipes",
-    "favorite_recipes",
-    "moderate_recipes",
-    "moderate_comments",
-    "view_reports",
-  ],
-  admin: [
-    "view_recipes",
-    "create_recipes",
-    "rate_recipes",
-    "favorite_recipes",
-    "moderate_recipes",
-    "moderate_comments",
-    "view_reports",
-    "manage_users",
-    "manage_categories",
-    "view_analytics",
-  ],
-  owner: [
-    "view_recipes",
-    "create_recipes",
-    "rate_recipes",
-    "favorite_recipes",
-    "moderate_recipes",
-    "moderate_comments",
-    "view_reports",
-    "manage_users",
-    "manage_categories",
-    "view_analytics",
-    "manage_system",
-    "manage_admins",
-  ],
-} as const
+// Verify JWT token
+export function verifyToken(token: string): any {
+  try {
+    return jwt.verify(token, JWT_SECRET)
+  } catch (error) {
+    console.error("Token verification failed:", error)
+    return null
+  }
+}
 
-// Permission checking functions with proper error handling
-export const hasPermission = (userRole: string, requiredRole: string): boolean => {
+// Login user
+export async function loginUser(credentials: LoginCredentials): Promise<{ user: AuthUser; token: string } | null> {
+  try {
+    const user = await findUserByEmail(credentials.email)
+
+    if (!user) {
+      console.log("User not found:", credentials.email)
+      return null
+    }
+
+    // For the owner account, check plain text password first, then hash it
+    if (user.email === "aaronhirshka@gmail.com" && user.password_hash === "Morton2121") {
+      // Hash the plain text password
+      const hashedPassword = await bcrypt.hash("Morton2121", 12)
+      await updateUser(user.id, { password_hash: hashedPassword })
+      user.password_hash = hashedPassword
+    }
+
+    const isValidPassword = await bcrypt.compare(credentials.password, user.password_hash)
+
+    if (!isValidPassword) {
+      console.log("Invalid password for user:", credentials.email)
+      return null
+    }
+
+    // Update last login
+    await updateUser(user.id, { last_login_at: new Date().toISOString() })
+
+    const authUser: AuthUser = {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      is_verified: user.is_verified,
+      is_profile_verified: user.is_profile_verified,
+      avatar_url: user.avatar_url,
+      bio: user.bio,
+      location: user.location,
+      website: user.website,
+      created_at: user.created_at,
+      updated_at: user.updated_at,
+      last_login_at: user.last_login_at,
+    }
+
+    const token = generateToken(authUser)
+
+    // Create session in database
+    await createSession(user.id, token)
+
+    return { user: authUser, token }
+  } catch (error) {
+    console.error("Login error:", error)
+    return null
+  }
+}
+
+// Register user
+export async function registerUser(data: RegisterData): Promise<{ user: AuthUser; token: string } | null> {
+  try {
+    // Check if user already exists
+    const existingUser = await findUserByEmail(data.email)
+    if (existingUser) {
+      throw new Error("User already exists")
+    }
+
+    // Hash password
+    const password_hash = await bcrypt.hash(data.password, 12)
+
+    // Create user
+    const newUser = await createUser({
+      username: data.username,
+      email: data.email,
+      password_hash,
+      role: "user",
+      is_verified: false,
+      is_profile_verified: false,
+    })
+
+    const authUser: AuthUser = {
+      id: newUser.id,
+      username: newUser.username,
+      email: newUser.email,
+      role: newUser.role,
+      status: newUser.status,
+      is_verified: newUser.is_verified,
+      is_profile_verified: newUser.is_profile_verified,
+      avatar_url: newUser.avatar_url,
+      bio: newUser.bio,
+      location: newUser.location,
+      website: newUser.website,
+      created_at: newUser.created_at,
+      updated_at: newUser.updated_at,
+      last_login_at: newUser.last_login_at,
+    }
+
+    const token = generateToken(authUser)
+
+    // Create session in database
+    await createSession(newUser.id, token)
+
+    return { user: authUser, token }
+  } catch (error) {
+    console.error("Registration error:", error)
+    return null
+  }
+}
+
+// Get user from token
+export async function getUserFromToken(token: string): Promise<AuthUser | null> {
+  try {
+    const decoded = verifyToken(token)
+    if (!decoded) return null
+
+    // Check if session exists in database
+    const session = await findSessionByToken(token)
+    if (!session) return null
+
+    const user = await findUserById(decoded.id)
+    if (!user) return null
+
+    return {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      is_verified: user.is_verified,
+      is_profile_verified: user.is_profile_verified,
+      avatar_url: user.avatar_url,
+      bio: user.bio,
+      location: user.location,
+      website: user.website,
+      created_at: user.created_at,
+      updated_at: user.updated_at,
+      last_login_at: user.last_login_at,
+    }
+  } catch (error) {
+    console.error("Get user from token error:", error)
+    return null
+  }
+}
+
+// Logout user
+export async function logoutUser(token: string): Promise<boolean> {
+  try {
+    await deleteSession(token)
+    return true
+  } catch (error) {
+    console.error("Logout error:", error)
+    return false
+  }
+}
+
+// Check if user has permission
+export function hasPermission(userRole: string, requiredRole: string): boolean {
   const userLevel = ROLE_HIERARCHY[userRole as keyof typeof ROLE_HIERARCHY] || 0
   const requiredLevel = ROLE_HIERARCHY[requiredRole as keyof typeof ROLE_HIERARCHY] || 0
-
   return userLevel >= requiredLevel
 }
 
-export const canModerateUser = (
-  moderatorRole: UserRole | string | undefined,
-  targetRole: UserRole | string | undefined,
-): boolean => {
-  // Handle undefined roles
-  if (!moderatorRole || !targetRole) {
-    return false
-  }
+// Check if user is admin or owner
+export function isAdmin(user: AuthUser): boolean {
+  return user.role === "admin" || user.role === "owner"
+}
 
-  const validRoles: UserRole[] = ["user", "moderator", "admin", "owner"]
+// Check if user is owner
+export function isOwner(user: AuthUser): boolean {
+  return user.role === "owner"
+}
 
-  if (!validRoles.includes(moderatorRole as UserRole) || !validRoles.includes(targetRole as UserRole)) {
-    return false
-  }
-
-  const moderatorLevel = ROLE_HIERARCHY[moderatorRole as UserRole] || 0
-  const targetLevel = ROLE_HIERARCHY[targetRole as UserRole] || 0
-
+// Check if user can moderate another user
+export function canModerateUser(moderator: AuthUser, target: AuthUser): boolean {
+  const moderatorLevel = ROLE_HIERARCHY[moderator.role as keyof typeof ROLE_HIERARCHY] || 0
+  const targetLevel = ROLE_HIERARCHY[target.role as keyof typeof ROLE_HIERARCHY] || 0
   return moderatorLevel > targetLevel
 }
 
-// Check if user has specific permission
-export const hasSpecificPermission = (userRole: UserRole | string | undefined, permission: string): boolean => {
-  if (!userRole) {
-    return false
-  }
-
-  const validRoles: UserRole[] = ["user", "moderator", "admin", "owner"]
-
-  if (!validRoles.includes(userRole as UserRole)) {
-    return false
-  }
-
-  const permissions = ROLE_PERMISSIONS[userRole as UserRole] || []
-  return permissions.includes(permission)
-}
-
-// Get user role level
-export const getRoleLevel = (role: UserRole | string | undefined): number => {
-  if (!role) {
-    return 0
-  }
-
-  return ROLE_HIERARCHY[role as UserRole] || 0
-}
-
-// Check if role is valid
-export const isValidRole = (role: string | undefined): role is UserRole => {
-  if (!role) {
-    return false
-  }
-
-  const validRoles: UserRole[] = ["user", "moderator", "admin", "owner"]
-  return validRoles.includes(role as UserRole)
-}
-
-// Get default role
-export const getDefaultRole = (): UserRole => {
-  return "user"
-}
-
-// Simple storage functions (in production, use a proper database)
-export const saveUser = (
-  userData: Omit<
-    User,
-    | "id"
-    | "createdAt"
-    | "updatedAt"
-    | "favorites"
-    | "ratings"
-    | "myRecipes"
-    | "isVerified"
-    | "isSuspended"
-    | "warningCount"
-  >,
-): User => {
-  const users = getUsers()
-  const newUser: User = {
-    ...userData,
-    id: Date.now().toString(),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    favorites: [],
-    ratings: [],
-    myRecipes: [],
-    isVerified: false,
-    isSuspended: false,
-    warningCount: 0,
-    role: userData.role || "user",
-    status: userData.status || "active",
-  }
-
-  users.push(newUser)
-  if (typeof window !== "undefined") {
-    localStorage.setItem("recipe_users", JSON.stringify(users))
-  }
-  return newUser
-}
-
-export const updateUser = (userId: string, updates: Partial<User>): User | null => {
-  const users = getUsers()
-  const userIndex = users.findIndex((user) => user.id === userId)
-
-  if (userIndex === -1) return null
-
-  users[userIndex] = {
-    ...users[userIndex],
-    ...updates,
-    updatedAt: new Date().toISOString(),
-  }
-
-  if (typeof window !== "undefined") {
-    localStorage.setItem("recipe_users", JSON.stringify(users))
-  }
-
-  // Update current user if it's the same user
-  const currentUser = getCurrentUser()
-  if (currentUser && currentUser.id === userId) {
-    setCurrentUser(users[userIndex])
-  }
-
-  return users[userIndex]
-}
-
-export const getUsers = (): User[] => {
-  if (typeof window === "undefined") return []
-  const users = localStorage.getItem("recipe_users")
-  return users ? JSON.parse(users) : []
-}
-
-export const getAllUsersForModeration = (): User[] => {
-  return getUsers().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-}
-
-export const findUser = (email: string, password: string): User | null => {
-  const users = getUsers()
-  const user = users.find((user) => user.email === email && user.password === password) || null
-
-  if (user) {
-    // Update last login
-    updateUser(user.id, { lastLoginAt: new Date().toISOString() })
-    return { ...user, lastLoginAt: new Date().toISOString() }
-  }
-
-  return null
-}
-
-export const findUserByEmail = (email: string): User | null => {
-  const users = getUsers()
-  return users.find((user) => user.email === email) || null
-}
-
-export const findUserById = (id: string): User | null => {
-  const users = getUsers()
-  return users.find((user) => user.id === id) || null
-}
-
-export const getCurrentUser = (): User | null => {
-  if (typeof window === "undefined") return null
-  const currentUser = localStorage.getItem("current_user")
-  return currentUser ? JSON.parse(currentUser) : null
-}
-
-export const setCurrentUser = (user: User | null): void => {
-  if (typeof window === "undefined") return
-
-  if (user) {
-    localStorage.setItem("current_user", JSON.stringify(user))
-  } else {
-    localStorage.removeItem("current_user")
-  }
-}
-
-export const logout = (): void => {
-  if (typeof window === "undefined") return
-  localStorage.removeItem("current_user")
-}
-
-// Check if user is authenticated
-export function isAuthenticated(user: any): boolean {
-  return !!user && user.status === "active"
-}
-
-// Check if user is admin
-export function isAdmin(user: User | null): boolean {
-  return user !== null && hasPermission(user.role, "admin")
-}
-
-// Check if user is moderator or higher
-export function isModerator(user: User | null): boolean {
-  return user !== null && hasPermission(user.role, "moderator")
-}
-
-// Get user display name
-export function getUserDisplayName(user: User | null): string {
-  if (!user) return "Guest"
-  return user.username || user.email || "User"
-}
-
-// Get user initials for avatar
-export function getUserInitials(user: User | null): string {
-  if (!user || !user.username) return "U"
-
-  const names = user.username.split(" ")
-  if (names.length >= 2) {
-    return `${names[0][0]}${names[1][0]}`.toUpperCase()
-  }
-
-  return user.username.charAt(0).toUpperCase()
-}
-
-// Role display functions
-export function getRoleDisplayName(role: UserRole | string | undefined): string {
-  if (!role || !isValidRole(role)) {
-    return "User"
-  }
-
-  const roleNames: Record<UserRole, string> = {
-    user: "User",
-    moderator: "Moderator",
-    admin: "Administrator",
-    owner: "Owner",
-  }
-
-  return roleNames[role as UserRole] || "User"
-}
-
-export function getRoleBadgeColor(role: UserRole | string | undefined): string {
-  if (!role || !isValidRole(role)) {
-    return "bg-gray-100 text-gray-800"
-  }
-
-  const roleColors: Record<UserRole, string> = {
-    user: "bg-gray-100 text-gray-800",
-    moderator: "bg-blue-100 text-blue-800",
-    admin: "bg-red-100 text-red-800",
-    owner: "bg-purple-100 text-purple-800",
-  }
-
-  return roleColors[role as UserRole] || "bg-gray-100 text-gray-800"
-}
-
-// Missing exports that were required
-export async function suspendUser(userId: string, reason: string, durationDays: number): Promise<boolean> {
+// Get all users for moderation
+export async function getAllUsersForModeration(): Promise<AuthUser[]> {
   try {
-    const users = getUsers()
-    const userIndex = users.findIndex((user) => user.id === userId)
+    const { getAllUsers } = await import("./neon")
+    const users = await getAllUsers()
 
-    if (userIndex === -1) return false
+    return users.map((user) => ({
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      is_verified: user.is_verified,
+      is_profile_verified: user.is_profile_verified,
+      avatar_url: user.avatar_url,
+      bio: user.bio,
+      location: user.location,
+      website: user.website,
+      created_at: user.created_at,
+      updated_at: user.updated_at,
+      last_login_at: user.last_login_at,
+    }))
+  } catch (error) {
+    console.error("Error getting users for moderation:", error)
+    return []
+  }
+}
 
-    const expiresAt = new Date()
-    expiresAt.setDate(expiresAt.getDate() + durationDays)
+// Suspend user
+export async function suspendUser(userId: number, reason: string, duration?: string): Promise<boolean> {
+  try {
+    const { updateUserById } = await import("./neon")
+    const suspensionExpiresAt = duration
+      ? new Date(Date.now() + Number.parseInt(duration) * 24 * 60 * 60 * 1000).toISOString()
+      : null
 
-    users[userIndex] = {
-      ...users[userIndex],
+    await updateUserById(userId, {
       status: "suspended",
-      isSuspended: true,
-      suspensionReason: reason,
-      suspensionExpiresAt: expiresAt.toISOString(),
-      updatedAt: new Date().toISOString(),
-    }
-
-    if (typeof window !== "undefined") {
-      localStorage.setItem("recipe_users", JSON.stringify(users))
-    }
+      suspension_reason: reason,
+      suspension_expires_at: suspensionExpiresAt,
+    })
 
     return true
   } catch (error) {
@@ -376,25 +299,16 @@ export async function suspendUser(userId: string, reason: string, durationDays: 
   }
 }
 
-export async function unsuspendUser(userId: string): Promise<boolean> {
+// Unsuspend user
+export async function unsuspendUser(userId: number): Promise<boolean> {
   try {
-    const users = getUsers()
-    const userIndex = users.findIndex((user) => user.id === userId)
+    const { updateUserById } = await import("./neon")
 
-    if (userIndex === -1) return false
-
-    users[userIndex] = {
-      ...users[userIndex],
+    await updateUserById(userId, {
       status: "active",
-      isSuspended: false,
-      suspensionReason: undefined,
-      suspensionExpiresAt: undefined,
-      updatedAt: new Date().toISOString(),
-    }
-
-    if (typeof window !== "undefined") {
-      localStorage.setItem("recipe_users", JSON.stringify(users))
-    }
+      suspension_reason: null,
+      suspension_expires_at: null,
+    })
 
     return true
   } catch (error) {
@@ -403,23 +317,15 @@ export async function unsuspendUser(userId: string): Promise<boolean> {
   }
 }
 
-export async function banUser(userId: string, reason: string): Promise<boolean> {
+// Ban user
+export async function banUser(userId: number, reason: string): Promise<boolean> {
   try {
-    const users = getUsers()
-    const userIndex = users.findIndex((user) => user.id === userId)
+    const { updateUserById } = await import("./neon")
 
-    if (userIndex === -1) return false
-
-    users[userIndex] = {
-      ...users[userIndex],
+    await updateUserById(userId, {
       status: "banned",
-      suspensionReason: reason,
-      updatedAt: new Date().toISOString(),
-    }
-
-    if (typeof window !== "undefined") {
-      localStorage.setItem("recipe_users", JSON.stringify(users))
-    }
+      suspension_reason: reason,
+    })
 
     return true
   } catch (error) {
@@ -428,22 +334,14 @@ export async function banUser(userId: string, reason: string): Promise<boolean> 
   }
 }
 
-export async function changeUserRole(userId: string, newRole: UserRole): Promise<boolean> {
+// Change user role
+export async function changeUserRole(userId: number, newRole: string): Promise<boolean> {
   try {
-    const users = getUsers()
-    const userIndex = users.findIndex((user) => user.id === userId)
+    const { updateUserById } = await import("./neon")
 
-    if (userIndex === -1) return false
-
-    users[userIndex] = {
-      ...users[userIndex],
+    await updateUserById(userId, {
       role: newRole,
-      updatedAt: new Date().toISOString(),
-    }
-
-    if (typeof window !== "undefined") {
-      localStorage.setItem("recipe_users", JSON.stringify(users))
-    }
+    })
 
     return true
   } catch (error) {
@@ -452,22 +350,15 @@ export async function changeUserRole(userId: string, newRole: UserRole): Promise
   }
 }
 
-export async function verifyUser(userId: string): Promise<boolean> {
+// Verify user
+export async function verifyUser(userId: number): Promise<boolean> {
   try {
-    const users = getUsers()
-    const userIndex = users.findIndex((user) => user.id === userId)
+    const { updateUserById } = await import("./neon")
 
-    if (userIndex === -1) return false
-
-    users[userIndex] = {
-      ...users[userIndex],
-      isVerified: true,
-      updatedAt: new Date().toISOString(),
-    }
-
-    if (typeof window !== "undefined") {
-      localStorage.setItem("recipe_users", JSON.stringify(users))
-    }
+    await updateUserById(userId, {
+      is_verified: true,
+      is_profile_verified: true,
+    })
 
     return true
   } catch (error) {
@@ -476,22 +367,18 @@ export async function verifyUser(userId: string): Promise<boolean> {
   }
 }
 
-export async function warnUser(userId: string, reason: string): Promise<boolean> {
+// Warn user
+export async function warnUser(userId: number, reason: string): Promise<boolean> {
   try {
-    const users = getUsers()
-    const userIndex = users.findIndex((user) => user.id === userId)
+    const user = await findUserById(userId)
+    if (!user) return false
 
-    if (userIndex === -1) return false
+    const { updateUserById } = await import("./neon")
+    const newWarningCount = (user.warning_count || 0) + 1
 
-    users[userIndex] = {
-      ...users[userIndex],
-      warningCount: (users[userIndex].warningCount || 0) + 1,
-      updatedAt: new Date().toISOString(),
-    }
-
-    if (typeof window !== "undefined") {
-      localStorage.setItem("recipe_users", JSON.stringify(users))
-    }
+    await updateUserById(userId, {
+      warning_count: newWarningCount,
+    })
 
     return true
   } catch (error) {
@@ -500,10 +387,41 @@ export async function warnUser(userId: string, reason: string): Promise<boolean>
   }
 }
 
-export function canModerate(userRole: string): boolean {
-  return hasPermission(userRole, "moderator")
+// Save user (create new user)
+export async function saveUser(userData: RegisterData): Promise<AuthUser | null> {
+  try {
+    const password_hash = await bcrypt.hash(userData.password, 12)
+
+    const newUser = await createUser({
+      username: userData.username,
+      email: userData.email,
+      password_hash,
+      role: "user",
+      is_verified: false,
+      is_profile_verified: false,
+    })
+
+    return {
+      id: newUser.id,
+      username: newUser.username,
+      email: newUser.email,
+      role: newUser.role,
+      status: newUser.status,
+      is_verified: newUser.is_verified,
+      is_profile_verified: newUser.is_profile_verified,
+      avatar_url: newUser.avatar_url,
+      bio: newUser.bio,
+      location: newUser.location,
+      website: newUser.website,
+      created_at: newUser.created_at,
+      updated_at: newUser.updated_at,
+      last_login_at: newUser.last_login_at,
+    }
+  } catch (error) {
+    console.error("Error saving user:", error)
+    return null
+  }
 }
 
-export function canAdmin(userRole: string): boolean {
-  return hasPermission(userRole, "admin")
-}
+// Export findUserByEmail for compatibility
+export { findUserByEmail }

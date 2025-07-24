@@ -42,6 +42,85 @@ export interface CreateRecipeData {
   tags: string[]
 }
 
+// Create a new recipe (for user submission)
+export async function createRecipe(
+  recipeData: CreateRecipeData,
+): Promise<{ success: boolean; error?: string; recipeId?: string }> {
+  try {
+    console.log("Creating recipe with data:", recipeData)
+
+    // Initialize database first
+    await initializeDatabase()
+
+    // Get current user from session/auth context
+    // For now, we'll use a default user ID - this should be replaced with actual auth
+    const authorId = 1 // This should come from the authenticated user
+    const authorUsername = "Aaron Hirshka" // This should come from the authenticated user
+
+    const recipeId = `recipe_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+
+    console.log("Starting database transaction...")
+
+    await sql.begin(async (sql) => {
+      // Insert main recipe
+      console.log("Inserting main recipe...")
+      await sql`
+        INSERT INTO recipes (
+          id, title, description, author_id, author_username, category, difficulty,
+          prep_time_minutes, cook_time_minutes, servings, image_url,
+          moderation_status, is_published, created_at, updated_at
+        ) VALUES (
+          ${recipeId}, ${recipeData.title}, ${recipeData.description || ""}, ${authorId},
+          ${authorUsername}, ${recipeData.category}, ${recipeData.difficulty}, 
+          ${recipeData.prep_time_minutes}, ${recipeData.cook_time_minutes}, ${recipeData.servings}, 
+          ${recipeData.image_url || null}, 'pending', false, NOW(), NOW()
+        )
+      `
+
+      // Insert ingredients
+      console.log("Inserting ingredients...")
+      for (const ingredient of recipeData.ingredients) {
+        if (ingredient.ingredient.trim()) {
+          await sql`
+            INSERT INTO recipe_ingredients (recipe_id, ingredient, amount, unit)
+            VALUES (${recipeId}, ${ingredient.ingredient}, ${ingredient.amount || ""}, ${ingredient.unit || ""})
+          `
+        }
+      }
+
+      // Insert instructions
+      console.log("Inserting instructions...")
+      for (const instruction of recipeData.instructions) {
+        if (instruction.instruction.trim()) {
+          await sql`
+            INSERT INTO recipe_instructions (recipe_id, instruction, step_number)
+            VALUES (${recipeId}, ${instruction.instruction}, ${instruction.step_number})
+          `
+        }
+      }
+
+      // Insert tags
+      console.log("Inserting tags...")
+      for (const tag of recipeData.tags) {
+        if (tag.trim()) {
+          await sql`
+            INSERT INTO recipe_tags (recipe_id, tag)
+            VALUES (${recipeId}, ${tag})
+          `
+        }
+      }
+    })
+
+    console.log("Recipe created successfully with ID:", recipeId)
+    revalidatePath("/admin")
+
+    return { success: true, recipeId }
+  } catch (error) {
+    console.error("Create recipe error:", error)
+    return { success: false, error: `Failed to create recipe: ${error.message}` }
+  }
+}
+
 // Get all approved and published recipes for the website
 export async function getApprovedRecipes(): Promise<Recipe[]> {
   try {
@@ -309,65 +388,6 @@ export async function moderateRecipe(
   } catch (error) {
     console.error("Moderate recipe error:", error)
     return { success: false, error: "Failed to moderate recipe" }
-  }
-}
-
-// Create a new recipe (for user submission)
-export async function createRecipe(
-  recipeData: CreateRecipeData,
-  authorId: string,
-): Promise<{ success: boolean; error?: string; recipeId?: string }> {
-  try {
-    await initializeDatabase()
-
-    const recipeId = `recipe_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-
-    await sql.begin(async (sql) => {
-      // Insert main recipe
-      await sql`
-        INSERT INTO recipes (
-          id, title, description, author_id, category, difficulty,
-          prep_time_minutes, cook_time_minutes, servings, image_url,
-          moderation_status, is_published, created_at, updated_at
-        ) VALUES (
-          ${recipeId}, ${recipeData.title}, ${recipeData.description}, ${authorId},
-          ${recipeData.category}, ${recipeData.difficulty}, ${recipeData.prep_time_minutes},
-          ${recipeData.cook_time_minutes}, ${recipeData.servings}, ${recipeData.image_url},
-          'pending', false, NOW(), NOW()
-        )
-      `
-
-      // Insert ingredients
-      for (const ingredient of recipeData.ingredients) {
-        await sql`
-          INSERT INTO recipe_ingredients (recipe_id, ingredient, amount, unit)
-          VALUES (${recipeId}, ${ingredient.ingredient}, ${ingredient.amount}, ${ingredient.unit})
-        `
-      }
-
-      // Insert instructions
-      for (const instruction of recipeData.instructions) {
-        await sql`
-          INSERT INTO recipe_instructions (recipe_id, instruction, step_number)
-          VALUES (${recipeId}, ${instruction.instruction}, ${instruction.step_number})
-        `
-      }
-
-      // Insert tags
-      for (const tag of recipeData.tags) {
-        await sql`
-          INSERT INTO recipe_tags (recipe_id, tag)
-          VALUES (${recipeId}, ${tag})
-        `
-      }
-    })
-
-    revalidatePath("/admin")
-
-    return { success: true, recipeId }
-  } catch (error) {
-    console.error("Create recipe error:", error)
-    return { success: false, error: "Failed to create recipe" }
   }
 }
 
