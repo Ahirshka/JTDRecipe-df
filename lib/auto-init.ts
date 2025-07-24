@@ -1,38 +1,20 @@
-import { sql } from "@/lib/neon"
+import { initializeDatabase } from "./neon"
 
-export async function checkAndInitializeDatabase() {
+export async function autoInitializeDatabase() {
   try {
-    // Check if database is initialized
-    const ownerExists = await sql`
-      SELECT id FROM users WHERE email = 'aaronhirshka@gmail.com' AND role = 'owner'
-    `
+    console.log("🔍 Checking if database needs initialization...")
 
-    if (ownerExists.length === 0) {
-      console.log("🚀 Database not initialized, triggering auto-initialization...")
+    const success = await initializeDatabase()
 
-      // Call the auto-init endpoint
-      const response = await fetch(`${process.env.VERCEL_URL || "http://localhost:3000"}/api/auto-init`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-      })
-
-      const result = await response.json()
-
-      if (result.success) {
-        console.log("✅ Database auto-initialized successfully")
-        return true
-      } else {
-        console.error("❌ Database auto-initialization failed:", result.error)
-        return false
-      }
+    if (success) {
+      console.log("✅ Database auto-initialization completed")
+      return true
+    } else {
+      console.log("❌ Database auto-initialization failed")
+      return false
     }
-
-    console.log("✅ Database already initialized")
-    return true
   } catch (error) {
-    console.error("❌ Database check failed:", error)
+    console.error("Auto-initialization error:", error)
     return false
   }
 }

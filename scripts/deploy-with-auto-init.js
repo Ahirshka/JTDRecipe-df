@@ -1,76 +1,47 @@
-#!/usr/bin/env node
-
 const { execSync } = require("child_process")
-const https = require("https")
-
-console.log("🚀 Deploying Recipe Site with Auto-Initialization")
-console.log("=".repeat(60))
 
 async function deployWithAutoInit() {
   try {
+    console.log("🚀 Starting deployment with auto-initialization...")
+
+    // Build the application
     console.log("📦 Building application...")
+    execSync("npm run build", { stdio: "inherit" })
 
-    // Simulate build process
-    console.log("✅ Dependencies installed")
-    console.log("✅ TypeScript compiled")
-    console.log("✅ Next.js build completed")
-    console.log("✅ Build successful")
+    // Deploy to Vercel
+    console.log("🌐 Deploying to Vercel...")
+    execSync("vercel --prod", { stdio: "inherit" })
 
-    console.log("\n🌐 Deploying to Vercel...")
-    console.log("✅ Code uploaded to Vercel")
-    console.log("✅ Build completed on Vercel")
-    console.log("✅ Deployment successful")
-    console.log("🌍 Deployed to: https://www.justhtedamnrecipe.net")
+    // Wait a moment for deployment to be ready
+    console.log("⏳ Waiting for deployment to be ready...")
+    await new Promise((resolve) => setTimeout(resolve, 10000))
 
-    console.log("\n⏳ Waiting for deployment to be ready...")
-    await new Promise((resolve) => setTimeout(resolve, 3000))
+    // Try to initialize the database
+    console.log("🗄️ Initializing database...")
+    try {
+      const response = await fetch("https://www.justhtedamnrecipe.net/api/auto-init", {
+        method: "POST",
+      })
+      const result = await response.json()
 
-    console.log("\n🗄️ Triggering database auto-initialization...")
-
-    // Simulate the auto-initialization API call
-    const initResult = {
-      success: true,
-      message: "Database auto-initialized successfully on deployment",
-      data: {
-        owner: {
-          id: 1,
-          username: "Aaron Hirshka",
-          email: "aaronhirshka@gmail.com",
-          role: "owner",
-        },
-        sampleRecipe: {
-          id: 1,
-          title: "Perfect Scrambled Eggs",
-        },
-      },
+      if (result.success) {
+        console.log("✅ Database initialized successfully!")
+      } else {
+        console.log("⚠️ Database initialization may have failed, but deployment is complete")
+      }
+    } catch (error) {
+      console.log("⚠️ Could not auto-initialize database, but deployment is complete")
+      console.log("💡 You can manually initialize at: https://www.justhtedamnrecipe.net/database-setup")
     }
 
-    console.log("✅ Database auto-initialized successfully!")
-    console.log("👤 Owner account ready:", initResult.data.owner.email)
-    console.log("🍳 Sample recipe created:", initResult.data.sampleRecipe.title)
-
-    console.log("\n🎉 Deployment Complete!")
-    console.log("=".repeat(60))
-    console.log("🌍 Site URL: https://www.justhtedamnrecipe.net")
+    console.log("🎉 Deployment completed!")
+    console.log("🌐 Site: https://www.justhtedamnrecipe.net")
     console.log("👤 Owner Login: aaronhirshka@gmail.com / Morton2121")
-    console.log("🔧 Admin Panel: https://www.justhtedamnrecipe.net/admin")
-    console.log("📊 Database Status: Initialized with owner account")
-    console.log("🍳 Sample Data: 1 recipe ready for testing")
-
-    console.log("\n📋 Next Steps:")
-    console.log("1. Visit the site and login as owner")
-    console.log("2. Test recipe submission functionality")
-    console.log("3. Check admin panel for user management")
-    console.log("4. Review flagged comments system")
-
-    return true
+    console.log("⚙️ Admin Panel: https://www.justhtedamnrecipe.net/admin")
+    console.log("🗄️ Database Setup: https://www.justhtedamnrecipe.net/database-setup")
   } catch (error) {
     console.error("❌ Deployment failed:", error.message)
-    console.log("\n🔧 Manual steps:")
-    console.log("1. Run: pnpm build")
-    console.log("2. Run: vercel --prod")
-    console.log("3. Visit: https://www.justhtedamnrecipe.net/api/auto-init")
-    return false
+    process.exit(1)
   }
 }
 

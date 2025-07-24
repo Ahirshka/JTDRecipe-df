@@ -1,160 +1,138 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { sql, initializeDatabase } from "@/lib/neon"
+import { sql } from "@/lib/neon"
 import jwt from "jsonwebtoken"
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
-// Get flagged comments for admin review
 export async function GET(request: NextRequest) {
   try {
-    await initializeDatabase()
-
-    const token = request.cookies.get("auth-token")?.value
-    if (!token) {
+    const authHeader = request.headers.get("authorization")
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
     }
 
+    const token = authHeader.substring(7)
     let decoded: any
+
     try {
       decoded = jwt.verify(token, JWT_SECRET)
-    } catch (error) {
-      return NextResponse.json({ success: false, error: "Invalid token" }, { status: 401 })
+    } catch (jwtError) {
+      return NextResponse.json({ success: false, error: "Invalid authentication token" }, { status: 401 })
     }
 
-    // Check if user is admin/moderator
-    const user = await sql`
+    // Check if user is admin or owner
+    const userResult = await sql`
       SELECT role FROM users WHERE id = ${decoded.userId}
     `
 
-    if (!user.length || !["admin", "owner", "moderator"].includes(user[0].role)) {
-      return NextResponse.json({ success: false, error: "Insufficient permissions" }, { status: 403 })
+    if (userResult.length === 0 || !["admin", "owner"].includes(userResult[0].role)) {
+      return NextResponse.json({ success: false, error: "Admin access required" }, { status: 403 })
     }
 
     const flaggedComments = await sql`
       SELECT 
-        c.*,
-        u.username,
-        u.avatar_url,
+        c.id,
+        c.content,
+        c.status,
+        c.is_flagged,
+        c.flag_reason,
+        c.flagged_at,
+        c.created_at,
+        c.username as author_username,
         r.title as recipe_title,
+        r.id as recipe_id,
         flagger.username as flagged_by_username
       FROM comments c
-      JOIN users u ON c.user_id = u.id
       JOIN recipes r ON c.recipe_id = r.id
       LEFT JOIN users flagger ON c.flagged_by = flagger.id
-      WHERE c.is_flagged = true AND c.status != 'rejected'
+      WHERE c.is_flagged = true
       ORDER BY c.flagged_at DESC
     `
 
     return NextResponse.json({
       success: true,
-      comments: flaggedComments.map((comment: any) => ({
-        id: comment.id,
-        content: comment.content,
-        user_id: comment.user_id,
-        username: comment.username,
-        avatar_url: comment.avatar_url,
-        recipe_id: comment.recipe_id,
-        recipe_title: comment.recipe_title,
-        created_at: comment.created_at,
-        flagged_at: comment.flagged_at,
-        flagged_by_username: comment.flagged_by_username,
-        flag_reason: comment.flag_reason,
-        status: comment.status,
-      })),
+      flaggedComments,
     })
   } catch (error) {
-    console.error("Get flagged comments error:", error)
-    return NextResponse.json({ success: false, error: "Failed to get flagged comments" }, { status: 500 })
+    console.error("Error fetching flagged comments:", error)
+    return NextResponse.json({ success: false, error: "Failed to fetch flagged comments" }, { status: 500 })
   }
 }
 
-// Moderate flagged comment (approve/reject/unflag)
-export async function POST(request: NextRequest) {
+export async function PUT(request: NextRequest) {
   try {
-    await initializeDatabase()
-
-    const token = request.cookies.get("auth-token")?.value
-    if (!token) {
+    const authHeader = request.headers.get("authorization")
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
     }
 
+    const token = authHeader.substring(7)
     let decoded: any
+
     try {
       decoded = jwt.verify(token, JWT_SECRET)
-    } catch (error) {
-      return NextResponse.json({ success: false, error: "Invalid token" }, { status: 401 })
+    } catch (jwtError) {
+      return NextResponse.json({ success: false, error: "Invalid authentication token" }, { status: 401 })
     }
 
-    // Check if user is admin/moderator
-    const user = await sql`
+    // Check if user is admin or owner
+    const userResult = await sql`
       SELECT role FROM users WHERE id = ${decoded.userId}
     `
 
-    if (!user.length || !["admin", "owner", "moderator"].includes(user[0].role)) {
-      return NextResponse.json({ success: false, error: "Insufficient permissions" }, { status: 403 })
+    if (userResult.length === 0 || !["admin", "owner"].includes(userResult[0].role)) {
+      return NextResponse.json({ success: false, error: "Admin access required" }, { status: 403 })
     }
 
-    const { commentId, action, reason } = await request.json()
+    const body = await request.json()
+    const { commentId, action, reason } = body
 
-    if (!commentId || !["approve", "reject", "unflag"].includes(action)) {
-      return NextResponse.json({ success: false, error: "Valid comment ID and action required" }, { status: 400 })
+    if (!commentId || !action) {
+      return NextResponse.json({ success: false, error: "Comment ID and action are required" }, { status: 400 })
     }
 
-    let updateQuery = ""
-    let params: any[] = []
+    let status: string
+    let isApproved = false
 
     switch (action) {
       case "approve":
-        updateQuery = `
-          UPDATE comments 
-          SET 
-            status = 'approved',
-            is_flagged = false,
-            moderation_reason = $2,
-            moderated_by = $3,
-            moderated_at = NOW(),
-            updated_at = NOW()
-          WHERE id = $1
-        `
-        params = [commentId, reason || null, decoded.userId]
+        status = "approved"
+        isApproved = true
         break
       case "reject":
-        updateQuery = `
-          UPDATE comments 
-          SET 
-            status = 'rejected',
-            is_flagged = false,
-            moderation_reason = $2,
-            moderated_by = $3,
-            moderated_at = NOW(),
-            updated_at = NOW()
-          WHERE id = $1
-        `
-        params = [commentId, reason || null, decoded.userId]
+        status = "rejected"
         break
-      case "unflag":
-        updateQuery = `
-          UPDATE comments 
-          SET 
-            is_flagged = false,
-            moderation_reason = $2,
-            moderated_by = $3,
-            moderated_at = NOW(),
-            updated_at = NOW()
-          WHERE id = $1
-        `
-        params = [commentId, reason || null, decoded.userId]
+      case "remove":
+        status = "removed"
         break
+      default:
+        return NextResponse.json({ success: false, error: "Invalid action" }, { status: 400 })
     }
 
-    await sql.unsafe(updateQuery, params)
+    const result = await sql`
+      UPDATE comments 
+      SET 
+        status = ${status},
+        is_flagged = ${!isApproved},
+        moderation_reason = ${reason || null},
+        moderated_by = ${decoded.userId},
+        moderated_at = NOW(),
+        updated_at = NOW()
+      WHERE id = ${commentId}
+      RETURNING *
+    `
+
+    if (result.length === 0) {
+      return NextResponse.json({ success: false, error: "Comment not found" }, { status: 404 })
+    }
 
     return NextResponse.json({
       success: true,
       message: `Comment ${action}d successfully`,
+      comment: result[0],
     })
   } catch (error) {
-    console.error("Moderate flagged comment error:", error)
+    console.error("Error moderating flagged comment:", error)
     return NextResponse.json({ success: false, error: "Failed to moderate comment" }, { status: 500 })
   }
 }

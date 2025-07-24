@@ -5,15 +5,13 @@ import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/toaster"
 import { AuthProvider } from "@/contexts/auth-context"
-import { Navigation } from "@/components/navigation"
-import { Footer } from "@/components/footer"
 
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
   title: "Just The Damn Recipe",
-  description: "A clean, simple recipe sharing platform without the fluff",
-  keywords: "recipes, cooking, food, simple recipes, clean recipes",
+  description: "Simple recipes without the life stories - just the damn recipe!",
+  keywords: ["recipes", "cooking", "food", "simple", "quick"],
   authors: [{ name: "Aaron Hirshka" }],
   creator: "Aaron Hirshka",
   publisher: "Just The Damn Recipe",
@@ -21,32 +19,6 @@ export const metadata: Metadata = {
     email: false,
     address: false,
     telephone: false,
-  },
-  metadataBase: new URL("https://www.justhtedamnrecipe.net"),
-  openGraph: {
-    title: "Just The Damn Recipe",
-    description: "A clean, simple recipe sharing platform without the fluff",
-    url: "https://www.justhtedamnrecipe.net",
-    siteName: "Just The Damn Recipe",
-    locale: "en_US",
-    type: "website",
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "Just The Damn Recipe",
-    description: "A clean, simple recipe sharing platform without the fluff",
-    creator: "@justhtedamnrecipe",
-  },
-  robots: {
-    index: true,
-    follow: true,
-    googleBot: {
-      index: true,
-      follow: true,
-      "max-video-preview": -1,
-      "max-image-preview": "large",
-      "max-snippet": -1,
-    },
   },
     generator: 'v0.dev'
 }
@@ -59,13 +31,9 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={inter.className}>
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+        <ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>
           <AuthProvider>
-            <div className="min-h-screen flex flex-col">
-              <Navigation />
-              <main className="flex-1">{children}</main>
-              <Footer />
-            </div>
+            {children}
             <Toaster />
           </AuthProvider>
         </ThemeProvider>

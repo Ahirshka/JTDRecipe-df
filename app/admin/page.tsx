@@ -1,351 +1,223 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useState, useEffect } from "react"
+import { useAuth } from "@/contexts/auth-context"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Users, FileText, MessageCircle, Flag, BarChart3, Shield, Settings, ChefHat, AlertTriangle } from "lucide-react"
+import { Users, FileText, AlertTriangle, MessageSquare, Settings, Flag } from "lucide-react"
+import Link from "next/link"
 
 interface AdminStats {
   users: number
   recipes: number
   pending: number
-  comments?: number
   flaggedComments?: number
 }
 
 export default function AdminDashboard() {
+  const { user, token } = useAuth()
   const [stats, setStats] = useState<AdminStats>({ users: 0, recipes: 0, pending: 0 })
   const [loading, setLoading] = useState(true)
-  const [user, setUser] = useState<any>(null)
-  const [message, setMessage] = useState("")
-  const router = useRouter()
 
   useEffect(() => {
-    checkAuth()
-    loadStats()
-  }, [])
-
-  const checkAuth = async () => {
-    try {
-      const response = await fetch("/api/auth/me", {
-        credentials: "include",
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        if (data.success && (data.user.role === "admin" || data.user.role === "owner")) {
-          setUser(data.user)
-        } else {
-          router.push("/login")
-        }
-      } else {
-        router.push("/login")
-      }
-    } catch (error) {
-      console.error("Auth check failed:", error)
-      router.push("/login")
+    if (user && (user.role === "admin" || user.role === "owner")) {
+      fetchStats()
     }
-  }
+  }, [user])
 
-  const loadStats = async () => {
+  const fetchStats = async () => {
     try {
       const response = await fetch("/api/admin/stats", {
-        credentials: "include",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       })
 
-      if (response.ok) {
-        const data = await response.json()
-        if (data.success) {
-          setStats(data.stats)
-        } else {
-          setMessage("Failed to load statistics")
-        }
-      } else {
-        setMessage("Failed to load statistics")
+      const data = await response.json()
+
+      if (data.success) {
+        setStats(data.stats)
       }
     } catch (error) {
-      console.error("Failed to load stats:", error)
-      setMessage("Failed to load statistics")
+      console.error("Error fetching admin stats:", error)
     } finally {
       setLoading(false)
     }
   }
 
-  if (loading) {
+  if (!user || (user.role !== "admin" && user.role !== "owner")) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4"></div>
-          <p>Loading admin dashboard...</p>
-        </div>
+      <div className="container mx-auto px-4 py-8">
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-center text-muted-foreground">
+              You don't have permission to access the admin dashboard.
+            </p>
+          </CardContent>
+        </Card>
       </div>
     )
   }
 
-  if (!user) {
-    return null // Will redirect to login
-  }
-
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-4">
-              <Shield className="h-8 w-8 text-blue-500" />
-              <h1 className="text-2xl font-bold text-gray-900">Admin Dashboard</h1>
-            </div>
-            <div className="flex items-center space-x-4">
-              <Badge variant="outline" className="bg-blue-50 text-blue-700">
-                {user.role}
-              </Badge>
-              <span className="text-sm text-gray-600">Welcome, {user.username}</span>
-              <Button variant="outline" size="sm" onClick={() => router.push("/")}>
-                Back to Site
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
+    <div className="container mx-auto px-4 py-8">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold">Admin Dashboard</h1>
+        <p className="text-muted-foreground mt-2">Welcome back, {user.username}. Manage your recipe site from here.</p>
+      </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {message && (
-          <Alert className="mb-6">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertDescription>{message}</AlertDescription>
-          </Alert>
-        )}
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Users</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{loading ? "..." : stats.users}</div>
+            <p className="text-xs text-muted-foreground">Registered users</p>
+          </CardContent>
+        </Card>
 
-        {/* Stats Overview */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Users</CardTitle>
-              <Users className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.users}</div>
-              <p className="text-xs text-muted-foreground">Registered accounts</p>
-            </CardContent>
-          </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Published Recipes</CardTitle>
+            <FileText className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{loading ? "..." : stats.recipes}</div>
+            <p className="text-xs text-muted-foreground">Live recipes</p>
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Published Recipes</CardTitle>
-              <ChefHat className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.recipes}</div>
-              <p className="text-xs text-muted-foreground">Live on the site</p>
-            </CardContent>
-          </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Pending Approval</CardTitle>
+            <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{loading ? "..." : stats.pending}</div>
+            <p className="text-xs text-muted-foreground">Awaiting moderation</p>
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Pending Reviews</CardTitle>
-              <FileText className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.pending}</div>
-              <p className="text-xs text-muted-foreground">Awaiting moderation</p>
-            </CardContent>
-          </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Flagged Comments</CardTitle>
+            <Flag className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{loading ? "..." : stats.flaggedComments || 0}</div>
+            <p className="text-xs text-muted-foreground">Need review</p>
+          </CardContent>
+        </Card>
+      </div>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Flagged Content</CardTitle>
-              <Flag className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.flaggedComments || 0}</div>
-              <p className="text-xs text-muted-foreground">Needs attention</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Quick Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {/* User Management */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Users className="h-5 w-5" />
-                User Management
-              </CardTitle>
-              <CardDescription>Manage user accounts, roles, and permissions</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <Button
-                  className="w-full justify-start bg-transparent"
-                  variant="outline"
-                  onClick={() => router.push("/admin/users")}
-                >
-                  <Users className="mr-2 h-4 w-4" />
+      {/* Quick Actions */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="h-5 w-5" />
+              User Management
+            </CardTitle>
+            <CardDescription>Manage user accounts, roles, and permissions</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <Link href="/admin/users">
+                <Button className="w-full bg-transparent" variant="outline">
                   Manage Users
                 </Button>
-                <div className="text-sm text-gray-600">
-                  <p>• Search and filter users</p>
-                  <p>• Block or suspend accounts</p>
-                  <p>• Verify user profiles</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
 
-          {/* Recipe Moderation */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ChefHat className="h-5 w-5" />
-                Recipe Moderation
-              </CardTitle>
-              <CardDescription>Review and moderate recipe submissions</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <Button
-                  className="w-full justify-start bg-transparent"
-                  variant="outline"
-                  onClick={() => router.push("/admin/recipes")}
-                >
-                  <FileText className="mr-2 h-4 w-4" />
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              Recipe Moderation
+            </CardTitle>
+            <CardDescription>Review and approve pending recipes</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <Link href="/admin/recipes">
+                <Button className="w-full bg-transparent" variant="outline">
                   Review Recipes
-                  {stats.pending > 0 && <Badge className="ml-auto bg-red-500">{stats.pending}</Badge>}
-                </Button>
-                <div className="text-sm text-gray-600">
-                  <p>• Approve or reject recipes</p>
-                  <p>• Edit before publishing</p>
-                  <p>• Manage recipe categories</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Comment Moderation */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <MessageCircle className="h-5 w-5" />
-                Comment Moderation
-              </CardTitle>
-              <CardDescription>Monitor and moderate user comments</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <Button
-                  className="w-full justify-start bg-transparent"
-                  variant="outline"
-                  onClick={() => router.push("/admin/comments")}
-                >
-                  <MessageCircle className="mr-2 h-4 w-4" />
-                  Pending Comments
-                </Button>
-                <Button
-                  className="w-full justify-start bg-transparent"
-                  variant="outline"
-                  onClick={() => router.push("/admin/flagged-comments")}
-                >
-                  <Flag className="mr-2 h-4 w-4" />
-                  Flagged Comments
-                  {(stats.flaggedComments || 0) > 0 && (
-                    <Badge className="ml-auto bg-red-500">{stats.flaggedComments}</Badge>
+                  {stats.pending > 0 && (
+                    <Badge variant="destructive" className="ml-2">
+                      {stats.pending}
+                    </Badge>
                   )}
                 </Button>
-                <div className="text-sm text-gray-600">
-                  <p>• Review flagged content</p>
-                  <p>• Approve or reject comments</p>
-                  <p>• Manage bad language filter</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
 
-          {/* Analytics */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BarChart3 className="h-5 w-5" />
-                Analytics
-              </CardTitle>
-              <CardDescription>View site statistics and performance</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <Button className="w-full justify-start bg-transparent" variant="outline" disabled>
-                  <BarChart3 className="mr-2 h-4 w-4" />
-                  View Analytics
-                  <Badge className="ml-auto" variant="secondary">
-                    Soon
-                  </Badge>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <MessageSquare className="h-5 w-5" />
+              Comment Moderation
+            </CardTitle>
+            <CardDescription>Review comments and handle reports</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <Link href="/admin/comments">
+                <Button className="w-full bg-transparent" variant="outline">
+                  Moderate Comments
                 </Button>
-                <div className="text-sm text-gray-600">
-                  <p>• User engagement metrics</p>
-                  <p>• Popular recipes</p>
-                  <p>• Site performance data</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
 
-          {/* Site Settings */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Settings className="h-5 w-5" />
-                Site Settings
-              </CardTitle>
-              <CardDescription>Configure site-wide settings and preferences</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <Button className="w-full justify-start bg-transparent" variant="outline" disabled>
-                  <Settings className="mr-2 h-4 w-4" />
-                  Site Configuration
-                  <Badge className="ml-auto" variant="secondary">
-                    Soon
-                  </Badge>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Flag className="h-5 w-5" />
+              Flagged Content
+            </CardTitle>
+            <CardDescription>Review user-flagged comments and content</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <Link href="/admin/flagged-comments">
+                <Button className="w-full bg-transparent" variant="outline">
+                  Review Flagged Content
+                  {(stats.flaggedComments || 0) > 0 && (
+                    <Badge variant="destructive" className="ml-2">
+                      {stats.flaggedComments}
+                    </Badge>
+                  )}
                 </Button>
-                <div className="text-sm text-gray-600">
-                  <p>• Email settings</p>
-                  <p>• Moderation rules</p>
-                  <p>• Feature toggles</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
 
-          {/* System Status */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Shield className="h-5 w-5" />
-                System Status
-              </CardTitle>
-              <CardDescription>Monitor system health and performance</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Database</span>
-                  <Badge className="bg-green-100 text-green-800">Online</Badge>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Authentication</span>
-                  <Badge className="bg-green-100 text-green-800">Active</Badge>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">File Storage</span>
-                  <Badge className="bg-green-100 text-green-800">Ready</Badge>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Settings className="h-5 w-5" />
+              Site Settings
+            </CardTitle>
+            <CardDescription>Configure site settings and preferences</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <Button className="w-full bg-transparent" variant="outline" disabled>
+                Coming Soon
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   )
