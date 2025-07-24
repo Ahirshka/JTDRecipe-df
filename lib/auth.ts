@@ -1,16 +1,62 @@
 import jwt from "jsonwebtoken"
 import bcrypt from "bcryptjs"
+import { cookies } from "next/headers"
 import {
   findUserById,
-  findUserByEmail,
+  findUserByEmail as findUserByEmailInDB,
   createUser,
   updateUser,
   createSession,
-  findSessionByToken,
   deleteSession,
+  getAllUsers,
+  updateUserById,
 } from "./neon"
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
+const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-this-in-production"
+
+export interface User {
+  id: string
+  username: string
+  email: string
+  password?: string
+  avatar?: string
+  provider?: string
+  socialId?: string
+  role: UserRole
+  status: UserStatus
+  createdAt: string
+  updatedAt: string
+  lastLoginAt?: string
+  moderationNotes?: ModerationNote[]
+  favorites: string[]
+  ratings: UserRating[]
+  myRecipes: string[]
+  isVerified: boolean
+  isSuspended: boolean
+  suspensionReason?: string
+  suspensionExpiresAt?: string
+  warningCount: number
+}
+
+export type UserRole = "user" | "moderator" | "admin" | "owner"
+export type UserStatus = "active" | "suspended" | "banned" | "pending"
+
+export interface ModerationNote {
+  id: string
+  moderatorId: string
+  moderatorName: string
+  note: string
+  action: ModerationAction
+  createdAt: string
+}
+
+export type ModerationAction = "warning" | "suspension" | "ban" | "note" | "verification" | "role_change"
+
+export interface UserRating {
+  recipeId: string
+  rating: number
+  createdAt: string
+}
 
 export interface AuthUser {
   id: number
@@ -29,24 +75,58 @@ export interface AuthUser {
   last_login_at?: string
 }
 
-export interface LoginCredentials {
-  email: string
-  password: string
+export interface AuthState {
+  isAuthenticated: boolean
+  user: User | null
 }
 
-export interface RegisterData {
-  username: string
-  email: string
-  password: string
-}
-
-// Role hierarchy for permission checking
-export const ROLE_HIERARCHY = {
+// Define role hierarchy with explicit levels
+export const ROLE_HIERARCHY: Record<UserRole, number> = {
   user: 1,
   moderator: 2,
   admin: 3,
   owner: 4,
-}
+} as const
+
+// Define role permissions
+export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
+  user: ["view_recipes", "create_recipes", "rate_recipes", "favorite_recipes"],
+  moderator: [
+    "view_recipes",
+    "create_recipes",
+    "rate_recipes",
+    "favorite_recipes",
+    "moderate_recipes",
+    "moderate_comments",
+    "view_reports",
+  ],
+  admin: [
+    "view_recipes",
+    "create_recipes",
+    "rate_recipes",
+    "favorite_recipes",
+    "moderate_recipes",
+    "moderate_comments",
+    "view_reports",
+    "manage_users",
+    "manage_categories",
+    "view_analytics",
+  ],
+  owner: [
+    "view_recipes",
+    "create_recipes",
+    "rate_recipes",
+    "favorite_recipes",
+    "moderate_recipes",
+    "moderate_comments",
+    "view_reports",
+    "manage_users",
+    "manage_categories",
+    "view_analytics",
+    "manage_system",
+    "manage_admins",
+  ],
+} as const
 
 // Generate JWT token
 export function generateToken(user: AuthUser): string {
@@ -62,39 +142,123 @@ export function generateToken(user: AuthUser): string {
   )
 }
 
-// Verify JWT token
-export function verifyToken(token: string): any {
+// Verify JWT token - REQUIRED EXPORT
+export function verifyToken(token: string): AuthUser | null {
   try {
-    return jwt.verify(token, JWT_SECRET)
+    const decoded = jwt.verify(token, JWT_SECRET) as any
+    return {
+      id: decoded.id,
+      username: decoded.username,
+      email: decoded.email,
+      role: decoded.role,
+      status: "active",
+      is_verified: true,
+      is_profile_verified: true,
+      avatar_url: decoded.avatar_url,
+      bio: decoded.bio,
+      location: decoded.location,
+      website: decoded.website,
+      created_at: decoded.created_at,
+      updated_at: decoded.updated_at,
+      last_login_at: decoded.last_login_at,
+    }
   } catch (error) {
     console.error("Token verification failed:", error)
     return null
   }
 }
 
-// Login user
-export async function loginUser(credentials: LoginCredentials): Promise<{ user: AuthUser; token: string } | null> {
+// Get current user from request
+export async function getCurrentUser(): Promise<AuthUser | null> {
   try {
-    const user = await findUserByEmail(credentials.email)
+    const cookieStore = cookies()
+    const token = cookieStore.get("auth-token")?.value
+
+    if (!token) {
+      return null
+    }
+
+    const user = verifyToken(token)
+    if (!user) {
+      return null
+    }
+
+    // Verify user still exists in database
+    const dbUser = await findUserById(user.id)
+    if (!dbUser) {
+      return null
+    }
+
+    return {
+      id: dbUser.id,
+      username: dbUser.username,
+      email: dbUser.email,
+      role: dbUser.role,
+      status: dbUser.status,
+      is_verified: dbUser.is_verified,
+      is_profile_verified: dbUser.is_profile_verified,
+      avatar_url: dbUser.avatar_url,
+      bio: dbUser.bio,
+      location: dbUser.location,
+      website: dbUser.website,
+      created_at: dbUser.created_at,
+      updated_at: dbUser.updated_at,
+      last_login_at: dbUser.last_login_at,
+    }
+  } catch (error) {
+    console.error("Error getting current user:", error)
+    return null
+  }
+}
+
+// Login user
+export async function loginUser(
+  email: string,
+  password: string,
+): Promise<{ success: boolean; user?: AuthUser; token?: string; error?: string }> {
+  try {
+    console.log("🔍 Attempting login for:", email)
+
+    const user = await findUserByEmailInDB(email)
+    console.log("🔍 Found user:", user ? "Yes" : "No")
 
     if (!user) {
-      console.log("User not found:", credentials.email)
-      return null
+      console.log("❌ User not found")
+      return { success: false, error: "Invalid email or password" }
     }
 
-    // For the owner account, check plain text password first, then hash it
-    if (user.email === "aaronhirshka@gmail.com" && user.password_hash === "Morton2121") {
-      // Hash the plain text password
+    console.log("🔍 User details:", {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      hasPassword: !!user.password_hash,
+    })
+
+    // Check if password is still plain text (for owner account migration)
+    let isValidPassword = false
+
+    if (user.password_hash === "Morton2121" && password === "Morton2121") {
+      // Migrate plain text password to hashed
+      console.log("🔄 Migrating plain text password to hash")
       const hashedPassword = await bcrypt.hash("Morton2121", 12)
       await updateUser(user.id, { password_hash: hashedPassword })
-      user.password_hash = hashedPassword
+      isValidPassword = true
+    } else {
+      // Check hashed password
+      isValidPassword = await bcrypt.compare(password, user.password_hash)
     }
 
-    const isValidPassword = await bcrypt.compare(credentials.password, user.password_hash)
+    console.log("🔍 Password valid:", isValidPassword)
 
     if (!isValidPassword) {
-      console.log("Invalid password for user:", credentials.email)
-      return null
+      console.log("❌ Invalid password")
+      return { success: false, error: "Invalid email or password" }
+    }
+
+    if (user.status !== "active") {
+      console.log("❌ Account not active:", user.status)
+      return { success: false, error: "Account is not active" }
     }
 
     // Update last login
@@ -114,104 +278,26 @@ export async function loginUser(credentials: LoginCredentials): Promise<{ user: 
       website: user.website,
       created_at: user.created_at,
       updated_at: user.updated_at,
-      last_login_at: user.last_login_at,
+      last_login_at: new Date().toISOString(),
     }
 
     const token = generateToken(authUser)
+    console.log("✅ Generated token for user")
 
     // Create session in database
-    await createSession(user.id, token)
-
-    return { user: authUser, token }
-  } catch (error) {
-    console.error("Login error:", error)
-    return null
-  }
-}
-
-// Register user
-export async function registerUser(data: RegisterData): Promise<{ user: AuthUser; token: string } | null> {
-  try {
-    // Check if user already exists
-    const existingUser = await findUserByEmail(data.email)
-    if (existingUser) {
-      throw new Error("User already exists")
+    try {
+      await createSession(user.id, token)
+      console.log("✅ Created session in database")
+    } catch (sessionError) {
+      console.error("⚠️ Session creation failed:", sessionError)
+      // Continue anyway, token is still valid
     }
 
-    // Hash password
-    const password_hash = await bcrypt.hash(data.password, 12)
-
-    // Create user
-    const newUser = await createUser({
-      username: data.username,
-      email: data.email,
-      password_hash,
-      role: "user",
-      is_verified: false,
-      is_profile_verified: false,
-    })
-
-    const authUser: AuthUser = {
-      id: newUser.id,
-      username: newUser.username,
-      email: newUser.email,
-      role: newUser.role,
-      status: newUser.status,
-      is_verified: newUser.is_verified,
-      is_profile_verified: newUser.is_profile_verified,
-      avatar_url: newUser.avatar_url,
-      bio: newUser.bio,
-      location: newUser.location,
-      website: newUser.website,
-      created_at: newUser.created_at,
-      updated_at: newUser.updated_at,
-      last_login_at: newUser.last_login_at,
-    }
-
-    const token = generateToken(authUser)
-
-    // Create session in database
-    await createSession(newUser.id, token)
-
-    return { user: authUser, token }
+    console.log("✅ Login successful")
+    return { success: true, user: authUser, token }
   } catch (error) {
-    console.error("Registration error:", error)
-    return null
-  }
-}
-
-// Get user from token
-export async function getUserFromToken(token: string): Promise<AuthUser | null> {
-  try {
-    const decoded = verifyToken(token)
-    if (!decoded) return null
-
-    // Check if session exists in database
-    const session = await findSessionByToken(token)
-    if (!session) return null
-
-    const user = await findUserById(decoded.id)
-    if (!user) return null
-
-    return {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      role: user.role,
-      status: user.status,
-      is_verified: user.is_verified,
-      is_profile_verified: user.is_profile_verified,
-      avatar_url: user.avatar_url,
-      bio: user.bio,
-      location: user.location,
-      website: user.website,
-      created_at: user.created_at,
-      updated_at: user.updated_at,
-      last_login_at: user.last_login_at,
-    }
-  } catch (error) {
-    console.error("Get user from token error:", error)
-    return null
+    console.error("❌ Login error:", error)
+    return { success: false, error: "Login failed. Please try again." }
   }
 }
 
@@ -226,70 +312,178 @@ export async function logoutUser(token: string): Promise<boolean> {
   }
 }
 
-// Check if user has permission
-export function hasPermission(userRole: string, requiredRole: string): boolean {
-  const userLevel = ROLE_HIERARCHY[userRole as keyof typeof ROLE_HIERARCHY] || 0
-  const requiredLevel = ROLE_HIERARCHY[requiredRole as keyof typeof ROLE_HIERARCHY] || 0
+// Permission checking functions with proper error handling
+export const hasPermission = (userRole: UserRole | string | undefined, requiredRole: UserRole | string): boolean => {
+  // Handle undefined or null roles
+  if (!userRole || !requiredRole) {
+    return false
+  }
+
+  // Ensure roles are valid
+  const validRoles: UserRole[] = ["user", "moderator", "admin", "owner"]
+
+  if (!validRoles.includes(userRole as UserRole) || !validRoles.includes(requiredRole as UserRole)) {
+    return false
+  }
+
+  const userLevel = ROLE_HIERARCHY[userRole as UserRole] || 0
+  const requiredLevel = ROLE_HIERARCHY[requiredRole as UserRole] || 0
+
   return userLevel >= requiredLevel
 }
 
-// Check if user is admin or owner
-export function isAdmin(user: AuthUser): boolean {
-  return user.role === "admin" || user.role === "owner"
-}
+export const canModerateUser = (
+  moderatorRole: UserRole | string | undefined,
+  targetRole: UserRole | string | undefined,
+): boolean => {
+  // Handle undefined roles
+  if (!moderatorRole || !targetRole) {
+    return false
+  }
 
-// Check if user is owner
-export function isOwner(user: AuthUser): boolean {
-  return user.role === "owner"
-}
+  const validRoles: UserRole[] = ["user", "moderator", "admin", "owner"]
 
-// Check if user can moderate another user
-export function canModerateUser(moderator: AuthUser, target: AuthUser): boolean {
-  const moderatorLevel = ROLE_HIERARCHY[moderator.role as keyof typeof ROLE_HIERARCHY] || 0
-  const targetLevel = ROLE_HIERARCHY[target.role as keyof typeof ROLE_HIERARCHY] || 0
+  if (!validRoles.includes(moderatorRole as UserRole) || !validRoles.includes(targetRole as UserRole)) {
+    return false
+  }
+
+  const moderatorLevel = ROLE_HIERARCHY[moderatorRole as UserRole] || 0
+  const targetLevel = ROLE_HIERARCHY[targetRole as UserRole] || 0
+
   return moderatorLevel > targetLevel
 }
 
-// Get all users for moderation
-export async function getAllUsersForModeration(): Promise<AuthUser[]> {
-  try {
-    const { getAllUsers } = await import("./neon")
-    const users = await getAllUsers()
+// Check if user has specific permission
+export const hasSpecificPermission = (userRole: UserRole | string | undefined, permission: string): boolean => {
+  if (!userRole) {
+    return false
+  }
 
-    return users.map((user) => ({
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      role: user.role,
-      status: user.status,
-      is_verified: user.is_verified,
-      is_profile_verified: user.is_profile_verified,
-      avatar_url: user.avatar_url,
-      bio: user.bio,
-      location: user.location,
-      website: user.website,
-      created_at: user.created_at,
-      updated_at: user.updated_at,
-      last_login_at: user.last_login_at,
-    }))
+  const validRoles: UserRole[] = ["user", "moderator", "admin", "owner"]
+
+  if (!validRoles.includes(userRole as UserRole)) {
+    return false
+  }
+
+  const permissions = ROLE_PERMISSIONS[userRole as UserRole] || []
+  return permissions.includes(permission)
+}
+
+// Get user role level
+export const getRoleLevel = (role: UserRole | string | undefined): number => {
+  if (!role) {
+    return 0
+  }
+
+  return ROLE_HIERARCHY[role as UserRole] || 0
+}
+
+// Check if role is valid
+export const isValidRole = (role: string | undefined): role is UserRole => {
+  if (!role) {
+    return false
+  }
+
+  const validRoles: UserRole[] = ["user", "moderator", "admin", "owner"]
+  return validRoles.includes(role as UserRole)
+}
+
+// Get default role
+export const getDefaultRole = (): UserRole => {
+  return "user"
+}
+
+// Database interaction functions
+export const saveUser = async (
+  userData: Omit<
+    User,
+    | "id"
+    | "createdAt"
+    | "updatedAt"
+    | "favorites"
+    | "ratings"
+    | "myRecipes"
+    | "isVerified"
+    | "isSuspended"
+    | "warningCount"
+  >,
+): Promise<User> => {
+  try {
+    const hashedPassword = userData.password ? await hashPassword(userData.password) : undefined
+
+    const dbUser = await createUser({
+      username: userData.username,
+      email: userData.email,
+      password_hash: hashedPassword || "",
+      role: userData.role || "user",
+      is_verified: false,
+      is_profile_verified: false,
+    })
+
+    return {
+      id: dbUser.id.toString(),
+      username: dbUser.username,
+      email: dbUser.email,
+      role: dbUser.role as UserRole,
+      status: dbUser.status as UserStatus,
+      createdAt: dbUser.created_at,
+      updatedAt: dbUser.updated_at,
+      favorites: [],
+      ratings: [],
+      myRecipes: [],
+      isVerified: dbUser.is_verified,
+      isSuspended: dbUser.status === "suspended",
+      warningCount: dbUser.warning_count || 0,
+      avatar: dbUser.avatar_url,
+      provider: undefined,
+      socialId: undefined,
+    }
   } catch (error) {
-    console.error("Error getting users for moderation:", error)
+    console.error("Error saving user:", error)
+    throw error
+  }
+}
+
+export const getAllUsersForModeration = async (): Promise<User[]> => {
+  try {
+    const dbUsers = await getAllUsers()
+
+    return dbUsers
+      .map((dbUser) => ({
+        id: dbUser.id.toString(),
+        username: dbUser.username,
+        email: dbUser.email,
+        role: dbUser.role as UserRole,
+        status: dbUser.status as UserStatus,
+        createdAt: dbUser.created_at,
+        updatedAt: dbUser.updated_at,
+        favorites: [],
+        ratings: [],
+        myRecipes: [],
+        isVerified: dbUser.is_verified,
+        isSuspended: dbUser.status === "suspended",
+        warningCount: dbUser.warning_count || 0,
+        avatar: dbUser.avatar_url,
+        provider: undefined,
+        socialId: undefined,
+      }))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  } catch (error) {
+    console.error("Error getting all users for moderation:", error)
     return []
   }
 }
 
-// Suspend user
-export async function suspendUser(userId: number, reason: string, duration?: string): Promise<boolean> {
+export async function suspendUser(userId: string, reason: string, durationDays: number): Promise<boolean> {
   try {
-    const { updateUserById } = await import("./neon")
-    const suspensionExpiresAt = duration
-      ? new Date(Date.now() + Number.parseInt(duration) * 24 * 60 * 60 * 1000).toISOString()
-      : null
+    const expiresAt = new Date()
+    expiresAt.setDate(expiresAt.getDate() + durationDays)
 
-    await updateUserById(userId, {
+    await updateUserById(Number.parseInt(userId), {
       status: "suspended",
       suspension_reason: reason,
-      suspension_expires_at: suspensionExpiresAt,
+      suspension_expires_at: expiresAt.toISOString(),
+      updated_at: new Date().toISOString(),
     })
 
     return true
@@ -299,15 +493,13 @@ export async function suspendUser(userId: number, reason: string, duration?: str
   }
 }
 
-// Unsuspend user
-export async function unsuspendUser(userId: number): Promise<boolean> {
+export async function unsuspendUser(userId: string): Promise<boolean> {
   try {
-    const { updateUserById } = await import("./neon")
-
-    await updateUserById(userId, {
+    await updateUserById(Number.parseInt(userId), {
       status: "active",
       suspension_reason: null,
       suspension_expires_at: null,
+      updated_at: new Date().toISOString(),
     })
 
     return true
@@ -317,14 +509,12 @@ export async function unsuspendUser(userId: number): Promise<boolean> {
   }
 }
 
-// Ban user
-export async function banUser(userId: number, reason: string): Promise<boolean> {
+export async function banUser(userId: string, reason: string): Promise<boolean> {
   try {
-    const { updateUserById } = await import("./neon")
-
-    await updateUserById(userId, {
+    await updateUserById(Number.parseInt(userId), {
       status: "banned",
       suspension_reason: reason,
+      updated_at: new Date().toISOString(),
     })
 
     return true
@@ -334,13 +524,11 @@ export async function banUser(userId: number, reason: string): Promise<boolean> 
   }
 }
 
-// Change user role
-export async function changeUserRole(userId: number, newRole: string): Promise<boolean> {
+export async function changeUserRole(userId: string, newRole: UserRole): Promise<boolean> {
   try {
-    const { updateUserById } = await import("./neon")
-
-    await updateUserById(userId, {
+    await updateUserById(Number.parseInt(userId), {
       role: newRole,
+      updated_at: new Date().toISOString(),
     })
 
     return true
@@ -350,14 +538,11 @@ export async function changeUserRole(userId: number, newRole: string): Promise<b
   }
 }
 
-// Verify user
-export async function verifyUser(userId: number): Promise<boolean> {
+export async function verifyUser(userId: string): Promise<boolean> {
   try {
-    const { updateUserById } = await import("./neon")
-
-    await updateUserById(userId, {
+    await updateUserById(Number.parseInt(userId), {
       is_verified: true,
-      is_profile_verified: true,
+      updated_at: new Date().toISOString(),
     })
 
     return true
@@ -367,17 +552,16 @@ export async function verifyUser(userId: number): Promise<boolean> {
   }
 }
 
-// Warn user
-export async function warnUser(userId: number, reason: string): Promise<boolean> {
+export async function warnUser(userId: string, reason: string): Promise<boolean> {
   try {
-    const user = await findUserById(userId)
+    const user = await findUserById(Number.parseInt(userId))
     if (!user) return false
 
-    const { updateUserById } = await import("./neon")
-    const newWarningCount = (user.warning_count || 0) + 1
+    const currentWarnings = user.warning_count || 0
 
-    await updateUserById(userId, {
-      warning_count: newWarningCount,
+    await updateUserById(Number.parseInt(userId), {
+      warning_count: currentWarnings + 1,
+      updated_at: new Date().toISOString(),
     })
 
     return true
@@ -387,41 +571,159 @@ export async function warnUser(userId: number, reason: string): Promise<boolean>
   }
 }
 
-// Save user (create new user)
-export async function saveUser(userData: RegisterData): Promise<AuthUser | null> {
-  try {
-    const password_hash = await bcrypt.hash(userData.password, 12)
+// Middleware helper
+export async function requireAuth(requiredRole?: string): Promise<{ user: AuthUser | null; error?: string }> {
+  const user = await getCurrentUser()
 
-    const newUser = await createUser({
-      username: userData.username,
-      email: userData.email,
-      password_hash,
-      role: "user",
-      is_verified: false,
-      is_profile_verified: false,
-    })
+  if (!user) {
+    return { user: null, error: "Authentication required" }
+  }
 
-    return {
-      id: newUser.id,
-      username: newUser.username,
-      email: newUser.email,
-      role: newUser.role,
-      status: newUser.status,
-      is_verified: newUser.is_verified,
-      is_profile_verified: newUser.is_profile_verified,
-      avatar_url: newUser.avatar_url,
-      bio: newUser.bio,
-      location: newUser.location,
-      website: newUser.website,
-      created_at: newUser.created_at,
-      updated_at: newUser.updated_at,
-      last_login_at: newUser.last_login_at,
-    }
-  } catch (error) {
-    console.error("Error saving user:", error)
-    return null
+  if (requiredRole && !hasPermission(user.role, requiredRole)) {
+    return { user: null, error: "Insufficient permissions" }
+  }
+
+  return { user }
+}
+
+// Hash password
+export async function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, 12)
+}
+
+// Verify password
+export async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  return bcrypt.compare(password, hash)
+}
+
+// Generate secure token
+export function generateSecureToken(): string {
+  return jwt.sign({ random: Math.random(), timestamp: Date.now() }, JWT_SECRET, { expiresIn: "1h" })
+}
+
+// Validate email format
+export function isValidEmail(email: string): boolean {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  return emailRegex.test(email)
+}
+
+// Validate password strength
+export function isValidPassword(password: string): { valid: boolean; errors: string[] } {
+  const errors: string[] = []
+
+  if (password.length < 8) {
+    errors.push("Password must be at least 8 characters long")
+  }
+
+  if (!/[A-Z]/.test(password)) {
+    errors.push("Password must contain at least one uppercase letter")
+  }
+
+  if (!/[a-z]/.test(password)) {
+    errors.push("Password must contain at least one lowercase letter")
+  }
+
+  if (!/\d/.test(password)) {
+    errors.push("Password must contain at least one number")
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
   }
 }
 
-// Export findUserByEmail for compatibility
-export { findUserByEmail }
+// Rate limiting helper
+const loginAttempts = new Map<string, { count: number; lastAttempt: number }>()
+
+export function checkRateLimit(identifier: string, maxAttempts = 5, windowMs: number = 15 * 60 * 1000): boolean {
+  const now = Date.now()
+  const attempts = loginAttempts.get(identifier)
+
+  if (!attempts) {
+    loginAttempts.set(identifier, { count: 1, lastAttempt: now })
+    return true
+  }
+
+  if (now - attempts.lastAttempt > windowMs) {
+    loginAttempts.set(identifier, { count: 1, lastAttempt: now })
+    return true
+  }
+
+  if (attempts.count >= maxAttempts) {
+    return false
+  }
+
+  attempts.count++
+  attempts.lastAttempt = now
+  return true
+}
+
+// Clear rate limit
+export function clearRateLimit(identifier: string): void {
+  loginAttempts.delete(identifier)
+}
+
+// Check if user is authenticated
+export function isAuthenticated(user: User | null): boolean {
+  return user !== null && user.status === "active"
+}
+
+// Check if user is admin
+export function isAdmin(user: User | null): boolean {
+  return user !== null && hasPermission(user.role, "admin")
+}
+
+// Check if user is moderator or higher
+export function isModerator(user: User | null): boolean {
+  return user !== null && hasPermission(user.role, "moderator")
+}
+
+// Get user display name
+export function getUserDisplayName(user: User | null): string {
+  if (!user) return "Guest"
+  return user.username || user.email || "User"
+}
+
+// Get user initials for avatar
+export function getUserInitials(user: User | null): string {
+  if (!user || !user.username) return "U"
+
+  const names = user.username.split(" ")
+  if (names.length >= 2) {
+    return `${names[0][0]}${names[1][0]}`.toUpperCase()
+  }
+
+  return user.username.charAt(0).toUpperCase()
+}
+
+// Role display functions
+export function getRoleDisplayName(role: UserRole | string | undefined): string {
+  if (!role || !isValidRole(role)) {
+    return "User"
+  }
+
+  const roleNames: Record<UserRole, string> = {
+    user: "User",
+    moderator: "Moderator",
+    admin: "Administrator",
+    owner: "Owner",
+  }
+
+  return roleNames[role as UserRole] || "User"
+}
+
+export function getRoleBadgeColor(role: UserRole | string | undefined): string {
+  if (!role || !isValidRole(role)) {
+    return "bg-gray-100 text-gray-800"
+  }
+
+  const roleColors: Record<UserRole, string> = {
+    user: "bg-gray-100 text-gray-800",
+    moderator: "bg-blue-100 text-blue-800",
+    admin: "bg-red-100 text-red-800",
+    owner: "bg-purple-100 text-purple-800",
+  }
+
+  return roleColors[role as UserRole] || "bg-gray-100 text-gray-800"
+}

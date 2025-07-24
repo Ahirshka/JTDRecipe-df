@@ -209,7 +209,7 @@ export async function findUserById(id: number) {
     return users[0] || null
   } catch (error) {
     console.error("Error finding user by ID:", error)
-    return null
+    return mockUsers.get(id) || null
   }
 }
 
@@ -224,6 +224,12 @@ export async function findUserByEmail(email: string) {
     return users[0] || null
   } catch (error) {
     console.error("Error finding user by email:", error)
+    // Check mock data
+    for (const user of mockUsers.values()) {
+      if (user.email === email) {
+        return user
+      }
+    }
     return null
   }
 }
@@ -259,6 +265,13 @@ export async function updateUserById(id: number, updates: Partial<User>): Promis
     return (result[0] as User) || null
   } catch (error) {
     console.error("Error updating user by ID:", error)
+    // Update mock data
+    const user = mockUsers.get(id)
+    if (user) {
+      const updatedUser = { ...user, ...updates, updated_at: new Date().toISOString() }
+      mockUsers.set(id, updatedUser)
+      return updatedUser
+    }
     return null
   }
 }
@@ -299,6 +312,13 @@ export async function updateUser(id: number, updates: Partial<User>): Promise<Us
     return (result[0] as User) || null
   } catch (error) {
     console.error("Error updating user:", error)
+    // Update mock data
+    const user = mockUsers.get(id)
+    if (user) {
+      const updatedUser = { ...user, ...updates, updated_at: new Date().toISOString() }
+      mockUsers.set(id, updatedUser)
+      return updatedUser
+    }
     return null
   }
 }
@@ -315,7 +335,16 @@ export async function createSession(userId: number, token: string): Promise<Sess
     return result[0] as Session
   } catch (error) {
     console.error("Error creating session:", error)
-    throw error
+    // Create mock session
+    const session: Session = {
+      id: Date.now(),
+      user_id: userId,
+      token,
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      created_at: new Date().toISOString(),
+    }
+    mockSessions.set(session.id, session)
+    return session
   }
 }
 
@@ -327,6 +356,12 @@ export async function findSessionByToken(token: string): Promise<Session | null>
     return (result[0] as Session) || null
   } catch (error) {
     console.error("Error finding session:", error)
+    // Check mock sessions
+    for (const session of mockSessions.values()) {
+      if (session.token === token && new Date(session.expires_at) > new Date()) {
+        return session
+      }
+    }
     return null
   }
 }
@@ -337,6 +372,13 @@ export async function deleteSession(token: string) {
     return true
   } catch (error) {
     console.error("Error deleting session:", error)
+    // Delete from mock sessions
+    for (const [id, session] of mockSessions.entries()) {
+      if (session.token === token) {
+        mockSessions.delete(id)
+        break
+      }
+    }
     return false
   }
 }
@@ -622,7 +664,7 @@ export async function getAdminStats() {
     }
   } catch (error) {
     console.error("Error getting admin stats:", error)
-    return { users: 0, recipes: 0, pending: 0 }
+    return { users: mockUsers.size, recipes: 0, pending: 0 }
   }
 }
 

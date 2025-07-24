@@ -111,18 +111,6 @@ export default function LoginPage() {
               </Link>
             </p>
           </div>
-
-          <div className="mt-6 pt-6 border-t">
-            <div className="bg-blue-50 p-4 rounded-lg">
-              <h3 className="font-semibold text-blue-900 mb-2">Owner Account</h3>
-              <p className="text-sm text-blue-800 mb-2">
-                <strong>Email:</strong> aaronhirshka@gmail.com
-              </p>
-              <p className="text-sm text-blue-800">
-                <strong>Password:</strong> Morton2121
-              </p>
-            </div>
-          </div>
         </CardContent>
       </Card>
     </div>
