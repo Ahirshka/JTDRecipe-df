@@ -9,17 +9,14 @@ export async function GET() {
 
     if (!user) {
       console.log("❌ No authenticated user found")
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Not authenticated",
-          user: null,
-        },
-        { status: 401 },
-      )
+      return NextResponse.json({
+        success: false,
+        error: "Not authenticated",
+        user: null,
+      })
     }
 
-    console.log(`✅ Authenticated user: ${user.username}`)
+    console.log(`✅ User authenticated: ${user.username} (${user.email})`)
 
     return NextResponse.json({
       success: true,
@@ -35,7 +32,7 @@ export async function GET() {
       },
     })
   } catch (error) {
-    console.error("❌ Auth check error:", error)
+    console.error("❌ Error checking authentication:", error)
     return NextResponse.json(
       {
         success: false,

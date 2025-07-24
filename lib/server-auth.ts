@@ -5,30 +5,39 @@ import { findUserById } from "./neon"
 // Get current user from request - SERVER ONLY
 export async function getCurrentUser(): Promise<AuthUser | null> {
   try {
-    const cookieStore = cookies()
+    console.log("🔍 Getting current user from server...")
+    const cookieStore = await cookies()
     const token = cookieStore.get("auth-token")?.value
 
     if (!token) {
       console.log("❌ No auth token found in cookies")
-      return null
+      // Also check for alternative cookie names
+      const altToken = cookieStore.get("session")?.value || cookieStore.get("token")?.value
+      if (!altToken) {
+        console.log("❌ No alternative tokens found either")
+        return null
+      }
+      console.log("✅ Found alternative token, using it")
     }
 
+    const authToken = token || cookieStore.get("session")?.value || cookieStore.get("token")?.value
+
     console.log("🔍 Found auth token, verifying...")
-    const user = verifyToken(token)
-    if (!user) {
+    const payload = verifyToken(authToken!)
+    if (!payload) {
       console.log("❌ Token verification failed")
       return null
     }
 
     console.log("✅ Token verified, checking database...")
     // Verify user still exists in database
-    const dbUser = await findUserById(user.id)
+    const dbUser = await findUserById(payload.id)
     if (!dbUser) {
       console.log("❌ User not found in database")
       return null
     }
 
-    console.log(`✅ User found: ${dbUser.username} (${dbUser.email})`)
+    console.log(`✅ User found: ${dbUser.username} (${dbUser.email}) - Role: ${dbUser.role}`)
     return {
       id: dbUser.id,
       username: dbUser.username,
@@ -70,7 +79,7 @@ export async function requireAuth(requiredRole?: string): Promise<{ user: AuthUs
 // Get auth token from cookies - SERVER ONLY
 export async function getAuthToken(): Promise<string | null> {
   try {
-    const cookieStore = cookies()
+    const cookieStore = await cookies()
     return cookieStore.get("auth-token")?.value || null
   } catch (error) {
     console.error("Error getting auth token:", error)
@@ -81,7 +90,7 @@ export async function getAuthToken(): Promise<string | null> {
 // Set auth token in cookies - SERVER ONLY
 export async function setAuthToken(token: string): Promise<void> {
   try {
-    const cookieStore = cookies()
+    const cookieStore = await cookies()
     cookieStore.set("auth-token", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -97,7 +106,7 @@ export async function setAuthToken(token: string): Promise<void> {
 // Clear auth token from cookies - SERVER ONLY
 export async function clearAuthToken(): Promise<void> {
   try {
-    const cookieStore = cookies()
+    const cookieStore = await cookies()
     cookieStore.delete("auth-token")
   } catch (error) {
     console.error("Error clearing auth token:", error)

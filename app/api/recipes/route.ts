@@ -73,20 +73,51 @@ export async function POST(request: NextRequest) {
     console.log("🔍 Creating new recipe...")
     await initializeDatabase()
 
+    // Debug: Log all cookies
+    const cookieStore = await request.cookies
+    console.log(
+      "🍪 Available cookies:",
+      Array.from(cookieStore.entries()).map(([name, cookie]) => ({
+        name,
+        value: cookie.value?.substring(0, 20) + "...",
+      })),
+    )
+
     // Get authenticated user using server-side auth
     const user = await getCurrentUser()
     if (!user) {
       console.log("❌ No authenticated user found")
+
+      // Additional debugging - check if user is in auth context
+      const authHeader = request.headers.get("authorization")
+      console.log("🔍 Auth header:", authHeader ? "Present" : "Missing")
+
       return NextResponse.json(
         {
           success: false,
           error: "Authentication required. Please log in to submit recipes.",
+          debug: {
+            cookiesFound: Array.from(cookieStore.entries()).length,
+            authHeader: !!authHeader,
+          },
         },
         { status: 401 },
       )
     }
 
-    console.log(`✅ Authenticated user: ${user.username} (ID: ${user.id})`)
+    console.log(`✅ Authenticated user: ${user.username} (ID: ${user.id}) - Role: ${user.role}`)
+
+    // All authenticated users can submit recipes - no role restriction needed
+    if (user.status !== "active") {
+      console.log(`❌ User account not active: ${user.status}`)
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Your account is not active. Please contact support.",
+        },
+        { status: 403 },
+      )
+    }
 
     // Parse request body
     const body = await request.json()
@@ -249,6 +280,7 @@ export async function POST(request: NextRequest) {
         title: body.title,
         moderation_status: "pending",
         author_username: user.username,
+        author_id: user.id,
       },
     })
   } catch (error) {
