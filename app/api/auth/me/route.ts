@@ -8,66 +8,79 @@ export async function GET(request: NextRequest) {
 
     if (!token) {
       return NextResponse.json({
-        success: true,
+        success: false,
         authenticated: false,
-        user: null,
+        error: "No token provided",
       })
     }
 
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || "fallback-secret") as { userId: number }
+    // Verify JWT token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || "fallback-secret") as any
 
-      // Get user from database
-      const users = await sql`
-        SELECT id, username, email, role, is_verified, created_at, 
-               COALESCE(status, 'active') as status,
-               COALESCE(last_login_at, created_at) as last_login_at,
-               avatar
-        FROM users 
-        WHERE id = ${decoded.userId}
-      `
-
-      if (!users[0]) {
-        return NextResponse.json({
-          success: true,
-          authenticated: false,
-          user: null,
-        })
-      }
-
-      const user = users[0]
-
+    if (!decoded.userId) {
       return NextResponse.json({
-        success: true,
-        authenticated: true,
-        user: {
-          id: user.id,
-          username: user.username,
-          email: user.email,
-          role: user.role,
-          status: user.status,
-          email_verified: user.is_verified,
-          avatar: user.avatar,
-          created_at: user.created_at,
-          last_login_at: user.last_login_at,
-        },
-      })
-    } catch (jwtError) {
-      console.error("JWT verification failed:", jwtError)
-      return NextResponse.json({
-        success: true,
+        success: false,
         authenticated: false,
-        user: null,
+        error: "Invalid token",
       })
     }
+
+    // Get user from database
+    const users = await sql`
+      SELECT 
+        id, 
+        username, 
+        email, 
+        role, 
+        is_verified, 
+        is_profile_verified,
+        avatar_url,
+        status,
+        created_at,
+        last_login_at
+      FROM users 
+      WHERE id = ${decoded.userId}
+    `
+
+    if (!users[0]) {
+      return NextResponse.json({
+        success: false,
+        authenticated: false,
+        error: "User not found",
+      })
+    }
+
+    const user = users[0]
+
+    // Check if account is active
+    if (user.status !== "active") {
+      return NextResponse.json({
+        success: false,
+        authenticated: false,
+        error: "Account is not active",
+      })
+    }
+
+    return NextResponse.json({
+      success: true,
+      authenticated: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        status: user.status,
+        is_verified: user.is_verified,
+        is_profile_verified: user.is_profile_verified,
+        avatar_url: user.avatar_url,
+      },
+    })
   } catch (error) {
     console.error("Auth check error:", error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: "Internal server error",
-      },
-      { status: 500 },
-    )
+    return NextResponse.json({
+      success: false,
+      authenticated: false,
+      error: "Token verification failed",
+    })
   }
 }

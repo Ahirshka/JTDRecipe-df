@@ -1,5 +1,6 @@
 import { neon } from "@neondatabase/serverless"
 import bcrypt from "bcryptjs"
+import type { Session } from "./session" // Assuming Session is defined in a separate file
 
 if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL environment variable is not set")
@@ -8,24 +9,28 @@ if (!process.env.DATABASE_URL) {
 export const sql = neon(process.env.DATABASE_URL)
 
 export interface User {
-  id: number // Changed from string to number
+  id: number
   username: string
   email: string
   password_hash: string
   role: string
-  avatar?: string
+  avatar_url?: string
   is_verified: boolean
-  created_at: string
+  is_profile_verified: boolean
   bio?: string
   location?: string
   website?: string
+  status: string
+  created_at: string
+  updated_at: string
+  last_login_at?: string
 }
 
 export interface Recipe {
-  id: number // Changed from string to number
+  id: number
   title: string
   description?: string
-  author_id: number // Changed from string to number
+  author_id: number
   author_username: string
   category: string
   difficulty: string
@@ -36,6 +41,7 @@ export interface Recipe {
   instructions: string
   image_url?: string
   rating: number
+  rating_count: number
   review_count: number
   view_count: number
   moderation_status: string
@@ -44,11 +50,21 @@ export interface Recipe {
   updated_at: string
 }
 
-export interface Session {
-  id: number // Changed from string to number
-  user_id: number // Changed from string to number
-  token: string
-  expires_at: string
+export interface Comment {
+  id: number
+  recipe_id: number
+  user_id: number
+  username: string
+  content: string
+  status: string
+  created_at: string
+}
+
+export interface Rating {
+  id: number
+  recipe_id: number
+  user_id: number
+  rating: number
   created_at: string
 }
 
@@ -56,6 +72,8 @@ export interface Session {
 const mockUsers = new Map<number, User>()
 const mockRecipes = new Map<number, Recipe>()
 const mockSessions = new Map<number, Session>()
+const mockComments = new Map<number, Comment>()
+const mockRatings = new Map<number, Rating>()
 
 // Initialize mock data
 const initializeMockData = async () => {
@@ -69,10 +87,14 @@ const initializeMockData = async () => {
     password_hash: ownerPasswordHash,
     role: "owner",
     is_verified: true,
-    created_at: new Date().toISOString(),
+    is_profile_verified: true,
     bio: "",
     location: "",
     website: "",
+    status: "active",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    last_login_at: new Date().toISOString(),
   }
 
   const adminPasswordHash = await bcrypt.hash("admin123", 12)
@@ -83,10 +105,14 @@ const initializeMockData = async () => {
     password_hash: adminPasswordHash,
     role: "admin",
     is_verified: true,
-    created_at: new Date().toISOString(),
+    is_profile_verified: true,
     bio: "",
     location: "",
     website: "",
+    status: "active",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    last_login_at: new Date().toISOString(),
   }
 
   mockUsers.set(ownerUser.id, ownerUser)
@@ -108,6 +134,7 @@ const initializeMockData = async () => {
     instructions:
       "1. Crack eggs into bowl\n2. Add cream and whisk\n3. Heat butter in pan\n4. Add eggs and stir constantly\n5. Remove from heat when still slightly wet",
     rating: 4.8,
+    rating_count: 10,
     review_count: 24,
     view_count: 156,
     moderation_status: "approved",
@@ -117,6 +144,30 @@ const initializeMockData = async () => {
   }
 
   mockRecipes.set(sampleRecipe.id, sampleRecipe)
+
+  // Add sample comments
+  const sampleComment: Comment = {
+    id: 1,
+    recipe_id: 1,
+    user_id: 1,
+    username: "Aaron Hirshka",
+    content: "Great recipe!",
+    status: "approved",
+    created_at: new Date().toISOString(),
+  }
+
+  mockComments.set(sampleComment.id, sampleComment)
+
+  // Add sample ratings
+  const sampleRating: Rating = {
+    id: 1,
+    recipe_id: 1,
+    user_id: 1,
+    rating: 5,
+    created_at: new Date().toISOString(),
+  }
+
+  mockRatings.set(sampleRating.id, sampleRating)
 }
 
 // Initialize mock data
@@ -126,7 +177,7 @@ initializeMockData()
 export async function findUserById(id: number) {
   try {
     const users = await sql`
-      SELECT id, username, email, role, status, email_verified, avatar, created_at, last_login_at
+      SELECT id, username, email, role, status, is_verified, is_profile_verified, avatar_url, bio, location, website, created_at, updated_at, last_login_at
       FROM users 
       WHERE id = ${id}
     `
@@ -141,7 +192,7 @@ export async function findUserById(id: number) {
 export async function findUserByEmail(email: string) {
   try {
     const users = await sql`
-      SELECT id, username, email, password_hash, role, status, email_verified, avatar, created_at
+      SELECT id, username, email, password_hash, role, status, is_verified, is_profile_verified, avatar_url, bio, location, website, created_at
       FROM users 
       WHERE email = ${email}
     `
@@ -158,11 +209,12 @@ export async function createUser(userData: {
   password_hash: string
   role: string
   is_verified: boolean
+  is_profile_verified: boolean
 }): Promise<User> {
   try {
     const result = await sql`
-      INSERT INTO users (username, email, password_hash, role, is_verified, created_at)
-      VALUES (${userData.username}, ${userData.email}, ${userData.password_hash}, ${userData.role}, ${userData.is_verified}, NOW())
+      INSERT INTO users (username, email, password_hash, role, is_verified, is_profile_verified, created_at, updated_at)
+      VALUES (${userData.username}, ${userData.email}, ${userData.password_hash}, ${userData.role}, ${userData.is_verified}, ${userData.is_profile_verified}, NOW(), NOW())
       RETURNING *
     `
     return result[0] as User
@@ -245,6 +297,8 @@ export async function initializeOwnerAccount() {
         password_hash: passwordHash,
         role: "owner",
         is_verified: true,
+        is_profile_verified: true,
+        status: "active",
       })
 
       console.log("Owner account created successfully for Aaron Hirshka")
@@ -290,13 +344,13 @@ export async function createRecipe(recipeData: any): Promise<Recipe> {
       INSERT INTO recipes (
         title, description, author_id, author_username, category, difficulty,
         prep_time_minutes, cook_time_minutes, servings, ingredients, instructions,
-        image_url, moderation_status, is_published, created_at
+        image_url, moderation_status, is_published, created_at, updated_at
       ) VALUES (
         ${recipeData.title}, ${recipeData.description}, ${recipeData.author_id},
         ${recipeData.author_username}, ${recipeData.category}, ${recipeData.difficulty},
         ${recipeData.prep_time_minutes}, ${recipeData.cook_time_minutes}, ${recipeData.servings},
         ${recipeData.ingredients}, ${recipeData.instructions}, ${recipeData.image_url},
-        'pending', false, NOW()
+        'pending', false, NOW(), NOW()
       ) RETURNING *
     `
     return result[0] as Recipe
@@ -371,15 +425,15 @@ export async function initializeDatabase(): Promise<boolean> {
         email VARCHAR(255) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
         role VARCHAR(50) DEFAULT 'user',
-        avatar TEXT,
+        avatar_url TEXT,
         is_verified BOOLEAN DEFAULT false,
+        is_profile_verified BOOLEAN DEFAULT false,
         bio TEXT,
         location VARCHAR(255),
         website VARCHAR(255),
+        status VARCHAR(50),
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW(),
-        status VARCHAR(50),
-        email_verified BOOLEAN DEFAULT false,
         last_login_at TIMESTAMP
       )
     `
@@ -410,6 +464,7 @@ export async function initializeDatabase(): Promise<boolean> {
         instructions TEXT NOT NULL,
         image_url TEXT,
         rating DECIMAL(3,2) DEFAULT 0,
+        rating_count INTEGER DEFAULT 0,
         review_count INTEGER DEFAULT 0,
         view_count INTEGER DEFAULT 0,
         moderation_status VARCHAR(50) DEFAULT 'pending',
@@ -418,6 +473,28 @@ export async function initializeDatabase(): Promise<boolean> {
         moderated_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS comments (
+        id SERIAL PRIMARY KEY,
+        recipe_id INTEGER REFERENCES recipes(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        username VARCHAR(255) NOT NULL,
+        content TEXT NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS ratings (
+        id SERIAL PRIMARY KEY,
+        recipe_id INTEGER REFERENCES recipes(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        rating INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
       )
     `
 
@@ -436,4 +513,6 @@ export const mockDatabase = {
   users: mockUsers,
   recipes: mockRecipes,
   sessions: mockSessions,
+  comments: mockComments,
+  ratings: mockRatings,
 }

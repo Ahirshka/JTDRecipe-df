@@ -7,6 +7,8 @@ export async function POST(request: NextRequest) {
   try {
     const { email, password } = await request.json()
 
+    console.log("Login attempt for:", email)
+
     if (!email || !password) {
       return NextResponse.json(
         {
@@ -19,11 +21,22 @@ export async function POST(request: NextRequest) {
 
     // Find user by email
     const users = await sql`
-      SELECT id, username, email, password_hash, role, is_verified, 
-             COALESCE(status, 'active') as status
+      SELECT 
+        id, 
+        username, 
+        email, 
+        password_hash, 
+        role, 
+        is_verified, 
+        is_profile_verified,
+        avatar_url,
+        status,
+        created_at
       FROM users 
-      WHERE email = ${email}
+      WHERE email = ${email.toLowerCase()}
     `
+
+    console.log("Database query result:", users.length > 0 ? "User found" : "No user found")
 
     if (!users[0]) {
       return NextResponse.json(
@@ -36,6 +49,7 @@ export async function POST(request: NextRequest) {
     }
 
     const user = users[0]
+    console.log("Found user:", { id: user.id, email: user.email, role: user.role })
 
     // Check if account is blocked or suspended
     if (user.status === "blocked" || user.status === "suspended") {
@@ -49,7 +63,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify password
+    console.log("Verifying password...")
     const isValidPassword = await bcrypt.compare(password, user.password_hash)
+    console.log("Password valid:", isValidPassword)
+
     if (!isValidPassword) {
       return NextResponse.json(
         {
@@ -68,9 +85,15 @@ export async function POST(request: NextRequest) {
     `
 
     // Create JWT token
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET || "fallback-secret", { expiresIn: "7d" })
+    const token = jwt.sign(
+      { userId: user.id, email: user.email, role: user.role },
+      process.env.JWT_SECRET || "fallback-secret",
+      { expiresIn: "7d" },
+    )
 
-    // Set cookie
+    console.log("Login successful for user:", user.id)
+
+    // Set cookie and return response
     const response = NextResponse.json({
       success: true,
       user: {
@@ -79,7 +102,9 @@ export async function POST(request: NextRequest) {
         email: user.email,
         role: user.role,
         status: user.status,
-        email_verified: user.is_verified,
+        is_verified: user.is_verified,
+        is_profile_verified: user.is_profile_verified,
+        avatar_url: user.avatar_url,
       },
     })
 
@@ -88,6 +113,7 @@ export async function POST(request: NextRequest) {
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       maxAge: 7 * 24 * 60 * 60, // 7 days
+      path: "/",
     })
 
     return response

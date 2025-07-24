@@ -1,38 +1,39 @@
-import { type NextRequest, NextResponse } from "next/server"
+import { NextResponse } from "next/server"
 import { sql } from "@/lib/neon"
 import bcrypt from "bcryptjs"
 
-export async function POST(request: NextRequest) {
+export async function POST() {
   try {
     console.log("Starting database initialization...")
 
-    // Drop existing tables to avoid conflicts
-    await sql`DROP TABLE IF EXISTS recipe_tags CASCADE`
-    await sql`DROP TABLE IF EXISTS recipe_instructions CASCADE`
-    await sql`DROP TABLE IF EXISTS recipe_ingredients CASCADE`
+    // Drop existing tables to start fresh
+    await sql`DROP TABLE IF EXISTS user_flags CASCADE`
+    await sql`DROP TABLE IF EXISTS comment_flags CASCADE`
     await sql`DROP TABLE IF EXISTS ratings CASCADE`
     await sql`DROP TABLE IF EXISTS comments CASCADE`
     await sql`DROP TABLE IF EXISTS recipes CASCADE`
-    await sql`DROP TABLE IF EXISTS email_tokens CASCADE`
     await sql`DROP TABLE IF EXISTS user_sessions CASCADE`
+    await sql`DROP TABLE IF EXISTS email_tokens CASCADE`
     await sql`DROP TABLE IF EXISTS users CASCADE`
 
     // Create users table
     await sql`
       CREATE TABLE users (
         id SERIAL PRIMARY KEY,
-        username VARCHAR(50) NOT NULL,
+        username VARCHAR(255) NOT NULL,
         email VARCHAR(255) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
-        role VARCHAR(20) DEFAULT 'user',
-        status VARCHAR(20) DEFAULT 'active',
+        role VARCHAR(50) DEFAULT 'user',
         avatar_url TEXT,
         is_verified BOOLEAN DEFAULT false,
-        is_flagged BOOLEAN DEFAULT false,
-        flag_reason TEXT,
-        email_verified BOOLEAN DEFAULT false,
+        is_profile_verified BOOLEAN DEFAULT false,
+        bio TEXT,
+        location VARCHAR(255),
+        website VARCHAR(255),
+        status VARCHAR(50) DEFAULT 'active',
         created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
+        updated_at TIMESTAMP DEFAULT NOW(),
+        last_login_at TIMESTAMP
       )
     `
 
@@ -41,21 +42,8 @@ export async function POST(request: NextRequest) {
       CREATE TABLE user_sessions (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        session_token VARCHAR(255) UNIQUE NOT NULL,
-        expires_at TIMESTAMP NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `
-
-    // Create email_tokens table
-    await sql`
-      CREATE TABLE email_tokens (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
         token VARCHAR(255) UNIQUE NOT NULL,
-        token_type VARCHAR(50) NOT NULL,
         expires_at TIMESTAMP NOT NULL,
-        used BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT NOW()
       )
     `
@@ -67,49 +55,25 @@ export async function POST(request: NextRequest) {
         title VARCHAR(255) NOT NULL,
         description TEXT,
         author_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        author_username VARCHAR(255) NOT NULL,
         category VARCHAR(100) NOT NULL,
-        difficulty VARCHAR(20) NOT NULL,
-        prep_time_minutes INTEGER DEFAULT 0,
-        cook_time_minutes INTEGER DEFAULT 0,
-        servings INTEGER DEFAULT 1,
+        difficulty VARCHAR(50) NOT NULL,
+        prep_time_minutes INTEGER NOT NULL,
+        cook_time_minutes INTEGER NOT NULL,
+        servings INTEGER NOT NULL,
+        ingredients TEXT NOT NULL,
+        instructions TEXT NOT NULL,
         image_url TEXT,
         rating DECIMAL(3,2) DEFAULT 0,
+        rating_count INTEGER DEFAULT 0,
         review_count INTEGER DEFAULT 0,
         view_count INTEGER DEFAULT 0,
-        moderation_status VARCHAR(20) DEFAULT 'pending',
+        moderation_status VARCHAR(50) DEFAULT 'pending',
         is_published BOOLEAN DEFAULT false,
+        moderated_by INTEGER REFERENCES users(id),
+        moderated_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
-      )
-    `
-
-    // Create recipe_ingredients table
-    await sql`
-      CREATE TABLE recipe_ingredients (
-        id SERIAL PRIMARY KEY,
-        recipe_id INTEGER REFERENCES recipes(id) ON DELETE CASCADE,
-        ingredient VARCHAR(255) NOT NULL,
-        amount VARCHAR(50),
-        unit VARCHAR(50)
-      )
-    `
-
-    // Create recipe_instructions table
-    await sql`
-      CREATE TABLE recipe_instructions (
-        id SERIAL PRIMARY KEY,
-        recipe_id INTEGER REFERENCES recipes(id) ON DELETE CASCADE,
-        instruction TEXT NOT NULL,
-        step_number INTEGER NOT NULL
-      )
-    `
-
-    // Create recipe_tags table
-    await sql`
-      CREATE TABLE recipe_tags (
-        id SERIAL PRIMARY KEY,
-        recipe_id INTEGER REFERENCES recipes(id) ON DELETE CASCADE,
-        tag VARCHAR(100) NOT NULL
       )
     `
 
@@ -119,10 +83,11 @@ export async function POST(request: NextRequest) {
         id SERIAL PRIMARY KEY,
         recipe_id INTEGER REFERENCES recipes(id) ON DELETE CASCADE,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        username VARCHAR(255) NOT NULL,
         content TEXT NOT NULL,
-        moderation_status VARCHAR(20) DEFAULT 'approved',
-        is_flagged BOOLEAN DEFAULT false,
-        flag_reason TEXT,
+        status VARCHAR(50) DEFAULT 'approved',
+        moderated_by INTEGER REFERENCES users(id),
+        moderated_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       )
@@ -141,97 +106,136 @@ export async function POST(request: NextRequest) {
       )
     `
 
+    // Create comment_flags table
+    await sql`
+      CREATE TABLE comment_flags (
+        id SERIAL PRIMARY KEY,
+        comment_id INTEGER REFERENCES comments(id) ON DELETE CASCADE,
+        flagged_by INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        reason VARCHAR(255),
+        status VARCHAR(50) DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `
+
+    // Create user_flags table
+    await sql`
+      CREATE TABLE user_flags (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        flagged_by INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        reason VARCHAR(255),
+        status VARCHAR(50) DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `
+
+    // Create email_tokens table
+    await sql`
+      CREATE TABLE email_tokens (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        token VARCHAR(255) UNIQUE NOT NULL,
+        type VARCHAR(50) NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        used BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `
+
     console.log("Tables created successfully")
 
     // Create owner account
-    const hashedPassword = await bcrypt.hash("Morton2121", 10)
+    const ownerEmail = "aaronhirshka@gmail.com"
+    const ownerPassword = "Morton2121!"
+    const passwordHash = await bcrypt.hash(ownerPassword, 12)
 
-    const [ownerUser] = await sql`
-      INSERT INTO users (username, email, password_hash, role, status, is_verified, email_verified)
-      VALUES ('Aaron Hirshka', 'aaronhirshka@gmail.com', ${hashedPassword}, 'owner', 'active', true, true)
-      RETURNING id
+    const ownerResult = await sql`
+      INSERT INTO users (
+        username, 
+        email, 
+        password_hash, 
+        role, 
+        is_verified, 
+        is_profile_verified,
+        status,
+        created_at
+      ) VALUES (
+        'Aaron Hirshka',
+        ${ownerEmail},
+        ${passwordHash},
+        'owner',
+        true,
+        true,
+        'active',
+        NOW()
+      ) RETURNING id, username, email, role
     `
 
-    console.log("Owner account created with ID:", ownerUser.id)
+    console.log("Owner account created:", ownerResult[0])
 
-    // Create sample recipe
-    const [sampleRecipe] = await sql`
+    // Create a sample approved recipe
+    const sampleRecipeResult = await sql`
       INSERT INTO recipes (
-        title, description, author_id, category, difficulty,
-        prep_time_minutes, cook_time_minutes, servings,
-        moderation_status, is_published, rating, review_count
+        title,
+        description,
+        author_id,
+        author_username,
+        category,
+        difficulty,
+        prep_time_minutes,
+        cook_time_minutes,
+        servings,
+        ingredients,
+        instructions,
+        moderation_status,
+        is_published,
+        rating,
+        rating_count,
+        created_at
       ) VALUES (
         'Perfect Scrambled Eggs',
-        'Creamy, fluffy scrambled eggs that are perfect every time. The secret is low heat and constant stirring.',
-        ${ownerUser.id},
+        'Creamy, fluffy scrambled eggs made the right way - no more rubbery eggs!',
+        ${ownerResult[0].id},
+        'Aaron Hirshka',
         'Breakfast',
         'Easy',
-        5,
-        10,
         2,
+        5,
+        2,
+        '• 3 large eggs
+• 2 tablespoons butter
+• 2 tablespoons heavy cream
+• Salt and pepper to taste
+• Optional: chives for garnish',
+        '1. Crack eggs into a bowl and whisk gently
+2. Add cream and a pinch of salt, whisk until combined
+3. Heat butter in a non-stick pan over medium-low heat
+4. Pour in egg mixture and let sit for 20 seconds
+5. Using a spatula, gently stir from the outside in
+6. Continue stirring gently every 20 seconds
+7. Remove from heat when eggs are still slightly wet
+8. Season with salt and pepper, garnish with chives if desired',
         'approved',
         true,
         4.8,
-        24
-      )
-      RETURNING id
+        12,
+        NOW()
+      ) RETURNING id
     `
 
-    // Add ingredients for sample recipe
-    await sql`
-      INSERT INTO recipe_ingredients (recipe_id, ingredient, amount, unit) VALUES
-      (${sampleRecipe.id}, 'Large eggs', '4', 'pieces'),
-      (${sampleRecipe.id}, 'Butter', '2', 'tablespoons'),
-      (${sampleRecipe.id}, 'Heavy cream', '2', 'tablespoons'),
-      (${sampleRecipe.id}, 'Salt', '1/4', 'teaspoon'),
-      (${sampleRecipe.id}, 'Black pepper', '1/8', 'teaspoon'),
-      (${sampleRecipe.id}, 'Fresh chives', '1', 'tablespoon')
-    `
-
-    // Add instructions for sample recipe
-    await sql`
-      INSERT INTO recipe_instructions (recipe_id, instruction, step_number) VALUES
-      (${sampleRecipe.id}, 'Crack eggs into a bowl and whisk together with cream, salt, and pepper until well combined.', 1),
-      (${sampleRecipe.id}, 'Heat butter in a non-stick pan over low heat until melted and foaming.', 2),
-      (${sampleRecipe.id}, 'Pour in the egg mixture and let it sit for 20 seconds without stirring.', 3),
-      (${sampleRecipe.id}, 'Using a rubber spatula, gently stir the eggs, pushing them from the edges toward the center.', 4),
-      (${sampleRecipe.id}, 'Continue cooking and stirring gently every 20 seconds until eggs are just set but still creamy.', 5),
-      (${sampleRecipe.id}, 'Remove from heat and garnish with fresh chives. Serve immediately.', 6)
-    `
-
-    // Add tags for sample recipe
-    await sql`
-      INSERT INTO recipe_tags (recipe_id, tag) VALUES
-      (${sampleRecipe.id}, 'quick'),
-      (${sampleRecipe.id}, 'easy'),
-      (${sampleRecipe.id}, 'breakfast'),
-      (${sampleRecipe.id}, 'protein')
-    `
-
-    console.log("Sample recipe created successfully")
+    console.log("Sample recipe created:", sampleRecipeResult[0])
 
     return NextResponse.json({
       success: true,
-      message:
-        "Database initialized successfully! Owner account created with email: aaronhirshka@gmail.com and password: Morton2121",
-      details: {
-        ownerUserId: ownerUser.id,
-        sampleRecipeId: sampleRecipe.id,
-        tablesCreated: [
-          "users",
-          "user_sessions",
-          "email_tokens",
-          "recipes",
-          "recipe_ingredients",
-          "recipe_instructions",
-          "recipe_tags",
-          "comments",
-          "ratings",
-        ],
+      message: "Database initialized successfully",
+      data: {
+        owner: ownerResult[0],
+        sampleRecipe: sampleRecipeResult[0],
       },
     })
   } catch (error) {
-    console.error("Database initialization failed:", error)
+    console.error("Database initialization error:", error)
     return NextResponse.json(
       {
         success: false,

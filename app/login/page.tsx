@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
@@ -79,21 +78,6 @@ export default function LoginPage() {
             <div className="flex items-center space-x-2 text-sm text-orange-600">
               <Lock className="h-4 w-4" />
               <span>Your account is secure and your recipes are waiting</span>
-            </div>
-          </div>
-
-          <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-            <h4 className="font-semibold text-blue-900 mb-2">🔑 Test Accounts</h4>
-            <div className="text-sm text-blue-800 space-y-1">
-              <p>
-                <strong>Owner:</strong> owner@justthedamnrecipe.net / Morton2121!
-              </p>
-              <p>
-                <strong>Admin:</strong> admin@justthedamnrecipe.net / admin123
-              </p>
-              <p>
-                <strong>User:</strong> mike@example.com / user123
-              </p>
             </div>
           </div>
         </div>
