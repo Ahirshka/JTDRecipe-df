@@ -2,7 +2,7 @@ import { neon } from "@neondatabase/serverless"
 import bcrypt from "bcryptjs"
 
 if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL environment variable is not set")
+  throw new Error("DATABASE_URL is not set")
 }
 
 export const sql = neon(process.env.DATABASE_URL)
@@ -56,6 +56,10 @@ export interface Comment {
   username: string
   content: string
   status: string
+  is_flagged: boolean
+  flagged_reason?: string
+  flagged_by?: number
+  flagged_at?: string
   created_at: string
 }
 
@@ -170,6 +174,7 @@ const initializeMockData = async () => {
     username: "Aaron Hirshka",
     content: "Great recipe!",
     status: "approved",
+    is_flagged: false,
     created_at: new Date().toISOString(),
   }
 
@@ -288,11 +293,9 @@ export async function findSessionByToken(token: string): Promise<Session | null>
   }
 }
 
-export async function deleteSession(token: string): Promise<boolean> {
+export async function deleteSession(token: string) {
   try {
-    await sql`
-      DELETE FROM user_sessions WHERE token = ${token}
-    `
+    await sql`DELETE FROM user_sessions WHERE token = ${token}`
     return true
   } catch (error) {
     console.error("Error deleting session:", error)
@@ -429,11 +432,12 @@ export async function getAdminStats() {
   }
 }
 
-export async function initializeDatabase(): Promise<boolean> {
+// Helper function to initialize database
+export async function initializeDatabase() {
   try {
-    console.log("Initializing database...")
+    console.log("🔍 Initializing database...")
 
-    // Create tables if they don't exist
+    // Create users table
     await sql`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
@@ -441,19 +445,21 @@ export async function initializeDatabase(): Promise<boolean> {
         email VARCHAR(255) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
         role VARCHAR(50) DEFAULT 'user',
-        avatar_url TEXT,
+        status VARCHAR(50) DEFAULT 'active',
+        email_verified BOOLEAN DEFAULT false,
         is_verified BOOLEAN DEFAULT false,
         is_profile_verified BOOLEAN DEFAULT false,
+        avatar_url TEXT,
         bio TEXT,
         location VARCHAR(255),
         website VARCHAR(255),
-        status VARCHAR(50),
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW(),
         last_login_at TIMESTAMP
       )
     `
 
+    // Create user_sessions table
     await sql`
       CREATE TABLE IF NOT EXISTS user_sessions (
         id SERIAL PRIMARY KEY,
@@ -464,6 +470,7 @@ export async function initializeDatabase(): Promise<boolean> {
       )
     `
 
+    // Create recipes table
     await sql`
       CREATE TABLE IF NOT EXISTS recipes (
         id SERIAL PRIMARY KEY,
@@ -473,13 +480,13 @@ export async function initializeDatabase(): Promise<boolean> {
         author_username VARCHAR(255) NOT NULL,
         category VARCHAR(100) NOT NULL,
         difficulty VARCHAR(50) NOT NULL,
-        prep_time_minutes INTEGER NOT NULL,
-        cook_time_minutes INTEGER NOT NULL,
-        servings INTEGER NOT NULL,
+        prep_time_minutes INTEGER NOT NULL DEFAULT 0,
+        cook_time_minutes INTEGER NOT NULL DEFAULT 0,
+        servings INTEGER NOT NULL DEFAULT 1,
         ingredients TEXT NOT NULL,
         instructions TEXT NOT NULL,
         image_url TEXT,
-        rating DECIMAL(3,2) DEFAULT 0,
+        rating DECIMAL(3,2) DEFAULT 0.0,
         rating_count INTEGER DEFAULT 0,
         review_count INTEGER DEFAULT 0,
         view_count INTEGER DEFAULT 0,
@@ -492,6 +499,7 @@ export async function initializeDatabase(): Promise<boolean> {
       )
     `
 
+    // Create comments table
     await sql`
       CREATE TABLE IF NOT EXISTS comments (
         id SERIAL PRIMARY KEY,
@@ -499,28 +507,44 @@ export async function initializeDatabase(): Promise<boolean> {
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
         username VARCHAR(255) NOT NULL,
         content TEXT NOT NULL,
-        status VARCHAR(50) DEFAULT 'pending',
+        status VARCHAR(50) DEFAULT 'approved',
+        is_flagged BOOLEAN DEFAULT false,
+        flagged_reason TEXT,
+        flagged_by INTEGER REFERENCES users(id),
+        flagged_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT NOW()
       )
     `
 
+    // Create ratings table
     await sql`
       CREATE TABLE IF NOT EXISTS ratings (
         id SERIAL PRIMARY KEY,
         recipe_id INTEGER REFERENCES recipes(id) ON DELETE CASCADE,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        rating INTEGER NOT NULL,
+        rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(recipe_id, user_id)
+      )
+    `
+
+    // Create email_tokens table
+    await sql`
+      CREATE TABLE IF NOT EXISTS email_tokens (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        token VARCHAR(255) UNIQUE NOT NULL,
+        token_type VARCHAR(50) NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        used BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT NOW()
       )
     `
 
-    // Initialize owner account
-    await initializeOwnerAccount()
-
-    console.log("Database initialized successfully")
+    console.log("✅ Database tables created successfully")
     return true
   } catch (error) {
-    console.error("Failed to initialize database:", error)
+    console.error("❌ Database initialization failed:", error)
     return false
   }
 }

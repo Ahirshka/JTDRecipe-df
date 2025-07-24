@@ -49,10 +49,10 @@ export interface AuthState {
 
 // Define role hierarchy with explicit levels
 export const ROLE_HIERARCHY: Record<UserRole, number> = {
-  user: 1,
-  moderator: 2,
-  admin: 3,
-  owner: 4,
+  user: 0,
+  moderator: 1,
+  admin: 2,
+  owner: 3,
 } as const
 
 // Define role permissions
@@ -96,21 +96,9 @@ export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
 } as const
 
 // Permission checking functions with proper error handling
-export const hasPermission = (userRole: UserRole | string | undefined, requiredRole: UserRole | string): boolean => {
-  // Handle undefined or null roles
-  if (!userRole || !requiredRole) {
-    return false
-  }
-
-  // Ensure roles are valid
-  const validRoles: UserRole[] = ["user", "moderator", "admin", "owner"]
-
-  if (!validRoles.includes(userRole as UserRole) || !validRoles.includes(requiredRole as UserRole)) {
-    return false
-  }
-
-  const userLevel = ROLE_HIERARCHY[userRole as UserRole] || 0
-  const requiredLevel = ROLE_HIERARCHY[requiredRole as UserRole] || 0
+export const hasPermission = (userRole: string, requiredRole: string): boolean => {
+  const userLevel = ROLE_HIERARCHY[userRole as keyof typeof ROLE_HIERARCHY] || 0
+  const requiredLevel = ROLE_HIERARCHY[requiredRole as keyof typeof ROLE_HIERARCHY] || 0
 
   return userLevel >= requiredLevel
 }
@@ -294,8 +282,8 @@ export const logout = (): void => {
 }
 
 // Check if user is authenticated
-export function isAuthenticated(user: User | null): boolean {
-  return user !== null && user.status === "active"
+export function isAuthenticated(user: any): boolean {
+  return !!user && user.status === "active"
 }
 
 // Check if user is admin
@@ -510,4 +498,12 @@ export async function warnUser(userId: string, reason: string): Promise<boolean>
     console.error("Error warning user:", error)
     return false
   }
+}
+
+export function canModerate(userRole: string): boolean {
+  return hasPermission(userRole, "moderator")
+}
+
+export function canAdmin(userRole: string): boolean {
+  return hasPermission(userRole, "admin")
 }

@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { Star, Clock, Eye, TrendingUp } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,7 +9,6 @@ import { Badge } from "@/components/ui/badge"
 import Link from "next/link"
 import Image from "next/image"
 import { useAuth } from "@/contexts/auth-context"
-import { hasPermission } from "@/lib/auth"
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 
@@ -65,12 +63,10 @@ export default function HomePage() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        // Fetch recipes from API route
         const response = await fetch("/api/recipes")
 
         if (!response.ok) {
           console.error(`HTTP error! status: ${response.status}`)
-          // Don't throw error, just use empty data
           setAllFeaturedRecipes({
             recent: [],
             rated: [],
@@ -82,23 +78,36 @@ export default function HomePage() {
         }
 
         const data = await response.json()
-        const allRecipes = Array.isArray(data) ? data : data.recipes || []
+        const allRecipes = Array.isArray(data.recipes) ? data.recipes : []
+
+        // Ensure all recipes have proper numeric values
+        const processedRecipes = allRecipes.map((recipe: any) => ({
+          ...recipe,
+          rating: Number(recipe.rating) || 0,
+          review_count: Number(recipe.review_count) || 0,
+          view_count: Number(recipe.view_count) || 0,
+          prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
+          cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
+          servings: Number(recipe.servings) || 1,
+        }))
 
         // Calculate date ranges
         const now = new Date()
         const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
 
         // Filter and sort recipes for different categories
-        const recentlyAdded = allRecipes
+        const recentlyAdded = processedRecipes
           .filter((recipe: Recipe) => new Date(recipe.created_at) >= thirtyDaysAgo)
           .sort((a: Recipe, b: Recipe) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
           .slice(0, 12)
 
-        const topRated = [...allRecipes].sort((a: Recipe, b: Recipe) => b.rating - a.rating).slice(0, 12)
+        const topRated = [...processedRecipes].sort((a: Recipe, b: Recipe) => b.rating - a.rating).slice(0, 12)
 
-        const mostViewed = [...allRecipes].sort((a: Recipe, b: Recipe) => b.view_count - a.view_count).slice(0, 12)
+        const mostViewed = [...processedRecipes]
+          .sort((a: Recipe, b: Recipe) => b.view_count - a.view_count)
+          .slice(0, 12)
 
-        const trending = [...allRecipes]
+        const trending = [...processedRecipes]
           .sort((a: Recipe, b: Recipe) => {
             const aScore = a.view_count * 0.3 + a.rating * a.review_count * 0.7
             const bScore = b.view_count * 0.3 + b.rating * b.review_count * 0.7
@@ -115,7 +124,7 @@ export default function HomePage() {
         }
 
         setAllFeaturedRecipes(categorizedRecipes)
-        setDisplayedRecipes(recentlyAdded.slice(0, 6)) // Start with recently added
+        setDisplayedRecipes(recentlyAdded.slice(0, 6))
 
         // Update category counts
         setCategoryData([
@@ -126,7 +135,6 @@ export default function HomePage() {
         ])
       } catch (error) {
         console.error("Error loading homepage data:", error)
-        // Set empty data on error instead of crashing
         setAllFeaturedRecipes({
           recent: [],
           rated: [],
@@ -143,10 +151,7 @@ export default function HomePage() {
   }, [])
 
   const handleCategoryClick = async (categoryKey: string, categoryName: string) => {
-    // Update active category
     setActiveCategory(categoryKey)
-
-    // Update displayed recipes based on category
     const recipesToShow = allFeaturedRecipes[categoryKey as keyof typeof allFeaturedRecipes] || []
     setDisplayedRecipes(recipesToShow.slice(0, 6))
   }
@@ -159,7 +164,14 @@ export default function HomePage() {
   }
 
   if (loading) {
-    return <div className="min-h-screen bg-gray-50 flex items-center justify-center">Loading...</div>
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-orange-500 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -281,7 +293,7 @@ export default function HomePage() {
                       <div className="flex items-center justify-between text-sm text-gray-500">
                         <div className="flex items-center gap-1">
                           <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-                          <span className="font-medium">{recipe.rating.toFixed(1)}</span>
+                          <span className="font-medium">{Number(recipe.rating).toFixed(1)}</span>
                           <span>({recipe.review_count})</span>
                         </div>
                         <div className="flex items-center gap-3">
@@ -305,13 +317,13 @@ export default function HomePage() {
           {displayedRecipes.length === 0 && !loadingRecipes && (
             <div className="text-center py-12">
               <p className="text-gray-500 text-lg">No approved recipes found in this category.</p>
-              {hasPermission(user?.role || "user", "moderator") && (
+              {user?.role === "owner" || user?.role === "admin" ? (
                 <p className="text-orange-600 mt-2">
                   <Link href="/admin" className="underline">
                     Check the admin panel for pending recipes
                   </Link>
                 </p>
-              )}
+              ) : null}
             </div>
           )}
         </div>

@@ -1,63 +1,38 @@
-import { type NextRequest, NextResponse } from "next/server"
-import { neon } from "@neondatabase/serverless"
+import { NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import jwt from "jsonwebtoken"
+import { findUserById } from "@/lib/neon"
 
-const sql = neon(process.env.DATABASE_URL!)
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
-    const token = request.cookies.get("auth_token")?.value
+    const cookieStore = cookies()
+    const token = cookieStore.get("auth_token")?.value
 
     if (!token) {
-      return NextResponse.json({
-        success: false,
-        authenticated: false,
-        message: "No authentication token found",
-      })
+      return NextResponse.json({ success: false, error: "No token found" }, { status: 401 })
     }
 
     // Verify JWT token
     const decoded = jwt.verify(token, JWT_SECRET) as { userId: number }
 
     // Get user from database
-    const users = await sql`
-      SELECT id, username, email, role, status, email_verified, avatar, created_at, last_login_at
-      FROM users 
-      WHERE id = ${decoded.userId} AND status = 'active'
-    `
+    const user = await findUserById(decoded.userId)
 
-    if (users.length === 0) {
-      return NextResponse.json({
-        success: false,
-        authenticated: false,
-        message: "User not found or inactive",
-      })
+    if (!user) {
+      return NextResponse.json({ success: false, error: "User not found" }, { status: 401 })
     }
 
-    const user = users[0]
+    // Return user data (excluding password)
+    const { password_hash, ...userWithoutPassword } = user
 
     return NextResponse.json({
       success: true,
-      authenticated: true,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        status: user.status,
-        email_verified: user.email_verified,
-        avatar: user.avatar,
-        created_at: user.created_at,
-        last_login_at: user.last_login_at,
-      },
+      user: userWithoutPassword,
     })
   } catch (error) {
-    console.error("Auth check error:", error)
-    return NextResponse.json({
-      success: false,
-      authenticated: false,
-      message: "Authentication verification failed",
-    })
+    console.error("Auth verification error:", error)
+    return NextResponse.json({ success: false, error: "Invalid token" }, { status: 401 })
   }
 }

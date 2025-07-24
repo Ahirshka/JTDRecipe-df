@@ -1,47 +1,38 @@
 "use client"
 
 import type React from "react"
-import { createContext, useContext, useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { createContext, useContext, useEffect, useState } from "react"
 
 interface User {
   id: string
   username: string
   email: string
   role: string
-  status: string
-  email_verified: boolean
   avatar?: string
+  status: string
+  is_verified: boolean
   created_at: string
-  last_login_at?: string
 }
 
 interface AuthContextType {
   user: User | null
-  token: string | null
-  isAuthenticated: boolean
   loading: boolean
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>
   logout: () => Promise<void>
-  refreshUser: () => Promise<void>
+  isAuthenticated: boolean
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [token, setToken] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const router = useRouter()
 
-  const isAuthenticated = !!user && !!token
-
-  // Check authentication status on mount
   useEffect(() => {
-    checkAuthStatus()
+    checkAuth()
   }, [])
 
-  const checkAuthStatus = async () => {
+  const checkAuth = async () => {
     try {
       const response = await fetch("/api/auth/me", {
         credentials: "include",
@@ -51,7 +42,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const data = await response.json()
         if (data.success && data.user) {
           setUser(data.user)
-          setToken("authenticated") // We use HTTP-only cookies, so no actual token in JS
         }
       }
     } catch (error) {
@@ -76,10 +66,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (data.success && data.user) {
         setUser(data.user)
-        setToken("authenticated")
         return { success: true }
       } else {
-        return { success: false, error: data.message || "Login failed" }
+        return { success: false, error: data.error || "Login failed" }
       }
     } catch (error) {
       console.error("Login error:", error)
@@ -97,31 +86,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error("Logout error:", error)
     } finally {
       setUser(null)
-      setToken(null)
-      router.push("/")
-      router.refresh()
     }
   }
 
-  const refreshUser = async () => {
-    await checkAuthStatus()
+  const value = {
+    user,
+    loading,
+    login,
+    logout,
+    isAuthenticated: !!user,
   }
 
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        token,
-        isAuthenticated,
-        loading,
-        login,
-        logout,
-        refreshUser,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
-  )
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
 export function useAuth() {
