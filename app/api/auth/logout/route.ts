@@ -1,35 +1,29 @@
-import { type NextRequest, NextResponse } from "next/server"
-import { deleteSession } from "@/lib/neon"
+import { NextResponse } from "next/server"
 
-export const dynamic = "force-dynamic"
-export const runtime = "nodejs"
-
-export async function POST(request: NextRequest) {
+export async function POST() {
   try {
-    const token = request.cookies.get("auth-token")?.value
-
-    if (token) {
-      // Delete session from database
-      await deleteSession(token)
-    }
-
-    // Clear the cookie
     const response = NextResponse.json({
       success: true,
-      message: "Logout successful",
+      message: "Logged out successfully",
     })
 
-    response.cookies.set("auth-token", "", {
+    // Clear the auth cookie
+    response.cookies.set("auth_token", "", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       maxAge: 0,
-      path: "/",
     })
 
     return response
   } catch (error) {
     console.error("Logout error:", error)
-    return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 })
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Logout failed",
+      },
+      { status: 500 },
+    )
   }
 }

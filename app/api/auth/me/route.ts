@@ -1,65 +1,41 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { sql } from "@/lib/neon"
+import { neon } from "@neondatabase/serverless"
 import jwt from "jsonwebtoken"
+
+const sql = neon(process.env.DATABASE_URL!)
+const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
 export async function GET(request: NextRequest) {
   try {
-    const token = request.cookies.get("auth-token")?.value
+    const token = request.cookies.get("auth_token")?.value
 
     if (!token) {
       return NextResponse.json({
         success: false,
         authenticated: false,
-        error: "No token provided",
+        message: "No authentication token found",
       })
     }
 
     // Verify JWT token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "fallback-secret") as any
-
-    if (!decoded.userId) {
-      return NextResponse.json({
-        success: false,
-        authenticated: false,
-        error: "Invalid token",
-      })
-    }
+    const decoded = jwt.verify(token, JWT_SECRET) as { userId: number }
 
     // Get user from database
     const users = await sql`
-      SELECT 
-        id, 
-        username, 
-        email, 
-        role, 
-        is_verified, 
-        is_profile_verified,
-        avatar_url,
-        status,
-        created_at,
-        last_login_at
+      SELECT id, username, email, role, status, email_verified, avatar, created_at, last_login_at
       FROM users 
-      WHERE id = ${decoded.userId}
+      WHERE id = ${decoded.userId} AND status = 'active'
     `
 
-    if (!users[0]) {
+    if (users.length === 0) {
       return NextResponse.json({
         success: false,
         authenticated: false,
-        error: "User not found",
+        message: "User not found or inactive",
       })
     }
 
     const user = users[0]
-
-    // Check if account is active
-    if (user.status !== "active") {
-      return NextResponse.json({
-        success: false,
-        authenticated: false,
-        error: "Account is not active",
-      })
-    }
 
     return NextResponse.json({
       success: true,
@@ -70,9 +46,10 @@ export async function GET(request: NextRequest) {
         email: user.email,
         role: user.role,
         status: user.status,
-        is_verified: user.is_verified,
-        is_profile_verified: user.is_profile_verified,
-        avatar_url: user.avatar_url,
+        email_verified: user.email_verified,
+        avatar: user.avatar,
+        created_at: user.created_at,
+        last_login_at: user.last_login_at,
       },
     })
   } catch (error) {
@@ -80,7 +57,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: false,
       authenticated: false,
-      error: "Token verification failed",
+      message: "Authentication verification failed",
     })
   }
 }

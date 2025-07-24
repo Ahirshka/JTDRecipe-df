@@ -1,19 +1,20 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { sql } from "@/lib/neon"
+import { neon } from "@neondatabase/serverless"
 import bcrypt from "bcryptjs"
 import jwt from "jsonwebtoken"
+
+const sql = neon(process.env.DATABASE_URL!)
+const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
 export async function POST(request: NextRequest) {
   try {
     const { email, password } = await request.json()
 
-    console.log("Login attempt for:", email)
-
     if (!email || !password) {
       return NextResponse.json(
         {
           success: false,
-          error: "Email and password are required",
+          message: "Email and password are required",
         },
         { status: 400 },
       )
@@ -21,57 +22,41 @@ export async function POST(request: NextRequest) {
 
     // Find user by email
     const users = await sql`
-      SELECT 
-        id, 
-        username, 
-        email, 
-        password_hash, 
-        role, 
-        is_verified, 
-        is_profile_verified,
-        avatar_url,
-        status,
-        created_at
+      SELECT id, username, email, password_hash, role, status, email_verified, avatar, created_at
       FROM users 
       WHERE email = ${email.toLowerCase()}
     `
 
-    console.log("Database query result:", users.length > 0 ? "User found" : "No user found")
-
-    if (!users[0]) {
+    if (users.length === 0) {
       return NextResponse.json(
         {
           success: false,
-          error: "Invalid email or password",
+          message: "Invalid email or password",
         },
         { status: 401 },
       )
     }
 
     const user = users[0]
-    console.log("Found user:", { id: user.id, email: user.email, role: user.role })
 
-    // Check if account is blocked or suspended
-    if (user.status === "blocked" || user.status === "suspended") {
+    // Check if account is active
+    if (user.status !== "active") {
       return NextResponse.json(
         {
           success: false,
-          error: `Account is ${user.status}. Please contact support.`,
+          message: "Account is not active",
         },
-        { status: 403 },
+        { status: 401 },
       )
     }
 
     // Verify password
-    console.log("Verifying password...")
     const isValidPassword = await bcrypt.compare(password, user.password_hash)
-    console.log("Password valid:", isValidPassword)
-
     if (!isValidPassword) {
       return NextResponse.json(
         {
           success: false,
-          error: "Invalid email or password",
+          message: "Invalid email or password",
         },
         { status: 401 },
       )
@@ -85,35 +70,31 @@ export async function POST(request: NextRequest) {
     `
 
     // Create JWT token
-    const token = jwt.sign(
-      { userId: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET || "fallback-secret",
-      { expiresIn: "7d" },
-    )
+    const token = jwt.sign({ userId: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: "7d" })
 
-    console.log("Login successful for user:", user.id)
-
-    // Set cookie and return response
+    // Create response
     const response = NextResponse.json({
       success: true,
+      message: "Login successful",
       user: {
         id: user.id,
         username: user.username,
         email: user.email,
         role: user.role,
         status: user.status,
-        is_verified: user.is_verified,
-        is_profile_verified: user.is_profile_verified,
-        avatar_url: user.avatar_url,
+        email_verified: user.email_verified,
+        avatar: user.avatar,
+        created_at: user.created_at,
+        last_login_at: new Date().toISOString(),
       },
     })
 
-    response.cookies.set("auth-token", token, {
+    // Set HTTP-only cookie
+    response.cookies.set("auth_token", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       maxAge: 7 * 24 * 60 * 60, // 7 days
-      path: "/",
     })
 
     return response
@@ -122,7 +103,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        error: "Internal server error",
+        message: "Internal server error",
       },
       { status: 500 },
     )

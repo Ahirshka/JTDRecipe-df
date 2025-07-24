@@ -1,10 +1,11 @@
 "use client"
 
 import type React from "react"
-import { createContext, useContext, useEffect, useState } from "react"
+import { createContext, useContext, useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 
 interface User {
-  id: number
+  id: string
   username: string
   email: string
   role: string
@@ -17,8 +18,9 @@ interface User {
 
 interface AuthContextType {
   user: User | null
+  token: string | null
   isAuthenticated: boolean
-  isLoading: boolean
+  loading: boolean
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>
   logout: () => Promise<void>
   refreshUser: () => Promise<void>
@@ -28,55 +30,56 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  const [token, setToken] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const router = useRouter()
+
+  const isAuthenticated = !!user && !!token
+
+  // Check authentication status on mount
+  useEffect(() => {
+    checkAuthStatus()
+  }, [])
 
   const checkAuthStatus = async () => {
     try {
-      console.log("Checking auth status...")
       const response = await fetch("/api/auth/me", {
         credentials: "include",
       })
 
-      const data = await response.json()
-      console.log("Auth check response:", data)
-
-      if (data.success && data.authenticated && data.user) {
-        console.log("User authenticated:", data.user)
-        setUser(data.user)
-      } else {
-        console.log("User not authenticated")
-        setUser(null)
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success && data.user) {
+          setUser(data.user)
+          setToken("authenticated") // We use HTTP-only cookies, so no actual token in JS
+        }
       }
     } catch (error) {
-      console.error("Auth check error:", error)
-      setUser(null)
+      console.error("Auth check failed:", error)
     } finally {
-      setIsLoading(false)
+      setLoading(false)
     }
   }
 
   const login = async (email: string, password: string) => {
     try {
-      console.log("Attempting login for:", email)
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email, password }),
         credentials: "include",
+        body: JSON.stringify({ email, password }),
       })
 
       const data = await response.json()
-      console.log("Login response:", data)
 
       if (data.success && data.user) {
-        console.log("Login successful, setting user:", data.user)
         setUser(data.user)
+        setToken("authenticated")
         return { success: true }
       } else {
-        console.log("Login failed:", data.error)
-        return { success: false, error: data.error }
+        return { success: false, error: data.message || "Login failed" }
       }
     } catch (error) {
       console.error("Login error:", error)
@@ -90,11 +93,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         method: "POST",
         credentials: "include",
       })
-      setUser(null)
-      console.log("User logged out")
     } catch (error) {
       console.error("Logout error:", error)
+    } finally {
       setUser(null)
+      setToken(null)
+      router.push("/")
+      router.refresh()
     }
   }
 
@@ -102,20 +107,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await checkAuthStatus()
   }
 
-  useEffect(() => {
-    checkAuthStatus()
-  }, [])
-
-  const value: AuthContextType = {
-    user,
-    isAuthenticated: !!user,
-    isLoading,
-    login,
-    logout,
-    refreshUser,
-  }
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        isAuthenticated,
+        loading,
+        login,
+        logout,
+        refreshUser,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  )
 }
 
 export function useAuth() {

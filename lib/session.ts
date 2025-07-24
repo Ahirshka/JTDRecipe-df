@@ -12,13 +12,8 @@ export interface SessionUser {
   email: string
   role: string
   status: string
-  is_verified: boolean
-  is_profile_verified: boolean
-  avatar_url?: string
-  bio?: string
-  location?: string
-  website?: string
+  email_verified: boolean
+  avatar?: string
   created_at: string
-  updated_at: string
   last_login_at?: string
 }

@@ -1,48 +1,44 @@
-import { type NextRequest, NextResponse } from "next/server"
-import { initializeDatabase, checkDatabaseStatus } from "@/lib/auto-init"
+import { NextResponse } from "next/server"
 
-export async function POST(request: NextRequest) {
+export async function POST() {
   try {
-    console.log("🚀 Auto-initialization requested...")
+    // Initialize database
+    const initResponse = await fetch(`${process.env.VERCEL_URL || "http://localhost:3000"}/api/init-db`, {
+      method: "POST",
+    })
+    const initResult = await initResponse.json()
 
-    // First check if already initialized
-    const status = await checkDatabaseStatus()
-
-    if (status.initialized) {
-      console.log("✅ Database already initialized")
-      return NextResponse.json({
-        success: true,
-        message: "Database already initialized",
-        data: status.data,
-      })
+    if (!initResult.success) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Database initialization failed",
+          error: initResult.message,
+        },
+        { status: 500 },
+      )
     }
 
-    // Initialize the database
-    const result = await initializeDatabase()
+    // Seed database
+    const seedResponse = await fetch(`${process.env.VERCEL_URL || "http://localhost:3000"}/api/seed-database`, {
+      method: "POST",
+    })
+    const seedResult = await seedResponse.json()
 
-    return NextResponse.json(result)
+    return NextResponse.json({
+      success: true,
+      message: "Auto-initialization completed successfully",
+      data: {
+        initialization: initResult.data,
+        seeding: seedResult.success ? seedResult.data : { error: seedResult.message },
+      },
+    })
   } catch (error) {
-    console.error("❌ Auto-initialization failed:", error)
+    console.error("Auto-init error:", error)
     return NextResponse.json(
       {
         success: false,
         message: "Auto-initialization failed",
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 },
-    )
-  }
-}
-
-export async function GET() {
-  try {
-    const status = await checkDatabaseStatus()
-    return NextResponse.json(status)
-  } catch (error) {
-    return NextResponse.json(
-      {
-        initialized: false,
-        message: "Failed to check database status",
         error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
