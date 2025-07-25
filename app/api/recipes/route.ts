@@ -131,7 +131,7 @@ export async function POST(request: NextRequest) {
           return String(ingredient)
         }
       })
-      .filter((ing) => ing && ing.trim().length > 0)
+      .filter((ing: string) => ing && ing.trim().length > 0)
 
     // Process instructions - handle both object and string formats
     const processedInstructions = body.instructions
@@ -147,10 +147,12 @@ export async function POST(request: NextRequest) {
           return String(instruction)
         }
       })
-      .filter((inst) => inst && inst.trim().length > 0)
+      .filter((inst: string) => inst && inst.trim().length > 0)
 
     // Process tags
-    const processedTags = Array.isArray(body.tags) ? body.tags.filter((tag) => tag && tag.trim().length > 0) : []
+    const processedTags = Array.isArray(body.tags)
+      ? body.tags.filter((tag: string) => tag && tag.trim().length > 0)
+      : []
 
     // Prepare recipe data
     const recipeData = {

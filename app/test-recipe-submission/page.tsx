@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ChefHat, Plus, Minus, AlertCircle, CheckCircle, RefreshCw, Send, Eye, EyeOff } from "lucide-react"
+import { toast } from "@/hooks/use-toast"
 
 interface ApiResponse {
   success: boolean
@@ -22,34 +23,46 @@ interface ApiResponse {
   stack?: string
 }
 
+interface CurrentUser {
+  id: string
+  username: string
+  email: string
+  role: string
+  status: string
+  is_verified: boolean
+}
+
 export default function TestRecipeSubmission() {
   // Form state
   const [title, setTitle] = useState("Test Recipe")
   const [description, setDescription] = useState("A delicious test recipe for debugging")
-  const [category, setCategory] = useState("main-course")
+  const [category, setCategory] = useState("dessert")
   const [difficulty, setDifficulty] = useState("easy")
   const [prepTime, setPrepTime] = useState("15")
   const [cookTime, setCookTime] = useState("30")
   const [servings, setServings] = useState("4")
   const [imageUrl, setImageUrl] = useState("")
-  const [ingredients, setIngredients] = useState(["2 cups flour", "1 cup sugar", "3 eggs"])
-  const [instructions, setInstructions] = useState([
+  const [ingredients, setIngredients] = useState<string[]>(["2 cups flour", "1 cup sugar", "3 eggs"])
+  const [instructions, setInstructions] = useState<string[]>([
     "Mix dry ingredients",
     "Add wet ingredients",
     "Bake for 30 minutes",
   ])
+  const [tags, setTags] = useState<string[]>(["test", "debug"])
+  const [newTag, setNewTag] = useState("")
 
   // UI state
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [currentUser, setCurrentUser] = useState(null)
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [showDebugInfo, setShowDebugInfo] = useState(true)
 
   // Debug state
-  const [lastRequest, setLastRequest] = useState(null)
-  const [lastResponse, setLastResponse] = useState(null)
+  const [lastRequest, setLastRequest] = useState<any>(null)
+  const [lastResponse, setLastResponse] = useState<ApiResponse | null>(null)
   const [rawResponse, setRawResponse] = useState("")
   const [requestTimestamp, setRequestTimestamp] = useState("")
+  const [networkError, setNetworkError] = useState<string | null>(null)
 
   // Check authentication on component mount
   useEffect(() => {
@@ -58,27 +71,48 @@ export default function TestRecipeSubmission() {
 
   const checkAuthStatus = async () => {
     setAuthLoading(true)
+    setNetworkError(null)
+
     try {
       console.log("🔄 [TEST-FORM] Checking authentication status...")
 
       const response = await fetch("/api/auth/me", {
         method: "GET",
         credentials: "include",
+        headers: {
+          "Cache-Control": "no-cache",
+        },
       })
 
-      const data = await response.json()
-      console.log("✅ [TEST-FORM] Auth check response:", data)
-
-      if (data.success && data.user) {
-        setCurrentUser(data.user)
-        console.log("✅ [TEST-FORM] User authenticated:", data.user.username)
-      } else {
+      if (!response.ok) {
+        console.error("❌ [TEST-FORM] Auth check failed with status:", response.status)
         setCurrentUser(null)
-        console.log("❌ [TEST-FORM] User not authenticated")
+        return
+      }
+
+      // Get response as text first to check for valid JSON
+      const responseText = await response.text()
+
+      try {
+        const data = JSON.parse(responseText)
+        console.log("✅ [TEST-FORM] Auth check response:", data)
+
+        if (data.success && data.user) {
+          setCurrentUser(data.user)
+          console.log("✅ [TEST-FORM] User authenticated:", data.user.username)
+        } else {
+          setCurrentUser(null)
+          console.log("❌ [TEST-FORM] User not authenticated")
+        }
+      } catch (parseError) {
+        console.error("❌ [TEST-FORM] Failed to parse auth response:", parseError)
+        console.error("Raw response:", responseText)
+        setCurrentUser(null)
       }
     } catch (error) {
-      console.error("❌ [TEST-FORM] Auth check failed:", error)
+      console.error("❌ [TEST-FORM] Auth check network error:", error)
       setCurrentUser(null)
+      setNetworkError(error instanceof Error ? error.message : "Unknown network error")
     } finally {
       setAuthLoading(false)
     }
@@ -88,11 +122,11 @@ export default function TestRecipeSubmission() {
     setIngredients([...ingredients, ""])
   }
 
-  const removeIngredient = (index) => {
+  const removeIngredient = (index: number) => {
     setIngredients(ingredients.filter((_, i) => i !== index))
   }
 
-  const updateIngredient = (index, value) => {
+  const updateIngredient = (index: number, value: string) => {
     const updated = [...ingredients]
     updated[index] = value
     setIngredients(updated)
@@ -102,37 +136,55 @@ export default function TestRecipeSubmission() {
     setInstructions([...instructions, ""])
   }
 
-  const removeInstruction = (index) => {
+  const removeInstruction = (index: number) => {
     setInstructions(instructions.filter((_, i) => i !== index))
   }
 
-  const updateInstruction = (index, value) => {
+  const updateInstruction = (index: number, value: string) => {
     const updated = [...instructions]
     updated[index] = value
     setInstructions(updated)
   }
 
+  const addTag = () => {
+    if (newTag.trim() && !tags.includes(newTag.trim())) {
+      setTags([...tags, newTag.trim()])
+      setNewTag("")
+    }
+  }
+
+  const removeTag = (tagToRemove: string) => {
+    setTags(tags.filter((tag) => tag !== tagToRemove))
+  }
+
   const submitRecipe = async () => {
     if (!currentUser) {
-      alert("Please log in first!")
+      toast({
+        title: "Authentication Required",
+        description: "Please log in first to submit recipes",
+        variant: "destructive",
+      })
       return
     }
 
     setIsSubmitting(true)
     setRequestTimestamp(new Date().toISOString())
+    setNetworkError(null)
+    setLastResponse(null)
+    setRawResponse("")
 
     const requestData = {
       title,
       description,
       category,
       difficulty,
-      prep_time_minutes: prepTime,
-      cook_time_minutes: cookTime,
-      servings,
+      prep_time_minutes: Number.parseInt(prepTime) || 15,
+      cook_time_minutes: Number.parseInt(cookTime) || 30,
+      servings: Number.parseInt(servings) || 4,
       image_url: imageUrl || undefined,
       ingredients: ingredients.filter((ing) => ing.trim()),
       instructions: instructions.filter((inst) => inst.trim()),
-      tags: [],
+      tags,
     }
 
     console.log("🔄 [TEST-FORM] Submitting recipe:", requestData)
@@ -143,18 +195,30 @@ export default function TestRecipeSubmission() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Cache-Control": "no-cache",
         },
         credentials: "include",
         body: JSON.stringify(requestData),
       })
 
+      console.log("🔄 [TEST-FORM] Response status:", response.status)
+
       // Get raw response text first
-      const responseText = await response.text()
-      setRawResponse(responseText)
-      console.log("📥 [TEST-FORM] Raw response:", responseText)
+      let responseText
+      try {
+        responseText = await response.text()
+        setRawResponse(responseText)
+        console.log("📥 [TEST-FORM] Raw response:", responseText)
+      } catch (textError) {
+        console.error("❌ [TEST-FORM] Error getting response text:", textError)
+        setRawResponse(
+          `Error getting response text: ${textError instanceof Error ? textError.message : "Unknown error"}`,
+        )
+        throw textError
+      }
 
       // Try to parse as JSON
-      let responseData
+      let responseData: ApiResponse
       try {
         responseData = JSON.parse(responseText)
         console.log("✅ [TEST-FORM] Parsed response:", responseData)
@@ -171,21 +235,39 @@ export default function TestRecipeSubmission() {
       setLastResponse(responseData)
 
       if (responseData.success) {
-        alert("Recipe submitted successfully!")
+        toast({
+          title: "Success!",
+          description: responseData.message || "Recipe submitted successfully",
+        })
         console.log("✅ [TEST-FORM] Recipe submission successful")
       } else {
+        toast({
+          title: "Submission Failed",
+          description: responseData.error || "Unknown error occurred",
+          variant: "destructive",
+        })
         console.error("❌ [TEST-FORM] Recipe submission failed:", responseData.error)
       }
     } catch (error) {
       console.error("❌ [TEST-FORM] Network error:", error)
-      const errorResponse = {
+      const errorMessage = error instanceof Error ? error.message : "Unknown network error"
+      setNetworkError(errorMessage)
+
+      const errorResponse: ApiResponse = {
         success: false,
         error: "Network Error",
-        details: error instanceof Error ? error.message : "Unknown network error",
+        details: errorMessage,
         timestamp: new Date().toISOString(),
       }
+
       setLastResponse(errorResponse)
-      setRawResponse(`Network Error: ${error instanceof Error ? error.message : "Unknown error"}`)
+      setRawResponse(`Network Error: ${errorMessage}`)
+
+      toast({
+        title: "Network Error",
+        description: errorMessage,
+        variant: "destructive",
+      })
     } finally {
       setIsSubmitting(false)
     }
@@ -228,6 +310,7 @@ export default function TestRecipeSubmission() {
                 {currentUser.is_verified && <Badge variant="secondary">Verified</Badge>}
               </div>
               <p className="text-sm text-gray-600">Email: {currentUser.email}</p>
+              <p className="text-sm text-gray-600">User ID: {currentUser.id}</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -236,6 +319,13 @@ export default function TestRecipeSubmission() {
                 <span className="font-medium text-red-600">Not authenticated</span>
               </div>
               <p className="text-sm text-gray-600">Please log in to submit recipes</p>
+
+              {networkError && (
+                <Alert variant="destructive" className="mt-2">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>Network error: {networkError}</AlertDescription>
+                </Alert>
+              )}
             </div>
           )}
 
@@ -430,6 +520,32 @@ export default function TestRecipeSubmission() {
                 </div>
               </div>
 
+              {/* Tags */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <Label>Tags (optional)</Label>
+                </div>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {tags.map((tag) => (
+                    <Badge key={tag} variant="secondary" className="cursor-pointer" onClick={() => removeTag(tag)}>
+                      {tag} ×
+                    </Badge>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    value={newTag}
+                    onChange={(e) => setNewTag(e.target.value)}
+                    disabled={isFormDisabled}
+                    placeholder="Add a tag"
+                    onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addTag())}
+                  />
+                  <Button type="button" onClick={addTag} disabled={isFormDisabled}>
+                    Add
+                  </Button>
+                </div>
+              </div>
+
               <Button onClick={submitRecipe} disabled={isFormDisabled} className="w-full" size="lg">
                 {isSubmitting ? (
                   <>
@@ -481,7 +597,7 @@ export default function TestRecipeSubmission() {
                     <div className="space-y-2">
                       <h4 className="font-medium">Current User Data</h4>
                       <pre className="bg-gray-100 p-3 rounded text-xs overflow-auto max-h-64">
-                        {JSON.stringify(currentUser, null, 2)}
+                        {JSON.stringify(currentUser, null, 2) || "No user data available"}
                       </pre>
                     </div>
                   </TabsContent>
@@ -539,6 +655,31 @@ export default function TestRecipeSubmission() {
             )}
           </Card>
 
+          {/* Network Status */}
+          {networkError && (
+            <Card className="border-red-300">
+              <CardHeader className="bg-red-50">
+                <CardTitle className="text-red-700 flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5" />
+                  Network Error
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-red-700">{networkError}</p>
+                <div className="mt-4">
+                  <h4 className="font-medium text-sm mb-2">Troubleshooting Steps:</h4>
+                  <ul className="list-disc pl-5 space-y-1 text-sm">
+                    <li>Check your internet connection</li>
+                    <li>Verify the server is running</li>
+                    <li>Check browser console for CORS issues</li>
+                    <li>Try refreshing the page</li>
+                    <li>Check server logs for errors</li>
+                  </ul>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Quick Actions */}
           <Card>
             <CardHeader>
@@ -568,6 +709,7 @@ export default function TestRecipeSubmission() {
                   setLastResponse(null)
                   setRawResponse("")
                   setRequestTimestamp("")
+                  setNetworkError(null)
                 }}
                 className="w-full"
               >
