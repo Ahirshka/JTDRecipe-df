@@ -45,7 +45,7 @@ export default function LoginPage() {
     setPassword("Morton2121")
     toast({
       title: "Owner credentials filled",
-      description: "Ready to login as admin",
+      description: "Ready to login as owner",
     })
   }
 
@@ -94,7 +94,7 @@ export default function LoginPage() {
         console.log("✅ [LOGIN-PAGE] Login successful, redirecting...")
 
         // Redirect based on role
-        if (result.data?.user.role === "admin") {
+        if (result.data?.user.role === "owner" || result.data?.user.role === "admin") {
           router.push("/admin")
         } else {
           router.push("/")
@@ -200,7 +200,7 @@ export default function LoginPage() {
                 <User className="w-5 h-5" />
                 Owner Account
               </CardTitle>
-              <CardDescription>Quick login with admin credentials</CardDescription>
+              <CardDescription>Quick login with owner credentials</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="space-y-2">
@@ -215,7 +215,7 @@ export default function LoginPage() {
                   <code className="bg-gray-100 px-2 py-1 rounded text-sm">Morton2121</code>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant="default">admin</Badge>
+                  <Badge variant="default">owner</Badge>
                   <Badge variant="secondary">active</Badge>
                 </div>
               </div>

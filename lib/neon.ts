@@ -102,6 +102,12 @@ export async function initializeDatabase(): Promise<boolean> {
           role VARCHAR(20) NOT NULL DEFAULT 'user',
           status VARCHAR(20) NOT NULL DEFAULT 'active',
           is_verified BOOLEAN NOT NULL DEFAULT false,
+          warning_count INTEGER DEFAULT 0,
+          suspension_reason TEXT,
+          suspension_expires_at TIMESTAMP,
+          last_login_at TIMESTAMP,
+          password_hash VARCHAR(255),
+          is_profile_verified BOOLEAN DEFAULT false,
           created_at TIMESTAMP NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMP NOT NULL DEFAULT NOW()
         );
@@ -109,6 +115,19 @@ export async function initializeDatabase(): Promise<boolean> {
       console.log("✅ [NEON-DB] Users table created")
     } else {
       console.log("✅ [NEON-DB] Users table already exists")
+
+      // Check if we need to add missing columns
+      try {
+        await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS warning_count INTEGER DEFAULT 0;`
+        await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS suspension_reason TEXT;`
+        await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS suspension_expires_at TIMESTAMP;`
+        await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP;`
+        await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);`
+        await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_profile_verified BOOLEAN DEFAULT false;`
+        console.log("✅ [NEON-DB] Users table columns updated")
+      } catch (error) {
+        console.log("ℹ️ [NEON-DB] Users table columns already exist or update failed:", error)
+      }
     }
 
     // Create sessions table
@@ -213,14 +232,14 @@ export async function initializeDatabase(): Promise<boolean> {
   }
 }
 
-// Create owner account
+// Create owner account with correct credentials
 export async function createOwnerAccount() {
   console.log("🔄 [NEON-DB] Creating owner account...")
 
   try {
-    // Check if owner account exists
+    // Check if owner account exists with the correct email
     const ownerCheck = await sql`
-      SELECT * FROM users WHERE email = 'admin@recipesite.com' OR username = 'admin';
+      SELECT * FROM users WHERE email = 'aaronhirshka@gmail.com';
     `
 
     if (ownerCheck.length > 0) {
@@ -237,12 +256,30 @@ export async function createOwnerAccount() {
       }
     }
 
-    // Create owner account
-    const hashedPassword = await bcrypt.hash("admin123", 10)
+    // Create owner account with correct credentials
+    const hashedPassword = await bcrypt.hash("Morton2121", 12)
 
     const result = await sql`
-      INSERT INTO users (username, email, password, role, status, is_verified)
-      VALUES ('admin', 'admin@recipesite.com', ${hashedPassword}, 'admin', 'active', true)
+      INSERT INTO users (
+        username, 
+        email, 
+        password, 
+        password_hash,
+        role, 
+        status, 
+        is_verified,
+        is_profile_verified
+      )
+      VALUES (
+        'aaronhirshka', 
+        'aaronhirshka@gmail.com', 
+        ${hashedPassword},
+        ${hashedPassword},
+        'owner', 
+        'active', 
+        true,
+        true
+      )
       RETURNING id, username, email, role;
     `
 
@@ -340,7 +377,7 @@ export async function findUserById(id: number): Promise<User | null> {
 export async function createUser(userData: {
   username: string
   email: string
-  password: string
+  password_hash: string
   role?: string
   status?: string
   is_verified?: boolean
@@ -348,14 +385,12 @@ export async function createUser(userData: {
   console.log("👤 [NEON] Creating user:", userData.username)
 
   try {
-    // Hash password
-    const hashedPassword = await bcrypt.hash(userData.password, 10)
-
     const result = await sql`
       INSERT INTO users (
         username, 
         email, 
-        password, 
+        password,
+        password_hash, 
         role, 
         status, 
         is_verified
@@ -363,7 +398,8 @@ export async function createUser(userData: {
       VALUES (
         ${userData.username}, 
         ${userData.email}, 
-        ${hashedPassword}, 
+        ${userData.password_hash},
+        ${userData.password_hash}, 
         ${userData.role || "user"}, 
         ${userData.status || "active"}, 
         ${userData.is_verified || false}
@@ -395,7 +431,15 @@ export async function verifyUserPassword(user: any, password: string): Promise<b
   console.log(`🔄 [NEON-DB] Verifying password for user: ${user.username}`)
 
   try {
-    const isValid = await bcrypt.compare(password, user.password)
+    // Try both password and password_hash fields for compatibility
+    const passwordToCheck = user.password_hash || user.password
+
+    if (!passwordToCheck) {
+      console.log(`❌ [NEON-DB] No password hash found for user: ${user.username}`)
+      return false
+    }
+
+    const isValid = await bcrypt.compare(password, passwordToCheck)
 
     if (isValid) {
       console.log(`✅ [NEON-DB] Password verified for user: ${user.username}`)
