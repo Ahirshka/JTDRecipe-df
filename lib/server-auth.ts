@@ -1,3 +1,4 @@
+import type { NextRequest } from "next/server"
 import { cookies } from "next/headers"
 import { verifyToken } from "./auth"
 import { findUserById } from "./neon"
@@ -20,85 +21,72 @@ export interface AuthUser {
 }
 
 // Get current user from request - SERVER ONLY
-export async function getCurrentUser(): Promise<AuthUser | null> {
+export async function getCurrentUser(request?: NextRequest): Promise<AuthUser | null> {
   try {
     console.log("🔍 [SERVER-AUTH] Getting current user...")
 
-    const cookieStore = cookies()
-    const allCookies = cookieStore.getAll()
+    let authToken: string | undefined
 
-    console.log(
-      "🔍 [SERVER-AUTH] Available cookies:",
-      allCookies.map((c) => c.name),
-    )
+    if (request) {
+      // Use request cookies if available
+      authToken = request.cookies.get("auth-token")?.value || request.cookies.get("auth_token")?.value
+      console.log("🔍 [SERVER-AUTH] Using request cookies")
+    } else {
+      // Fallback to server cookies
+      const cookieStore = await cookies()
+      authToken = cookieStore.get("auth-token")?.value || cookieStore.get("auth_token")?.value
+      console.log("🔍 [SERVER-AUTH] Using server cookies")
+    }
 
-    // Try multiple cookie names
-    const possibleTokens = [
-      cookieStore.get("auth-token")?.value,
-      cookieStore.get("auth_token")?.value,
-      cookieStore.get("session")?.value,
-      cookieStore.get("token")?.value,
-    ].filter(Boolean)
-
-    console.log("🔍 [SERVER-AUTH] Found tokens:", possibleTokens.length)
-
-    if (possibleTokens.length === 0) {
-      console.log("❌ [SERVER-AUTH] No authentication tokens found")
+    if (!authToken) {
+      console.log("❌ [SERVER-AUTH] No authentication token found")
       return null
     }
 
-    // Try each token until one works
-    for (const token of possibleTokens) {
-      if (!token) continue
+    console.log("🔍 [SERVER-AUTH] Found auth token:", authToken.substring(0, 20) + "...")
 
-      console.log("🔍 [SERVER-AUTH] Verifying token:", token.substring(0, 20) + "...")
-
-      const decoded = verifyToken(token)
-      if (!decoded) {
-        console.log("❌ [SERVER-AUTH] Token verification failed")
-        continue
-      }
-
-      console.log("✅ [SERVER-AUTH] Token verified for user:", decoded.id)
-
-      // Verify user still exists in database
-      const dbUser = await findUserById(decoded.id)
-      if (!dbUser) {
-        console.log("❌ [SERVER-AUTH] User not found in database:", decoded.id)
-        continue
-      }
-
-      console.log("✅ [SERVER-AUTH] User found in database:", {
-        id: dbUser.id,
-        username: dbUser.username,
-        email: dbUser.email,
-        role: dbUser.role,
-        status: dbUser.status,
-      })
-
-      const authUser: AuthUser = {
-        id: dbUser.id,
-        username: dbUser.username,
-        email: dbUser.email,
-        role: dbUser.role,
-        status: dbUser.status,
-        is_verified: dbUser.is_verified,
-        is_profile_verified: dbUser.is_profile_verified,
-        avatar_url: dbUser.avatar_url,
-        bio: dbUser.bio,
-        location: dbUser.location,
-        website: dbUser.website,
-        created_at: dbUser.created_at,
-        updated_at: dbUser.updated_at,
-        last_login_at: dbUser.last_login_at,
-      }
-
-      console.log("✅ [SERVER-AUTH] Returning authenticated user")
-      return authUser
+    const decoded = verifyToken(authToken)
+    if (!decoded) {
+      console.log("❌ [SERVER-AUTH] Token verification failed")
+      return null
     }
 
-    console.log("❌ [SERVER-AUTH] No valid tokens found")
-    return null
+    console.log("✅ [SERVER-AUTH] Token verified for user:", decoded.id)
+
+    // Verify user still exists in database
+    const dbUser = await findUserById(decoded.id)
+    if (!dbUser) {
+      console.log("❌ [SERVER-AUTH] User not found in database:", decoded.id)
+      return null
+    }
+
+    console.log("✅ [SERVER-AUTH] User found in database:", {
+      id: dbUser.id,
+      username: dbUser.username,
+      email: dbUser.email,
+      role: dbUser.role,
+      status: dbUser.status,
+    })
+
+    const authUser: AuthUser = {
+      id: dbUser.id,
+      username: dbUser.username,
+      email: dbUser.email,
+      role: dbUser.role,
+      status: dbUser.status,
+      is_verified: dbUser.is_verified,
+      is_profile_verified: dbUser.is_profile_verified,
+      avatar_url: dbUser.avatar_url,
+      bio: dbUser.bio,
+      location: dbUser.location,
+      website: dbUser.website,
+      created_at: dbUser.created_at,
+      updated_at: dbUser.updated_at,
+      last_login_at: dbUser.last_login_at,
+    }
+
+    console.log("✅ [SERVER-AUTH] Returning authenticated user")
+    return authUser
   } catch (error) {
     console.error("❌ [SERVER-AUTH] Error getting current user:", error)
     return null
@@ -106,11 +94,14 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
 }
 
 // Middleware helper - SERVER ONLY
-export async function requireAuth(requiredRole?: string): Promise<{ user: AuthUser | null; error?: string }> {
+export async function requireAuth(
+  request?: NextRequest,
+  requiredRole?: string,
+): Promise<{ user: AuthUser | null; error?: string }> {
   try {
     console.log("🔍 [SERVER-AUTH] Requiring authentication, role:", requiredRole || "any")
 
-    const user = await getCurrentUser()
+    const user = await getCurrentUser(request)
 
     if (!user) {
       console.log("❌ [SERVER-AUTH] Authentication required but no user found")
@@ -160,7 +151,7 @@ function checkUserPermission(userRole: string, requiredRole: string): boolean {
 // Set authentication cookie - SERVER ONLY
 export async function setAuthCookie(token: string): Promise<void> {
   try {
-    const cookieStore = cookies()
+    const cookieStore = await cookies()
 
     // Set multiple cookie formats for compatibility
     cookieStore.set("auth-token", token, {
@@ -188,7 +179,7 @@ export async function setAuthCookie(token: string): Promise<void> {
 // Clear authentication cookie - SERVER ONLY
 export async function clearAuthCookie(): Promise<void> {
   try {
-    const cookieStore = cookies()
+    const cookieStore = await cookies()
 
     // Clear all possible cookie names
     const cookieNames = ["auth-token", "auth_token", "session", "token"]

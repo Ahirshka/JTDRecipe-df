@@ -5,14 +5,14 @@ export async function GET(request: NextRequest) {
   try {
     console.log("🔍 [AUTH-ME] Getting current user info")
 
-    const user = await getCurrentUser()
+    const user = await getCurrentUser(request)
 
     if (!user) {
       console.log("❌ [AUTH-ME] No authenticated user found")
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
     }
 
-    console.log("✅ [AUTH-ME] Returning user info for:", user.username)
+    console.log("✅ [AUTH-ME] User authenticated:", user.username)
 
     return NextResponse.json({
       success: true,
@@ -34,7 +34,13 @@ export async function GET(request: NextRequest) {
       },
     })
   } catch (error) {
-    console.error("❌ [AUTH-ME] Error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("❌ [AUTH-ME] Error getting user info:", error)
+    return NextResponse.json(
+      {
+        error: "Failed to get user info",
+        message: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    )
   }
 }

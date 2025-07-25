@@ -1,40 +1,39 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { getCurrentUser } from "@/lib/server-auth"
 import { verifyToken } from "@/lib/auth"
-import { cookies } from "next/headers"
+import { findUserById } from "@/lib/neon"
 
 export async function GET(request: NextRequest) {
   try {
     console.log("🔍 [AUTH-DEBUG] Starting authentication debug")
 
-    // Get all cookies from both sources
+    // Get all cookies from the request
     const requestCookies = request.cookies.getAll()
-    const serverCookies = cookies().getAll()
-
     console.log(
       "🔍 [AUTH-DEBUG] Request cookies:",
-      requestCookies.map((c) => ({ name: c.name, hasValue: !!c.value })),
+      requestCookies.map((c) => c.name),
     )
 
-    console.log(
-      "🔍 [AUTH-DEBUG] Server cookies:",
-      serverCookies.map((c) => ({ name: c.name, hasValue: !!c.value })),
-    )
+    // Check for authentication tokens
+    const authToken = request.cookies.get("auth-token")?.value
+    const authTokenAlt = request.cookies.get("auth_token")?.value
+    const sessionToken = request.cookies.get("session")?.value
+    const token = request.cookies.get("token")?.value
 
-    // Check for auth tokens
-    const authToken = request.cookies.get("auth-token")?.value || cookies().get("auth-token")?.value
-    const authTokenAlt = request.cookies.get("auth_token")?.value || cookies().get("auth_token")?.value
-    const sessionToken = request.cookies.get("session")?.value || cookies().get("session")?.value
-    const token = request.cookies.get("token")?.value || cookies().get("token")?.value
+    console.log("🔍 [AUTH-DEBUG] Token availability:", {
+      authToken: !!authToken,
+      authTokenAlt: !!authTokenAlt,
+      sessionToken: !!sessionToken,
+      token: !!token,
+    })
 
-    const debugInfo = {
+    const debug: any = {
       cookies: {
         "auth-token": !!authToken,
         auth_token: !!authTokenAlt,
         session: !!sessionToken,
         token: !!token,
         requestTotal: requestCookies.length,
-        serverTotal: serverCookies.length,
+        serverTotal: requestCookies.length,
       },
       tokens: {
         authToken: authToken ? authToken.substring(0, 20) + "..." : null,
@@ -51,60 +50,78 @@ export async function GET(request: NextRequest) {
       },
     }
 
-    // Test token verification
-    const tokensToTest = [authToken, authTokenAlt, sessionToken, token].filter(Boolean)
+    // Try to verify tokens
+    const tokensToTry = [authToken, authTokenAlt, sessionToken, token].filter(Boolean)
 
-    for (const testToken of tokensToTest) {
-      if (!testToken) continue
+    for (const tokenValue of tokensToTry) {
+      if (!tokenValue) continue
 
       try {
-        const decoded = verifyToken(testToken)
-        debugInfo.verification[testToken.substring(0, 10)] = {
-          valid: !!decoded,
-          userId: decoded?.id,
-          username: decoded?.username,
-          role: decoded?.role,
-        }
-      } catch (error) {
-        debugInfo.verification[testToken.substring(0, 10)] = {
-          valid: false,
-          error: error instanceof Error ? error.message : "Unknown error",
-        }
-      }
-    }
+        console.log("🔍 [AUTH-DEBUG] Verifying token:", tokenValue.substring(0, 10) + "...")
+        const decoded = verifyToken(tokenValue)
 
-    // Test getCurrentUser
-    try {
-      const user = await getCurrentUser()
-      debugInfo.user = user
-        ? {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            role: user.role,
-            status: user.status,
-            is_verified: user.is_verified,
+        if (decoded) {
+          console.log("✅ [AUTH-DEBUG] Token verified:", decoded)
+          debug.verification[tokenValue.substring(0, 10)] = {
+            valid: true,
+            userId: decoded.id,
+            username: decoded.username,
+            role: decoded.role,
           }
-        : null
-    } catch (error) {
-      debugInfo.user = {
-        error: error instanceof Error ? error.message : "Unknown error",
+
+          // Get user from database if we haven't already
+          if (!debug.user) {
+            try {
+              const dbUser = await findUserById(decoded.id)
+              if (dbUser) {
+                console.log("✅ [AUTH-DEBUG] User found in database:", dbUser.username)
+                debug.user = {
+                  id: dbUser.id,
+                  username: dbUser.username,
+                  email: dbUser.email,
+                  role: dbUser.role,
+                  status: dbUser.status,
+                  is_verified: dbUser.is_verified,
+                }
+              } else {
+                console.log("❌ [AUTH-DEBUG] User not found in database")
+              }
+            } catch (dbError) {
+              console.error("❌ [AUTH-DEBUG] Database error:", dbError)
+              debug.user = { error: "Database error" }
+            }
+          }
+        } else {
+          console.log("❌ [AUTH-DEBUG] Token verification failed")
+          debug.verification[tokenValue.substring(0, 10)] = {
+            valid: false,
+            error: "Token verification failed",
+          }
+        }
+      } catch (verifyError) {
+        console.error("❌ [AUTH-DEBUG] Token verification error:", verifyError)
+        debug.verification[tokenValue.substring(0, 10)] = {
+          valid: false,
+          error: verifyError instanceof Error ? verifyError.message : "Unknown error",
+        }
       }
     }
 
-    console.log("✅ [AUTH-DEBUG] Debug info collected")
+    console.log("✅ [AUTH-DEBUG] Debug complete")
 
     return NextResponse.json({
       success: true,
-      debug: debugInfo,
+      debug,
       timestamp: new Date().toISOString(),
     })
   } catch (error) {
     console.error("❌ [AUTH-DEBUG] Error:", error)
     return NextResponse.json(
       {
-        error: "Debug failed",
+        success: false,
+        error: "Authentication debug failed",
         message: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
       },
       { status: 500 },
     )
