@@ -1,54 +1,35 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { deleteSessionByToken } from "@/lib/neon"
+import { deleteSession } from "@/lib/auth-system"
 import { cookies } from "next/headers"
 
 export async function POST(request: NextRequest) {
-  console.log("🚪 [LOGOUT-API] Logout request received")
+  console.log("🚪 [API-LOGOUT] Logout request received")
 
   try {
-    // Get session token from cookie
-    const cookieStore = cookies()
+    const cookieStore = await cookies()
     const sessionToken = cookieStore.get("session")?.value
 
-    if (!sessionToken) {
-      console.log("ℹ️ [LOGOUT-API] No session token found, already logged out")
-      return NextResponse.json({
-        success: true,
-        message: "Already logged out",
-      })
-    }
-
-    console.log("🎫 [LOGOUT-API] Session token found:", sessionToken.substring(0, 10) + "...")
-
-    // Delete session from database
-    const sessionDeleted = await deleteSessionByToken(sessionToken)
-
-    if (sessionDeleted) {
-      console.log("✅ [LOGOUT-API] Session deleted from database")
-    } else {
-      console.log("⚠️ [LOGOUT-API] Session not found in database (may have already expired)")
+    if (sessionToken) {
+      // Delete session from database
+      await deleteSession(sessionToken)
+      console.log("✅ [API-LOGOUT] Session deleted from database")
     }
 
     // Clear session cookie
     cookieStore.delete("session")
-    console.log("🍪 [LOGOUT-API] Session cookie cleared")
+    console.log("✅ [API-LOGOUT] Session cookie cleared")
 
     return NextResponse.json({
       success: true,
-      message: "Logout successful",
+      message: "Logged out successfully",
     })
   } catch (error) {
-    console.error("❌ [LOGOUT-API] Logout error:", error)
-
-    // Even if there's an error, clear the cookie
-    const cookieStore = cookies()
-    cookieStore.delete("session")
-
+    console.error("❌ [API-LOGOUT] Server error:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Logout failed",
-        details: error instanceof Error ? error.message : "Unknown error occurred",
+        error: "Internal server error",
+        details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )

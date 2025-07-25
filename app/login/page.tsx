@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -10,7 +9,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { LogIn, User, Mail, Key, AlertCircle, CheckCircle, RefreshCw } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 
@@ -19,15 +17,13 @@ interface LoginResponse {
   message?: string
   error?: string
   details?: string
-  data?: {
-    user: {
-      id: string
-      username: string
-      email: string
-      role: string
-      status: string
-      is_verified: boolean
-    }
+  user?: {
+    id: number
+    username: string
+    email: string
+    role: string
+    status: string
+    is_verified: boolean
   }
 }
 
@@ -36,10 +32,9 @@ export default function LoginPage() {
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [loginResult, setLoginResult] = useState<LoginResponse | null>(null)
-  const [rawResponse, setRawResponse] = useState("")
   const router = useRouter()
 
-  // Pre-fill owner credentials
+  // Fill owner credentials
   const fillOwnerCredentials = () => {
     setEmail("aaronhirshka@gmail.com")
     setPassword("Morton2121")
@@ -53,48 +48,35 @@ export default function LoginPage() {
     e.preventDefault()
     setIsLoading(true)
     setLoginResult(null)
-    setRawResponse("")
 
     try {
-      console.log("🔄 [LOGIN-PAGE] Attempting login for:", email)
+      console.log("🔐 [LOGIN-PAGE] Attempting login for:", email)
 
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
+        credentials: "include",
         body: JSON.stringify({
           email: email.trim(),
           password: password,
         }),
       })
 
-      const responseText = await response.text()
-      setRawResponse(responseText)
-
-      let result: LoginResponse
-      try {
-        result = JSON.parse(responseText)
-      } catch (parseError) {
-        result = {
-          success: false,
-          error: "JSON Parse Error",
-          details: `Failed to parse response: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
-        }
-      }
-
+      const result: LoginResponse = await response.json()
       setLoginResult(result)
 
       if (result.success) {
         toast({
           title: "Login successful!",
-          description: `Welcome back, ${result.data?.user.username || "User"}!`,
+          description: `Welcome back, ${result.user?.username || "User"}!`,
         })
 
         console.log("✅ [LOGIN-PAGE] Login successful, redirecting...")
 
         // Redirect based on role
-        if (result.data?.user.role === "owner" || result.data?.user.role === "admin") {
+        if (result.user?.role === "admin" || result.user?.role === "owner") {
           router.push("/admin")
         } else {
           router.push("/")
@@ -118,7 +100,6 @@ export default function LoginPage() {
       }
 
       setLoginResult(errorResult)
-      setRawResponse(`Network Error: ${errorMessage}`)
 
       toast({
         title: "Network Error",
@@ -215,7 +196,7 @@ export default function LoginPage() {
                   <code className="bg-gray-100 px-2 py-1 rounded text-sm">Morton2121</code>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant="default">owner</Badge>
+                  <Badge variant="default">admin</Badge>
                   <Badge variant="secondary">active</Badge>
                 </div>
               </div>
@@ -246,88 +227,70 @@ export default function LoginPage() {
                   <p>Enter your credentials and click "Sign In"</p>
                 </div>
               ) : (
-                <Tabs defaultValue="result" className="w-full">
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="result">Result</TabsTrigger>
-                    <TabsTrigger value="raw">Raw Response</TabsTrigger>
-                  </TabsList>
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    {loginResult.success ? (
+                      <CheckCircle className="w-5 h-5 text-green-600" />
+                    ) : (
+                      <AlertCircle className="w-5 h-5 text-red-600" />
+                    )}
+                    <span className={`font-medium ${loginResult.success ? "text-green-600" : "text-red-600"}`}>
+                      {loginResult.success ? "Login Successful" : "Login Failed"}
+                    </span>
+                  </div>
 
-                  <TabsContent value="result" className="mt-4">
-                    <div className="space-y-4">
-                      <div className="flex items-center gap-2">
-                        {loginResult.success ? (
-                          <CheckCircle className="w-5 h-5 text-green-600" />
-                        ) : (
-                          <AlertCircle className="w-5 h-5 text-red-600" />
+                  {loginResult.message && (
+                    <Alert variant={loginResult.success ? "default" : "destructive"}>
+                      <AlertDescription>{loginResult.message}</AlertDescription>
+                    </Alert>
+                  )}
+
+                  {loginResult.error && (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription>
+                        <strong>Error:</strong> {loginResult.error}
+                        {loginResult.details && (
+                          <>
+                            <br />
+                            <strong>Details:</strong> {loginResult.details}
+                          </>
                         )}
-                        <span className={`font-medium ${loginResult.success ? "text-green-600" : "text-red-600"}`}>
-                          {loginResult.success ? "Login Successful" : "Login Failed"}
-                        </span>
-                      </div>
+                      </AlertDescription>
+                    </Alert>
+                  )}
 
-                      {loginResult.message && (
-                        <Alert variant={loginResult.success ? "default" : "destructive"}>
-                          <AlertDescription>{loginResult.message}</AlertDescription>
-                        </Alert>
-                      )}
-
-                      {loginResult.error && (
-                        <Alert variant="destructive">
-                          <AlertCircle className="h-4 w-4" />
-                          <AlertDescription>
-                            <strong>Error:</strong> {loginResult.error}
-                            {loginResult.details && (
-                              <>
-                                <br />
-                                <strong>Details:</strong> {loginResult.details}
-                              </>
-                            )}
-                          </AlertDescription>
-                        </Alert>
-                      )}
-
-                      {loginResult.data?.user && (
-                        <Card className="border-green-300">
-                          <CardHeader className="bg-green-50">
-                            <CardTitle className="text-green-700 text-sm">User Information</CardTitle>
-                          </CardHeader>
-                          <CardContent className="space-y-2">
-                            <p>
-                              <strong>ID:</strong> {loginResult.data.user.id}
-                            </p>
-                            <p>
-                              <strong>Username:</strong> {loginResult.data.user.username}
-                            </p>
-                            <p>
-                              <strong>Email:</strong> {loginResult.data.user.email}
-                            </p>
-                            <p>
-                              <strong>Role:</strong> <Badge variant="default">{loginResult.data.user.role}</Badge>
-                            </p>
-                            <p>
-                              <strong>Status:</strong> <Badge variant="secondary">{loginResult.data.user.status}</Badge>
-                            </p>
-                            <p>
-                              <strong>Verified:</strong>{" "}
-                              <Badge variant={loginResult.data.user.is_verified ? "default" : "destructive"}>
-                                {loginResult.data.user.is_verified ? "Yes" : "No"}
-                              </Badge>
-                            </p>
-                          </CardContent>
-                        </Card>
-                      )}
-                    </div>
-                  </TabsContent>
-
-                  <TabsContent value="raw" className="mt-4">
-                    <div className="space-y-2">
-                      <h4 className="font-medium">Raw API Response</h4>
-                      <pre className="bg-gray-100 p-3 rounded text-xs overflow-auto max-h-64">
-                        {rawResponse || "No response yet"}
-                      </pre>
-                    </div>
-                  </TabsContent>
-                </Tabs>
+                  {loginResult.user && (
+                    <Card className="border-green-300">
+                      <CardHeader className="bg-green-50">
+                        <CardTitle className="text-green-700 text-sm">User Information</CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-2">
+                        <p>
+                          <strong>ID:</strong> {loginResult.user.id}
+                        </p>
+                        <p>
+                          <strong>Username:</strong> {loginResult.user.username}
+                        </p>
+                        <p>
+                          <strong>Email:</strong> {loginResult.user.email}
+                        </p>
+                        <p>
+                          <strong>Role:</strong> <Badge variant="default">{loginResult.user.role}</Badge>
+                        </p>
+                        <p>
+                          <strong>Status:</strong> <Badge variant="secondary">{loginResult.user.status}</Badge>
+                        </p>
+                        <p>
+                          <strong>Verified:</strong>{" "}
+                          <Badge variant={loginResult.user.is_verified ? "default" : "destructive"}>
+                            {loginResult.user.is_verified ? "Yes" : "No"}
+                          </Badge>
+                        </p>
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
               )}
             </CardContent>
           </Card>
@@ -344,13 +307,8 @@ export default function LoginPage() {
               <Button variant="outline" size="sm" onClick={() => router.push("/signup")} className="w-full">
                 Create New Account
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => router.push("/test-recipe-submission")}
-                className="w-full"
-              >
-                Test Recipe Submission
+              <Button variant="outline" size="sm" onClick={() => router.push("/debug-auth")} className="w-full">
+                Debug Authentication
               </Button>
             </CardContent>
           </Card>

@@ -7,7 +7,11 @@ import { randomBytes } from "crypto"
 neonConfig.fetchConnectionCache = true
 
 // Initialize database connection
-export const sql = neon(process.env.DATABASE_URL!)
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL environment variable is not set")
+}
+
+export const sql = neon(process.env.DATABASE_URL)
 export const db = drizzle(sql)
 
 // User interface
@@ -82,6 +86,17 @@ export function getStackAuthConfig(): StackAuthConfig {
     projectId: process.env.STACK_PROJECT_ID || "",
     clientUrl: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
     serverUrl: process.env.STACK_API_URL || "https://api.stack-auth.com",
+  }
+}
+
+// Test database connection
+export async function testConnection(): Promise<boolean> {
+  try {
+    await sql`SELECT 1`
+    return true
+  } catch (error) {
+    console.error("Database connection test failed:", error)
+    return false
   }
 }
 
@@ -674,10 +689,10 @@ export async function getRecipes(limit = 20, offset = 0): Promise<Recipe[]> {
     `
 
     const recipes = result as Recipe[]
-    console.log(`✅ [NEON-DB] Retrieved ${recipes.length} recipes`)
+    console.log(`✅ [NEON] Retrieved ${recipes.length} recipes`)
     return recipes
   } catch (error) {
-    console.error("❌ [NEON-DB] Error getting recipes:", error)
+    console.error("❌ [NEON] Error getting recipes:", error)
     throw error
   }
 }

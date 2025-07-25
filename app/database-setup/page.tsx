@@ -1,5 +1,4 @@
 "use client"
-
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -8,185 +7,116 @@ import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import {
-  Database,
-  CheckCircle,
-  XCircle,
-  RefreshCw,
-  Users,
-  ChefHat,
-  Settings,
-  AlertCircle,
-  User,
-  Mail,
-  Calendar,
-  RotateCcw,
-  Key,
-} from "lucide-react"
+import { Database, RefreshCw, CheckCircle, AlertCircle, Users, Settings, Trash2, User, Mail, Key } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 
 interface DatabaseStatus {
-  success: boolean
-  data?: {
-    tables: {
-      users: boolean
-      sessions: boolean
-      recipes: boolean
-    }
-    owner: {
-      exists: boolean
-      info?: {
-        id: number
-        username: string
-        email: string
-        role: string
-        status: string
-        is_verified: boolean
-        created_at: string
-      }
-    }
-    counts: {
-      users: number
-      recipes: number
-    }
-    database_ready: boolean
-  }
-  error?: string
-  details?: string
+  connected: boolean
+  tables: { name: string; exists: boolean; count?: number }[]
+  users: any[]
 }
 
-interface InitResponse {
+interface SetupResult {
   success: boolean
   message?: string
-  data?: {
-    database: string
-    owner: {
-      id: number
-      username: string
-      email: string
-      role: string
-    }
-    credentials: {
-      email: string
-      password: string
-    }
-    reinitialized?: boolean
-  }
   error?: string
-  details?: string
+  admin?: {
+    username: string
+    email: string
+    password: string
+  }
 }
 
 export default function DatabaseSetupPage() {
   const [status, setStatus] = useState<DatabaseStatus | null>(null)
   const [isLoading, setIsLoading] = useState(false)
-  const [isInitializing, setIsInitializing] = useState(false)
-  const [initResult, setInitResult] = useState<InitResponse | null>(null)
-  const [rawResponse, setRawResponse] = useState("")
+  const [setupResult, setSetupResult] = useState<SetupResult | null>(null)
 
-  // Owner configuration form
-  const [ownerConfig, setOwnerConfig] = useState({
-    username: "admin",
-    email: "admin@recipesite.com",
-    password: "admin123",
-    role: "owner",
-  })
+  // Admin credentials
+  const [adminUsername, setAdminUsername] = useState("aaronhirshka")
+  const [adminEmail, setAdminEmail] = useState("aaronhirshka@gmail.com")
+  const [adminPassword, setAdminPassword] = useState("Morton2121")
 
-  // Check database status on component mount
+  // Load database status on mount
   useEffect(() => {
-    checkDatabaseStatus()
+    loadDatabaseStatus()
   }, [])
 
-  const checkDatabaseStatus = async () => {
-    setIsLoading(true)
+  const loadDatabaseStatus = async () => {
+    console.log("🔍 [DB-SETUP] Loading database status...")
+
     try {
-      console.log("🔍 [DB-SETUP] Checking database status...")
+      const response = await fetch("/api/database/init")
+      const result = await response.json()
 
-      const response = await fetch("/api/init-db", {
-        method: "GET",
-      })
-
-      const data = await response.json()
-      setStatus(data)
-
-      console.log("📊 [DB-SETUP] Database status:", data)
+      if (result.success) {
+        setStatus(result.status)
+        console.log("✅ [DB-SETUP] Database status loaded")
+      } else {
+        console.error("❌ [DB-SETUP] Failed to load status:", result.error)
+        toast({
+          title: "Error",
+          description: "Failed to load database status",
+          variant: "destructive",
+        })
+      }
     } catch (error) {
-      console.error("❌ [DB-SETUP] Status check error:", error)
-      setStatus({
-        success: false,
-        error: "Failed to check database status",
-        details: error instanceof Error ? error.message : "Unknown error",
+      console.error("❌ [DB-SETUP] Network error:", error)
+      toast({
+        title: "Network Error",
+        description: "Failed to connect to database",
+        variant: "destructive",
       })
-    } finally {
-      setIsLoading(false)
     }
   }
 
-  const initializeDatabase = async (reinitialize = false) => {
-    setIsInitializing(true)
-    setInitResult(null)
-    setRawResponse("")
+  const initializeDatabase = async () => {
+    setIsLoading(true)
+    setSetupResult(null)
 
     try {
-      console.log(`🔄 [DB-SETUP] ${reinitialize ? "Reinitializing" : "Initializing"} database...`)
+      console.log("🔄 [DB-SETUP] Initializing database...")
 
-      const response = await fetch("/api/init-db", {
+      const response = await fetch("/api/database/init", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          reinitialize,
-          ownerData: ownerConfig,
+          action: "init",
+          adminUsername,
+          adminEmail,
+          adminPassword,
         }),
       })
 
-      const responseText = await response.text()
-      setRawResponse(responseText)
-
-      let result: InitResponse
-      try {
-        result = JSON.parse(responseText)
-      } catch (parseError) {
-        result = {
-          success: false,
-          error: "JSON Parse Error",
-          details: `Failed to parse response: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
-        }
-      }
-
-      setInitResult(result)
+      const result: SetupResult = await response.json()
+      setSetupResult(result)
 
       if (result.success) {
         toast({
-          title: reinitialize ? "Database reinitialized!" : "Database initialized!",
-          description: "Database tables and owner account created successfully",
+          title: "Success!",
+          description: "Database initialized and admin user created",
         })
-
-        // Refresh status after successful initialization
-        setTimeout(() => {
-          checkDatabaseStatus()
-        }, 1000)
+        console.log("✅ [DB-SETUP] Database initialized successfully")
+        await loadDatabaseStatus() // Refresh status
       } else {
         toast({
-          title: "Initialization failed",
-          description: result.error || "Failed to initialize database",
+          title: "Setup Failed",
+          description: result.error || "Unknown error",
           variant: "destructive",
         })
+        console.error("❌ [DB-SETUP] Setup failed:", result.error)
       }
-
-      console.log("📝 [DB-SETUP] Initialization result:", result)
     } catch (error) {
-      console.error("❌ [DB-SETUP] Initialization error:", error)
-      const errorMessage = error instanceof Error ? error.message : "Unknown network error"
+      console.error("❌ [DB-SETUP] Network error:", error)
+      const errorMessage = error instanceof Error ? error.message : "Unknown error"
 
-      const errorResult: InitResponse = {
+      setSetupResult({
         success: false,
         error: "Network Error",
-        details: errorMessage,
-      }
-
-      setInitResult(errorResult)
-      setRawResponse(`Network Error: ${errorMessage}`)
+        message: errorMessage,
+      })
 
       toast({
         title: "Network Error",
@@ -194,7 +124,69 @@ export default function DatabaseSetupPage() {
         variant: "destructive",
       })
     } finally {
-      setIsInitializing(false)
+      setIsLoading(false)
+    }
+  }
+
+  const resetDatabase = async () => {
+    if (!confirm("Are you sure you want to reset the database? This will delete all data!")) {
+      return
+    }
+
+    setIsLoading(true)
+    setSetupResult(null)
+
+    try {
+      console.log("🗑️ [DB-SETUP] Resetting database...")
+
+      const response = await fetch("/api/database/init", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "reset",
+          adminUsername,
+          adminEmail,
+          adminPassword,
+        }),
+      })
+
+      const result: SetupResult = await response.json()
+      setSetupResult(result)
+
+      if (result.success) {
+        toast({
+          title: "Database Reset!",
+          description: "Database reset and admin user created",
+        })
+        console.log("✅ [DB-SETUP] Database reset successfully")
+        await loadDatabaseStatus() // Refresh status
+      } else {
+        toast({
+          title: "Reset Failed",
+          description: result.error || "Unknown error",
+          variant: "destructive",
+        })
+        console.error("❌ [DB-SETUP] Reset failed:", result.error)
+      }
+    } catch (error) {
+      console.error("❌ [DB-SETUP] Network error:", error)
+      const errorMessage = error instanceof Error ? error.message : "Unknown error"
+
+      setSetupResult({
+        success: false,
+        error: "Network Error",
+        message: errorMessage,
+      })
+
+      toast({
+        title: "Network Error",
+        description: errorMessage,
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -203,402 +195,328 @@ export default function DatabaseSetupPage() {
       <div className="mb-6">
         <h1 className="text-3xl font-bold mb-2 flex items-center gap-2">
           <Database className="w-8 h-8 text-blue-600" />
-          Database Setup & Management
+          Database Setup
         </h1>
-        <p className="text-gray-600">Initialize database tables and configure the owner account</p>
+        <p className="text-gray-600">Initialize your recipe sharing platform database</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Database Status */}
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center justify-between">
-                Database Status
-                <Button variant="outline" size="sm" onClick={checkDatabaseStatus} disabled={isLoading}>
-                  {isLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                </Button>
-              </CardTitle>
-              <CardDescription>Current state of database tables and accounts</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {!status ? (
-                <div className="text-center py-8 text-gray-500">
-                  <Database className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>Loading database status...</p>
-                </div>
-              ) : status.success ? (
-                <div className="space-y-4">
-                  {/* Overall Status */}
-                  <div className="flex items-center gap-2">
-                    {status.data?.database_ready ? (
-                      <CheckCircle className="w-5 h-5 text-green-600" />
-                    ) : (
-                      <XCircle className="w-5 h-5 text-red-600" />
-                    )}
-                    <span className={`font-medium ${status.data?.database_ready ? "text-green-600" : "text-red-600"}`}>
-                      {status.data?.database_ready ? "Database Ready" : "Database Not Ready"}
-                    </span>
+      <Tabs defaultValue="setup" className="w-full">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="setup">Setup</TabsTrigger>
+          <TabsTrigger value="status">Status</TabsTrigger>
+          <TabsTrigger value="users">Users</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="setup" className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Setup Form */}
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Settings className="w-5 h-5" />
+                    Admin User Configuration
+                  </CardTitle>
+                  <CardDescription>Configure the default admin user credentials</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="adminUsername">Admin Username</Label>
+                    <Input
+                      id="adminUsername"
+                      value={adminUsername}
+                      onChange={(e) => setAdminUsername(e.target.value)}
+                      placeholder="Enter admin username"
+                      disabled={isLoading}
+                    />
                   </div>
 
-                  {/* Tables Status */}
                   <div className="space-y-2">
-                    <h4 className="font-medium">Database Tables</h4>
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="flex items-center gap-2">
-                        {status.data?.tables.users ? (
-                          <CheckCircle className="w-4 h-4 text-green-600" />
-                        ) : (
-                          <XCircle className="w-4 h-4 text-red-600" />
-                        )}
-                        <span className="text-sm">Users</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {status.data?.tables.sessions ? (
-                          <CheckCircle className="w-4 h-4 text-green-600" />
-                        ) : (
-                          <XCircle className="w-4 h-4 text-red-600" />
-                        )}
-                        <span className="text-sm">Sessions</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {status.data?.tables.recipes ? (
-                          <CheckCircle className="w-4 h-4 text-green-600" />
-                        ) : (
-                          <XCircle className="w-4 h-4 text-red-600" />
-                        )}
-                        <span className="text-sm">Recipes</span>
-                      </div>
-                    </div>
+                    <Label htmlFor="adminEmail">Admin Email</Label>
+                    <Input
+                      id="adminEmail"
+                      type="email"
+                      value={adminEmail}
+                      onChange={(e) => setAdminEmail(e.target.value)}
+                      placeholder="Enter admin email"
+                      disabled={isLoading}
+                    />
                   </div>
 
-                  {/* Counts */}
                   <div className="space-y-2">
-                    <h4 className="font-medium">Data Counts</h4>
-                    <div className="flex gap-4">
-                      <div className="flex items-center gap-2">
-                        <Users className="w-4 h-4 text-blue-600" />
-                        <span className="text-sm">Users: {status.data?.counts.users || 0}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <ChefHat className="w-4 h-4 text-orange-600" />
-                        <span className="text-sm">Recipes: {status.data?.counts.recipes || 0}</span>
-                      </div>
-                    </div>
+                    <Label htmlFor="adminPassword">Admin Password</Label>
+                    <Input
+                      id="adminPassword"
+                      type="password"
+                      value={adminPassword}
+                      onChange={(e) => setAdminPassword(e.target.value)}
+                      placeholder="Enter admin password"
+                      disabled={isLoading}
+                    />
                   </div>
 
-                  {/* Owner Account Status */}
-                  <div className="space-y-2">
-                    <h4 className="font-medium">Owner Account</h4>
-                    <div className="flex items-center gap-2">
-                      {status.data?.owner.exists ? (
-                        <CheckCircle className="w-4 h-4 text-green-600" />
+                  <div className="flex gap-2">
+                    <Button onClick={initializeDatabase} disabled={isLoading} className="flex-1">
+                      {isLoading ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                          Setting up...
+                        </>
                       ) : (
-                        <XCircle className="w-4 h-4 text-red-600" />
+                        <>
+                          <Database className="w-4 h-4 mr-2" />
+                          Initialize Database
+                        </>
                       )}
-                      <span className={`text-sm ${status.data?.owner.exists ? "text-green-600" : "text-red-600"}`}>
-                        {status.data?.owner.exists ? "Owner account exists" : "Owner account missing"}
-                      </span>
-                    </div>
+                    </Button>
 
-                    {status.data?.owner.info && (
-                      <Card className="border-green-300 mt-2">
-                        <CardHeader className="bg-green-50 pb-2">
-                          <CardTitle className="text-green-700 text-sm">Owner Account Details</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-1 pt-2">
-                          <div className="flex items-center gap-2 text-sm">
-                            <User className="w-3 h-3" />
-                            <span>Username: {status.data.owner.info.username}</span>
-                          </div>
-                          <div className="flex items-center gap-2 text-sm">
-                            <Mail className="w-3 h-3" />
-                            <span>Email: {status.data.owner.info.email}</span>
-                          </div>
-                          <div className="flex items-center gap-2 text-sm">
-                            <Settings className="w-3 h-3" />
-                            <span>
-                              Role: <Badge variant="default">{status.data.owner.info.role}</Badge>
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2 text-sm">
-                            <Calendar className="w-3 h-3" />
-                            <span>Created: {new Date(status.data.owner.info.created_at).toLocaleDateString()}</span>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    )}
+                    <Button onClick={resetDatabase} disabled={isLoading} variant="destructive">
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Reset
+                    </Button>
                   </div>
-                </div>
-              ) : (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>
-                    <strong>Error:</strong> {status.error}
-                    {status.details && (
-                      <>
-                        <br />
-                        <strong>Details:</strong> {status.details}
-                      </>
-                    )}
-                  </AlertDescription>
-                </Alert>
-              )}
-            </CardContent>
-          </Card>
+                </CardContent>
+              </Card>
 
-          {/* Owner Configuration */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Owner Account Configuration</CardTitle>
-              <CardDescription>Configure the owner account credentials</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="username">Username</Label>
-                  <Input
-                    id="username"
-                    value={ownerConfig.username}
-                    onChange={(e) => setOwnerConfig({ ...ownerConfig, username: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={ownerConfig.email}
-                    onChange={(e) => setOwnerConfig({ ...ownerConfig, email: e.target.value })}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="password">Password</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    value={ownerConfig.password}
-                    onChange={(e) => setOwnerConfig({ ...ownerConfig, password: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="role">Role</Label>
-                  <Input
-                    id="role"
-                    value={ownerConfig.role}
-                    onChange={(e) => setOwnerConfig({ ...ownerConfig, role: e.target.value })}
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+              {/* Default Credentials */}
+              <Card className="border-green-300">
+                <CardHeader className="bg-green-50">
+                  <CardTitle className="text-green-700 flex items-center gap-2">
+                    <User className="w-5 h-5" />
+                    Default Owner Credentials
+                  </CardTitle>
+                  <CardDescription>These are the recommended owner credentials</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <User className="w-4 h-4 text-gray-500" />
+                      <span className="font-medium">Username:</span>
+                      <code className="bg-gray-100 px-2 py-1 rounded text-sm">aaronhirshka</code>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Mail className="w-4 h-4 text-gray-500" />
+                      <span className="font-medium">Email:</span>
+                      <code className="bg-gray-100 px-2 py-1 rounded text-sm">aaronhirshka@gmail.com</code>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Key className="w-4 h-4 text-gray-500" />
+                      <span className="font-medium">Password:</span>
+                      <code className="bg-gray-100 px-2 py-1 rounded text-sm">Morton2121</code>
+                    </div>
+                  </div>
 
-        {/* Database Actions */}
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Database Actions</CardTitle>
-              <CardDescription>Initialize or reinitialize the database</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Button
-                onClick={() => initializeDatabase(false)}
-                disabled={isInitializing}
-                className="w-full"
-                variant="default"
-              >
-                {isInitializing ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                    Initializing...
-                  </>
-                ) : (
-                  <>
-                    <Database className="w-4 h-4 mr-2" />
-                    Initialize Database
-                  </>
-                )}
-              </Button>
+                  <Button
+                    onClick={() => {
+                      setAdminUsername("aaronhirshka")
+                      setAdminEmail("aaronhirshka@gmail.com")
+                      setAdminPassword("Morton2121")
+                      toast({
+                        title: "Credentials filled",
+                        description: "Default owner credentials have been filled",
+                      })
+                    }}
+                    variant="outline"
+                    className="w-full"
+                    disabled={isLoading}
+                  >
+                    Use Default Credentials
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
 
-              <Button
-                onClick={() => initializeDatabase(true)}
-                disabled={isInitializing}
-                className="w-full"
-                variant="destructive"
-              >
-                {isInitializing ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                    Reinitializing...
-                  </>
-                ) : (
-                  <>
-                    <RotateCcw className="w-4 h-4 mr-2" />
-                    Reinitialize Database (Drop & Recreate)
-                  </>
-                )}
-              </Button>
-
-              <Alert>
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  <strong>Reinitialize</strong> will drop all existing tables and data, then recreate them with the new
-                  owner configuration.
-                </AlertDescription>
-              </Alert>
-            </CardContent>
-          </Card>
-
-          {/* Results */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Results</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {!initResult ? (
-                <div className="text-center py-8 text-gray-500">
-                  <Settings className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>No initialization performed yet</p>
-                </div>
-              ) : (
-                <Tabs defaultValue="result" className="w-full">
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="result">Result</TabsTrigger>
-                    <TabsTrigger value="raw">Raw Response</TabsTrigger>
-                  </TabsList>
-
-                  <TabsContent value="result" className="mt-4">
+            {/* Setup Results */}
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Setup Results</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {!setupResult ? (
+                    <div className="text-center py-8 text-gray-500">
+                      <Database className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                      <p>Click "Initialize Database" to begin setup</p>
+                    </div>
+                  ) : (
                     <div className="space-y-4">
                       <div className="flex items-center gap-2">
-                        {initResult.success ? (
+                        {setupResult.success ? (
                           <CheckCircle className="w-5 h-5 text-green-600" />
                         ) : (
                           <AlertCircle className="w-5 h-5 text-red-600" />
                         )}
-                        <span className={`font-medium ${initResult.success ? "text-green-600" : "text-red-600"}`}>
-                          {initResult.success ? "Success" : "Failed"}
+                        <span className={`font-medium ${setupResult.success ? "text-green-600" : "text-red-600"}`}>
+                          {setupResult.success ? "Setup Successful" : "Setup Failed"}
                         </span>
                       </div>
 
-                      {initResult.message && (
-                        <Alert variant={initResult.success ? "default" : "destructive"}>
-                          <AlertDescription>{initResult.message}</AlertDescription>
+                      {setupResult.message && (
+                        <Alert variant={setupResult.success ? "default" : "destructive"}>
+                          <AlertDescription>{setupResult.message}</AlertDescription>
                         </Alert>
                       )}
 
-                      {initResult.error && (
+                      {setupResult.error && (
                         <Alert variant="destructive">
                           <AlertCircle className="h-4 w-4" />
                           <AlertDescription>
-                            <strong>Error:</strong> {initResult.error}
-                            {initResult.details && (
-                              <>
-                                <br />
-                                <strong>Details:</strong> {initResult.details}
-                              </>
-                            )}
+                            <strong>Error:</strong> {setupResult.error}
                           </AlertDescription>
                         </Alert>
                       )}
 
-                      {initResult.data?.credentials && (
-                        <Card className="border-blue-300">
-                          <CardHeader className="bg-blue-50">
-                            <CardTitle className="text-blue-700 text-sm flex items-center gap-2">
-                              <Key className="w-4 h-4" />
-                              Owner Login Credentials
-                            </CardTitle>
-                          </CardHeader>
-                          <CardContent className="space-y-2">
-                            <div className="flex items-center gap-2 text-sm">
-                              <Mail className="w-3 h-3" />
-                              <span>
-                                Email:{" "}
-                                <code className="bg-gray-100 px-2 py-1 rounded">
-                                  {initResult.data.credentials.email}
-                                </code>
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2 text-sm">
-                              <Key className="w-3 h-3" />
-                              <span>
-                                Password:{" "}
-                                <code className="bg-gray-100 px-2 py-1 rounded">
-                                  {initResult.data.credentials.password}
-                                </code>
-                              </span>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      )}
-
-                      {initResult.data?.owner && (
+                      {setupResult.admin && (
                         <Card className="border-green-300">
                           <CardHeader className="bg-green-50">
-                            <CardTitle className="text-green-700 text-sm">Owner Account Created</CardTitle>
+                            <CardTitle className="text-green-700 text-sm">Admin User Created</CardTitle>
                           </CardHeader>
                           <CardContent className="space-y-2">
                             <p>
-                              <strong>ID:</strong> {initResult.data.owner.id}
+                              <strong>Username:</strong> {setupResult.admin.username}
                             </p>
                             <p>
-                              <strong>Username:</strong> {initResult.data.owner.username}
+                              <strong>Email:</strong> {setupResult.admin.email}
                             </p>
                             <p>
-                              <strong>Email:</strong> {initResult.data.owner.email}
+                              <strong>Password:</strong> {setupResult.admin.password}
                             </p>
-                            <p>
-                              <strong>Role:</strong> <Badge variant="default">{initResult.data.owner.role}</Badge>
-                            </p>
-                            {initResult.data.reinitialized && (
-                              <p className="text-orange-600 font-medium">Database was reinitialized</p>
-                            )}
                           </CardContent>
                         </Card>
                       )}
                     </div>
-                  </TabsContent>
+                  )}
+                </CardContent>
+              </Card>
 
-                  <TabsContent value="raw" className="mt-4">
-                    <div className="space-y-2">
-                      <h4 className="font-medium">Raw API Response</h4>
-                      <pre className="bg-gray-100 p-3 rounded text-xs overflow-auto max-h-64">
-                        {rawResponse || "No response yet"}
-                      </pre>
-                    </div>
-                  </TabsContent>
-                </Tabs>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Quick Actions</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <Button variant="outline" size="sm" onClick={loadDatabaseStatus} className="w-full bg-transparent">
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Refresh Status
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => (window.location.href = "/login")}
+                    className="w-full"
+                  >
+                    Go to Login
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => (window.location.href = "/debug-auth")}
+                    className="w-full"
+                  >
+                    Debug Authentication
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="status" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Database className="w-5 h-5" />
+                Database Status
+                <Button onClick={loadDatabaseStatus} size="sm" variant="outline">
+                  <RefreshCw className="w-4 h-4" />
+                </Button>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {!status ? (
+                <div className="text-center py-8 text-gray-500">
+                  <RefreshCw className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                  <p>Loading database status...</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    {status.connected ? (
+                      <CheckCircle className="w-5 h-5 text-green-600" />
+                    ) : (
+                      <AlertCircle className="w-5 h-5 text-red-600" />
+                    )}
+                    <span className={`font-medium ${status.connected ? "text-green-600" : "text-red-600"}`}>
+                      {status.connected ? "Database Connected" : "Database Disconnected"}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h4 className="font-medium">Tables Status:</h4>
+                    {status.tables.map((table) => (
+                      <div key={table.name} className="flex items-center justify-between p-2 border rounded">
+                        <div className="flex items-center gap-2">
+                          {table.exists ? (
+                            <CheckCircle className="w-4 h-4 text-green-600" />
+                          ) : (
+                            <AlertCircle className="w-4 h-4 text-red-600" />
+                          )}
+                          <span className="font-medium">{table.name}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={table.exists ? "default" : "destructive"}>
+                            {table.exists ? "EXISTS" : "MISSING"}
+                          </Badge>
+                          {table.count !== undefined && <Badge variant="secondary">{table.count} rows</Badge>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </CardContent>
           </Card>
+        </TabsContent>
 
-          {/* Quick Actions */}
+        <TabsContent value="users" className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Quick Actions</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="w-5 h-5" />
+                Users in Database
+              </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2">
-              <Button variant="outline" size="sm" onClick={() => (window.location.href = "/login")} className="w-full">
-                Go to Login Page
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => (window.location.href = "/debug-owner-login")}
-                className="w-full"
-              >
-                Debug Owner Login
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => (window.location.href = "/admin")} className="w-full">
-                Admin Dashboard
-              </Button>
+            <CardContent>
+              {!status?.users || status.users.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                  <p>No users found in database</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {status.users.map((user) => (
+                    <div key={user.id} className="flex items-center justify-between p-3 border rounded">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <User className="w-4 h-4 text-gray-500" />
+                          <span className="font-medium">{user.username}</span>
+                          <Badge variant="default">{user.role}</Badge>
+                        </div>
+                        <p className="text-sm text-gray-600">{user.email}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={user.status === "active" ? "default" : "secondary"}>{user.status}</Badge>
+                        <Badge variant={user.is_verified ? "default" : "destructive"}>
+                          {user.is_verified ? "Verified" : "Unverified"}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
-        </div>
-      </div>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
