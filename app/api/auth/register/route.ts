@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { findUserByEmail, findUserByUsername, createUser } from "@/lib/neon"
-import bcrypt from "bcryptjs"
+import { createUser, findUserByEmail, findUserByUsername } from "@/lib/neon"
 
 export async function POST(request: NextRequest) {
   console.log("🔄 [AUTH-REGISTER-API] Registration request received")
@@ -81,26 +80,23 @@ export async function POST(request: NextRequest) {
 
     console.log(`🔄 [AUTH-REGISTER-API] Creating new user: ${body.username}`)
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(body.password, 12)
-
-    // Create user
+    // Create new user
     const newUser = await createUser({
       username: body.username,
       email: body.email,
-      password_hash: hashedPassword,
+      password: body.password,
       role: "user",
       status: "active",
       is_verified: false,
     })
 
     if (!newUser) {
-      console.log(`❌ [AUTH-REGISTER-API] Failed to create user: ${body.username}`)
+      console.log("❌ [AUTH-REGISTER-API] Failed to create user")
       return NextResponse.json(
         {
           success: false,
-          error: "User creation failed",
-          details: "Unable to create user account",
+          error: "Registration failed",
+          details: "Failed to create user account",
         },
         { status: 500 },
       )
@@ -109,11 +105,11 @@ export async function POST(request: NextRequest) {
     console.log(`✅ [AUTH-REGISTER-API] User created successfully: ${newUser.username}`)
 
     // Return user data (without password)
-    const { password, password_hash, ...userData } = newUser
+    const { password, ...userData } = newUser
 
     return NextResponse.json({
       success: true,
-      message: "User registered successfully",
+      message: "Registration successful",
       data: {
         user: userData,
       },

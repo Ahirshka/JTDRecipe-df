@@ -3,12 +3,11 @@ import { findSessionByToken, findUserById } from "@/lib/neon"
 import { cookies } from "next/headers"
 
 export async function GET(request: NextRequest) {
-  console.log("🔍 [AUTH-ME-API] Authentication check request received")
+  console.log("🔄 [AUTH-ME-API] Authentication check request received")
 
   try {
     // Get session token from cookies
-    const cookieStore = cookies()
-    const sessionToken = cookieStore.get("session_token")?.value
+    const sessionToken = cookies().get("session_token")?.value
 
     if (!sessionToken) {
       console.log("❌ [AUTH-ME-API] No session token found")
@@ -28,7 +27,7 @@ export async function GET(request: NextRequest) {
     const session = await findSessionByToken(sessionToken)
 
     if (!session) {
-      console.log(`❌ [AUTH-ME-API] Invalid or expired session token`)
+      console.log("❌ [AUTH-ME-API] Invalid or expired session")
       return NextResponse.json(
         {
           success: false,
@@ -45,7 +44,7 @@ export async function GET(request: NextRequest) {
     const user = await findUserById(session.user_id)
 
     if (!user) {
-      console.log(`❌ [AUTH-ME-API] User not found for session: ${session.user_id}`)
+      console.log(`❌ [AUTH-ME-API] User not found with ID: ${session.user_id}`)
       return NextResponse.json(
         {
           success: false,
@@ -63,7 +62,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      user: userData,
+      data: {
+        user: userData,
+      },
     })
   } catch (error) {
     console.error("❌ [AUTH-ME-API] Authentication check error:", error)

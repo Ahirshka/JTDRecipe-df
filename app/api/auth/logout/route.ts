@@ -7,21 +7,32 @@ export async function POST(request: NextRequest) {
 
   try {
     // Get session token from cookies
-    const cookieStore = cookies()
-    const sessionToken = cookieStore.get("session_token")?.value
+    const sessionToken = cookies().get("session_token")?.value
 
-    if (sessionToken) {
-      console.log(`🗑️ [AUTH-LOGOUT-API] Deleting session: ${sessionToken.substring(0, 10)}...`)
-
-      // Delete session from database
-      await deleteSessionByToken(sessionToken)
-
-      console.log(`✅ [AUTH-LOGOUT-API] Session deleted successfully`)
-    } else {
-      console.log("ℹ️ [AUTH-LOGOUT-API] No session token found to delete")
+    if (!sessionToken) {
+      console.log("❌ [AUTH-LOGOUT-API] No session token found")
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Not authenticated",
+          details: "No session token found",
+        },
+        { status: 401 },
+      )
     }
 
-    // Clear session cookie
+    console.log(`🔍 [AUTH-LOGOUT-API] Deleting session: ${sessionToken.substring(0, 10)}...`)
+
+    // Delete session from database
+    const deleted = await deleteSessionByToken(sessionToken)
+
+    if (!deleted) {
+      console.log("❌ [AUTH-LOGOUT-API] Failed to delete session")
+    } else {
+      console.log("✅ [AUTH-LOGOUT-API] Session deleted successfully")
+    }
+
+    // Clear session cookie regardless of database deletion result
     cookies().set({
       name: "session_token",
       value: "",
@@ -36,12 +47,12 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: "Logged out successfully",
+      message: "Logout successful",
     })
   } catch (error) {
     console.error("❌ [AUTH-LOGOUT-API] Logout error:", error)
 
-    // Still clear the cookie even if database deletion fails
+    // Clear cookie even if there was an error
     cookies().set({
       name: "session_token",
       value: "",
