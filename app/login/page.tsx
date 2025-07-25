@@ -4,12 +4,12 @@ import type React from "react"
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Eye, EyeOff, LogIn, Crown, AlertCircle } from "lucide-react"
+import { Loader2, Eye, EyeOff } from "lucide-react"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
@@ -19,7 +19,7 @@ export default function LoginPage() {
   const [error, setError] = useState("")
   const router = useRouter()
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError("")
@@ -30,16 +30,15 @@ export default function LoginPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        credentials: "include",
-        body: JSON.stringify({
-          email,
-          password,
-        }),
+        body: JSON.stringify({ email, password }),
       })
 
       const data = await response.json()
 
       if (data.success) {
+        // Store session token
+        localStorage.setItem("session_token", data.token)
+
         // Redirect based on user role
         if (data.user.role === "owner" || data.user.role === "admin") {
           router.push("/admin")
@@ -62,20 +61,20 @@ export default function LoginPage() {
     setPassword("Morton2121")
   }
 
+  const fillTestCredentials = () => {
+    setEmail("test@example.com")
+    setPassword("password123")
+  }
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-orange-50 to-red-50 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
-          <div className="flex items-center justify-center mb-4">
-            <div className="w-12 h-12 bg-orange-500 rounded-full flex items-center justify-center">
-              <LogIn className="w-6 h-6 text-white" />
-            </div>
-          </div>
-          <CardTitle className="text-2xl font-bold text-center">Welcome Back</CardTitle>
-          <CardDescription className="text-center">Sign in to your recipe sharing account</CardDescription>
+          <CardTitle className="text-2xl font-bold text-center">Sign In</CardTitle>
+          <CardDescription className="text-center">Enter your credentials to access your account</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleLogin} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input
@@ -116,23 +115,24 @@ export default function LoginPage() {
 
             {error && (
               <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
 
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Signing in..." : "Sign In"}
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Signing in...
+                </>
+              ) : (
+                "Sign In"
+              )}
             </Button>
+          </form>
 
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-background px-2 text-muted-foreground">Quick Access</span>
-              </div>
-            </div>
+          <div className="mt-6 space-y-2">
+            <div className="text-sm text-gray-600 text-center mb-3">Quick Fill Options:</div>
 
             <Button
               type="button"
@@ -141,33 +141,39 @@ export default function LoginPage() {
               onClick={fillOwnerCredentials}
               disabled={loading}
             >
-              <Crown className="w-4 h-4 mr-2" />
               Fill Owner Credentials
             </Button>
-          </form>
 
-          <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-            <h3 className="text-sm font-semibold text-blue-900 mb-2 flex items-center">
-              <Crown className="w-4 h-4 mr-2" />
-              Owner Account Access
-            </h3>
-            <div className="text-xs text-blue-800 space-y-1">
-              <p>
-                <strong>Email:</strong> aaronhirshka@gmail.com
-              </p>
-              <p>
-                <strong>Password:</strong> Morton2121
-              </p>
-              <p className="text-blue-600 mt-2">This account has full administrative access to the platform.</p>
-            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full bg-transparent"
+              onClick={fillTestCredentials}
+              disabled={loading}
+            >
+              Fill Test User Credentials
+            </Button>
           </div>
 
-          <div className="mt-4 text-center text-sm text-gray-600">
-            <p>
+          <div className="mt-6 text-center">
+            <p className="text-sm text-gray-600">
               Don't have an account?{" "}
-              <Button variant="link" className="p-0 h-auto" onClick={() => router.push("/signup")}>
-                Sign up here
-              </Button>
+              <a href="/signup" className="font-medium text-blue-600 hover:text-blue-500">
+                Sign up
+              </a>
+            </p>
+          </div>
+
+          <div className="mt-4 p-3 bg-gray-50 rounded-md">
+            <p className="text-xs text-gray-600 mb-2">
+              <strong>Owner Account:</strong>
+            </p>
+            <p className="text-xs text-gray-500">
+              Email: aaronhirshka@gmail.com
+              <br />
+              Password: Morton2121
+              <br />
+              Role: Owner (Full Admin Access)
             </p>
           </div>
         </CardContent>

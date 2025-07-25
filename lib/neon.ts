@@ -14,12 +14,12 @@ if (!process.env.DATABASE_URL) {
 export const sql = neon(process.env.DATABASE_URL)
 export const db = drizzle(sql)
 
-// User interface
+// User interface - Updated to match database schema
 export interface User {
   id: number
   username: string
   email: string
-  password: string
+  password_hash: string
   role: string
   status: string
   is_verified: boolean
@@ -130,14 +130,14 @@ export async function initializeDatabase(): Promise<boolean> {
   console.log("🔄 [NEON-DB] Initializing database tables...")
 
   try {
-    // Create users table with proper field types
+    // Create users table with proper field types - FIXED column name
     console.log("📋 [NEON-DB] Creating users table...")
     await sql`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         username VARCHAR(50) NOT NULL UNIQUE,
         email VARCHAR(255) NOT NULL UNIQUE,
-        password TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
         role VARCHAR(20) NOT NULL DEFAULT 'user',
         status VARCHAR(20) NOT NULL DEFAULT 'active',
         is_verified BOOLEAN NOT NULL DEFAULT false,
@@ -260,12 +260,12 @@ export async function createOwnerAccount(ownerData?: {
     const hashedPassword = await bcrypt.hash(owner.password, 12)
     console.log("✅ [NEON-DB] Password hashed successfully")
 
-    // Create owner account
+    // Create owner account - FIXED column name
     const result = await sql`
       INSERT INTO users (
         username, 
         email, 
-        password, 
+        password_hash, 
         role, 
         status, 
         is_verified
@@ -296,7 +296,7 @@ export async function createOwnerAccount(ownerData?: {
     // Verify the password was stored correctly
     const testUser = await findUserByEmail(owner.email)
     if (testUser) {
-      const testVerify = await bcrypt.compare(owner.password, testUser.password)
+      const testVerify = await bcrypt.compare(owner.password, testUser.password_hash)
       console.log("🔍 [NEON-DB] Password verification test:", testVerify ? "PASSED" : "FAILED")
 
       if (!testVerify) {
@@ -338,10 +338,10 @@ export async function findUserByEmail(email: string): Promise<User | null> {
 
     const user = users[0] as User
     console.log(`✅ [NEON-DB] User found: ${user.username} (ID: ${user.id})`)
-    console.log(`🔍 [NEON-DB] User has password hash: ${user.password ? "YES" : "NO"}`)
-    if (user.password) {
-      console.log(`🔍 [NEON-DB] Password hash length: ${user.password.length}`)
-      console.log(`🔍 [NEON-DB] Password hash starts with: ${user.password.substring(0, 10)}`)
+    console.log(`🔍 [NEON-DB] User has password hash: ${user.password_hash ? "YES" : "NO"}`)
+    if (user.password_hash) {
+      console.log(`🔍 [NEON-DB] Password hash length: ${user.password_hash.length}`)
+      console.log(`🔍 [NEON-DB] Password hash starts with: ${user.password_hash.substring(0, 10)}`)
     }
 
     return user
@@ -422,7 +422,7 @@ export async function createUser(userData: {
       INSERT INTO users (
         username, 
         email, 
-        password, 
+        password_hash, 
         role, 
         status, 
         is_verified
@@ -461,22 +461,26 @@ export async function createUser(userData: {
 export async function verifyUserPassword(user: any, password: string): Promise<boolean> {
   console.log(`🔄 [NEON-DB] Verifying password for user: ${user.username}`)
   console.log(`🔍 [NEON-DB] Input password: "${password}"`)
-  console.log(`🔍 [NEON-DB] Stored hash: "${user.password ? user.password.substring(0, 20) + "..." : "NO HASH"}"`)
+  console.log(
+    `🔍 [NEON-DB] Stored hash: "${user.password_hash ? user.password_hash.substring(0, 20) + "..." : "NO HASH"}"`,
+  )
 
   try {
-    if (!user.password) {
+    if (!user.password_hash) {
       console.log(`❌ [NEON-DB] No password hash found for user: ${user.username}`)
       return false
     }
 
     // Use bcrypt to compare the plain password with the hash
-    const isValid = await bcrypt.compare(password, user.password)
+    const isValid = await bcrypt.compare(password, user.password_hash)
 
     if (isValid) {
       console.log(`✅ [NEON-DB] Password verified successfully for user: ${user.username}`)
     } else {
       console.log(`❌ [NEON-DB] Password verification failed for user: ${user.username}`)
-      console.log(`🔍 [NEON-DB] bcrypt.compare("${password}", "${user.password.substring(0, 20)}...") = ${isValid}`)
+      console.log(
+        `🔍 [NEON-DB] bcrypt.compare("${password}", "${user.password_hash.substring(0, 20)}...") = ${isValid}`,
+      )
     }
 
     return isValid
