@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from "next/server"
 import { getCurrentUserFromRequest } from "@/lib/server-auth"
 
 export async function GET(request: NextRequest) {
-  console.log("🔄 [AUTH-ME] Authentication check request received")
+  console.log("🔄 [AUTH-ME] GET request received")
 
   try {
     const user = await getCurrentUserFromRequest(request)
@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
         {
           success: false,
           error: "Not authenticated",
-          details: "No valid authentication token found",
+          details: "No valid session found",
         },
         { status: 401 },
       )
@@ -21,22 +21,26 @@ export async function GET(request: NextRequest) {
 
     console.log("✅ [AUTH-ME] User authenticated:", user.username)
 
-    return NextResponse.json({
-      success: true,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        status: user.status,
-        is_verified: user.is_verified,
-        avatar_url: user.avatar_url,
-        bio: user.bio,
-        location: user.location,
-        website: user.website,
-        created_at: user.created_at,
+    return NextResponse.json(
+      {
+        success: true,
+        data: {
+          user: {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            role: user.role,
+            status: user.status,
+            is_verified: user.is_verified,
+            avatar_url: user.avatar_url,
+            bio: user.bio,
+            location: user.location,
+            website: user.website,
+          },
+        },
       },
-    })
+      { status: 200 },
+    )
   } catch (error) {
     console.error("❌ [AUTH-ME] Authentication check error:", error)
 

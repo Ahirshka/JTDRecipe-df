@@ -6,49 +6,57 @@ export async function POST(request: NextRequest) {
 
   try {
     // Initialize database tables
-    console.log("📋 [INIT-DB] Creating database tables...")
+    console.log("📊 [INIT-DB] Creating database tables...")
     await initializeDatabase()
 
     // Check if owner account already exists
     const existingOwner = await findUserByEmail("aaronhirshka@gmail.com")
-
     if (existingOwner) {
       console.log("✅ [INIT-DB] Owner account already exists")
-      return NextResponse.json({
-        success: true,
-        message: "Database initialized successfully",
-        details: "Owner account already exists",
-        owner: {
-          email: "aaronhirshka@gmail.com",
-          username: existingOwner.username,
-          role: existingOwner.role,
+      return NextResponse.json(
+        {
+          success: true,
+          message: "Database already initialized with owner account",
+          data: {
+            owner: {
+              id: existingOwner.id,
+              username: existingOwner.username,
+              email: existingOwner.email,
+              role: existingOwner.role,
+            },
+          },
         },
-      })
+        { status: 200 },
+      )
     }
 
     // Create owner account
     console.log("👤 [INIT-DB] Creating owner account...")
     const owner = await createUser({
-      username: "aaron_owner",
+      username: "aaronhirshka",
       email: "aaronhirshka@gmail.com",
       password: "Morton2121",
       role: "admin",
       status: "active",
     })
 
-    console.log("✅ [INIT-DB] Database initialization completed successfully")
+    console.log("✅ [INIT-DB] Database initialization complete")
 
-    return NextResponse.json({
-      success: true,
-      message: "Database initialized successfully",
-      details: "All tables created and owner account set up",
-      owner: {
-        email: "aaronhirshka@gmail.com",
-        username: owner.username,
-        role: owner.role,
-        id: owner.id,
+    return NextResponse.json(
+      {
+        success: true,
+        message: "Database initialized successfully with owner account",
+        data: {
+          owner: {
+            id: owner.id,
+            username: owner.username,
+            email: owner.email,
+            role: owner.role,
+          },
+        },
       },
-    })
+      { status: 201 },
+    )
   } catch (error) {
     console.error("❌ [INIT-DB] Database initialization failed:", error)
 

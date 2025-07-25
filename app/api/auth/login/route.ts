@@ -1,34 +1,32 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { findUserByEmail, verifyUserPassword, createSession } from "@/lib/neon"
-import { sign } from "jsonwebtoken"
 import { cookies } from "next/headers"
-
-const JWT_SECRET = process.env.JWT_SECRET || "fallback-secret-key"
+import { randomBytes } from "crypto"
 
 export async function POST(request: NextRequest) {
-  console.log("🔄 [AUTH-LOGIN] Login request received")
+  console.log("🔄 [AUTH-LOGIN] POST request received")
 
   try {
     const body = await request.json()
+    console.log("📝 [AUTH-LOGIN] Request body:", { ...body, password: "[REDACTED]" })
+
     const { email, password } = body
 
-    console.log("📝 [AUTH-LOGIN] Login attempt for email:", email)
-
-    // Validation
+    // Validate required fields
     if (!email || !password) {
-      console.log("❌ [AUTH-LOGIN] Missing credentials")
+      console.log("❌ [AUTH-LOGIN] Missing required fields")
       return NextResponse.json(
         {
           success: false,
-          error: "Missing credentials",
+          error: "Missing required fields",
           details: "Email and password are required",
         },
         { status: 400 },
       )
     }
 
-    // Find user
-    const user = await findUserByEmail(email.trim().toLowerCase())
+    // Find user by email
+    const user = await findUserByEmail(email)
     if (!user) {
       console.log("❌ [AUTH-LOGIN] User not found")
       return NextResponse.json(
@@ -55,9 +53,9 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Check account status
+    // Check if user account is active
     if (user.status !== "active") {
-      console.log("❌ [AUTH-LOGIN] Account not active:", user.status)
+      console.log("❌ [AUTH-LOGIN] User account not active:", user.status)
       return NextResponse.json(
         {
           success: false,
@@ -68,47 +66,41 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log("✅ [AUTH-LOGIN] User authenticated:", user.username)
+    // Generate session token
+    const sessionToken = randomBytes(32).toString("hex")
 
-    // Create JWT token
-    const token = sign(
-      {
-        userId: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-      },
-      JWT_SECRET,
-      { expiresIn: "7d" },
-    )
-
-    // Create database session
-    await createSession(user.id, token)
+    // Create session in database
+    await createSession(user.id, sessionToken)
 
     // Set HTTP-only cookie
-    const cookieStore = cookies()
-    cookieStore.set("auth-token", token, {
+    const cookieStore = await cookies()
+    cookieStore.set("session_token", sessionToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60, // 7 days
+      maxAge: 60 * 60 * 24 * 7, // 7 days
       path: "/",
     })
 
-    console.log("✅ [AUTH-LOGIN] Login completed successfully")
+    console.log("✅ [AUTH-LOGIN] Login successful for user:", user.username)
 
-    return NextResponse.json({
-      success: true,
-      message: "Login successful",
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        status: user.status,
-        is_verified: user.is_verified,
+    return NextResponse.json(
+      {
+        success: true,
+        message: "Login successful",
+        data: {
+          user: {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            role: user.role,
+            status: user.status,
+            is_verified: user.is_verified,
+          },
+        },
       },
-    })
+      { status: 200 },
+    )
   } catch (error) {
     console.error("❌ [AUTH-LOGIN] Login error:", error)
 

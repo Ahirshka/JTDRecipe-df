@@ -5,33 +5,37 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Database, CheckCircle, AlertCircle, RefreshCw, User, Key, Mail } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 
 interface InitResponse {
   success: boolean
-  message: string
+  message?: string
+  error?: string
   details?: string
-  owner?: {
-    email: string
-    username: string
-    role: string
-    id?: string
+  data?: {
+    owner?: {
+      id: string
+      username: string
+      email: string
+      role: string
+    }
   }
 }
 
 export default function DatabaseSetup() {
   const [isInitializing, setIsInitializing] = useState(false)
   const [initResult, setInitResult] = useState<InitResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [rawResponse, setRawResponse] = useState("")
 
   const initializeDatabase = async () => {
     setIsInitializing(true)
-    setError(null)
     setInitResult(null)
+    setRawResponse("")
 
     try {
-      console.log("🔄 [DB-SETUP] Starting database initialization...")
+      console.log("🔄 [DB-SETUP] Initializing database...")
 
       const response = await fetch("/api/init-db", {
         method: "POST",
@@ -41,38 +45,47 @@ export default function DatabaseSetup() {
       })
 
       const responseText = await response.text()
-      console.log("📥 [DB-SETUP] Raw response:", responseText)
+      setRawResponse(responseText)
 
-      let data: InitResponse
+      let result: InitResponse
       try {
-        data = JSON.parse(responseText)
+        result = JSON.parse(responseText)
       } catch (parseError) {
-        console.error("❌ [DB-SETUP] JSON parse error:", parseError)
-        throw new Error(`Failed to parse response: ${responseText}`)
+        result = {
+          success: false,
+          error: "JSON Parse Error",
+          details: `Failed to parse response: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
+        }
       }
 
-      console.log("✅ [DB-SETUP] Parsed response:", data)
+      setInitResult(result)
 
-      if (data.success) {
-        setInitResult(data)
+      if (result.success) {
         toast({
           title: "Success!",
-          description: data.message,
+          description: result.message || "Database initialized successfully",
         })
         console.log("✅ [DB-SETUP] Database initialization successful")
       } else {
-        setError(data.details || data.message || "Unknown error occurred")
         toast({
           title: "Initialization Failed",
-          description: data.details || data.message || "Unknown error occurred",
+          description: result.error || "Unknown error occurred",
           variant: "destructive",
         })
-        console.error("❌ [DB-SETUP] Database initialization failed:", data)
+        console.error("❌ [DB-SETUP] Database initialization failed:", result.error)
       }
     } catch (error) {
       console.error("❌ [DB-SETUP] Network error:", error)
       const errorMessage = error instanceof Error ? error.message : "Unknown network error"
-      setError(errorMessage)
+
+      const errorResult: InitResponse = {
+        success: false,
+        error: "Network Error",
+        details: errorMessage,
+      }
+
+      setInitResult(errorResult)
+      setRawResponse(`Network Error: ${errorMessage}`)
 
       toast({
         title: "Network Error",
@@ -91,102 +104,86 @@ export default function DatabaseSetup() {
           <Database className="w-8 h-8 text-blue-600" />
           Database Setup
         </h1>
-        <p className="text-gray-600">Initialize the database with proper JSONB schema and create the owner account</p>
+        <p className="text-gray-600">Initialize the database with JSONB schema and create the owner account</p>
       </div>
 
-      <div className="space-y-6">
-        {/* Setup Instructions */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Setup Instructions</CardTitle>
-            <CardDescription>Follow these steps to set up your recipe sharing platform</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-3">
-              <div className="flex items-start gap-3">
-                <div className="flex-shrink-0 w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center text-sm font-medium text-blue-600">
-                  1
-                </div>
-                <div>
-                  <h4 className="font-medium">Initialize Database</h4>
-                  <p className="text-sm text-gray-600">
-                    Create all necessary tables with proper JSONB schema for recipe arrays
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-start gap-3">
-                <div className="flex-shrink-0 w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center text-sm font-medium text-blue-600">
-                  2
-                </div>
-                <div>
-                  <h4 className="font-medium">Create Owner Account</h4>
-                  <p className="text-sm text-gray-600">Set up the admin account with the specified credentials</p>
-                </div>
-              </div>
-              <div className="flex items-start gap-3">
-                <div className="flex-shrink-0 w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center text-sm font-medium text-blue-600">
-                  3
-                </div>
-                <div>
-                  <h4 className="font-medium">Test Authentication</h4>
-                  <p className="text-sm text-gray-600">Log in with the owner credentials and test recipe submission</p>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Database Schema Info */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Database Schema (JSONB Arrays)</CardTitle>
-            <CardDescription>The database will be created with proper JSONB array support</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div>
-                <h4 className="font-medium mb-2">Tables to be created:</h4>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Setup Panel */}
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Database Initialization</CardTitle>
+              <CardDescription>Create tables with JSONB arrays and owner account</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <h4 className="font-medium">What will be created:</h4>
                 <ul className="list-disc pl-5 space-y-1 text-sm">
                   <li>
-                    <strong>users</strong> - User accounts with authentication
+                    <strong>users</strong> table with authentication fields
                   </li>
                   <li>
-                    <strong>user_sessions</strong> - Session management
+                    <strong>user_sessions</strong> table for session management
                   </li>
                   <li>
-                    <strong>recipes</strong> - Recipe data with JSONB arrays
+                    <strong>recipes</strong> table with <Badge variant="secondary">JSONB arrays</Badge>
                   </li>
                   <li>
-                    <strong>moderation_log</strong> - Admin moderation tracking
+                    <strong>moderation_log</strong> table for admin actions
                   </li>
+                  <li>Owner account with admin privileges</li>
                 </ul>
               </div>
-              <div>
-                <h4 className="font-medium mb-2">Recipe JSONB Schema:</h4>
-                <code className="block bg-gray-100 p-3 rounded text-sm">
-                  ingredients JSONB NOT NULL DEFAULT '[]'::jsonb
-                  <br />
-                  instructions JSONB NOT NULL DEFAULT '[]'::jsonb
-                  <br />
-                  tags JSONB DEFAULT '[]'::jsonb
-                </code>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
 
-        {/* Owner Account Info */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Owner Account Details</CardTitle>
-            <CardDescription>The following admin account will be created</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
+              <Alert>
+                <Database className="h-4 w-4" />
+                <AlertDescription>
+                  <strong>JSONB Schema:</strong>
+                  <br />
+                  <code className="text-xs">
+                    ingredients JSONB NOT NULL DEFAULT '[]'::jsonb
+                    <br />
+                    instructions JSONB NOT NULL DEFAULT '[]'::jsonb
+                    <br />
+                    tags JSONB DEFAULT '[]'::jsonb
+                  </code>
+                </AlertDescription>
+              </Alert>
+
+              <Button onClick={initializeDatabase} disabled={isInitializing} className="w-full" size="lg">
+                {isInitializing ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    Initializing Database...
+                  </>
+                ) : (
+                  <>
+                    <Database className="w-4 h-4 mr-2" />
+                    Initialize Database & Create Owner
+                  </>
+                )}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Owner Account Info */}
+          <Card className="border-green-300">
+            <CardHeader className="bg-green-50">
+              <CardTitle className="text-green-700 flex items-center gap-2">
+                <User className="w-5 h-5" />
+                Owner Account Details
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
               <div className="flex items-center gap-2">
                 <Mail className="w-4 h-4 text-gray-500" />
                 <span className="font-medium">Email:</span>
                 <code className="bg-gray-100 px-2 py-1 rounded text-sm">aaronhirshka@gmail.com</code>
+              </div>
+              <div className="flex items-center gap-2">
+                <User className="w-4 h-4 text-gray-500" />
+                <span className="font-medium">Username:</span>
+                <code className="bg-gray-100 px-2 py-1 rounded text-sm">aaronhirshka</code>
               </div>
               <div className="flex items-center gap-2">
                 <Key className="w-4 h-4 text-gray-500" />
@@ -194,148 +191,172 @@ export default function DatabaseSetup() {
                 <code className="bg-gray-100 px-2 py-1 rounded text-sm">Morton2121</code>
               </div>
               <div className="flex items-center gap-2">
-                <User className="w-4 h-4 text-gray-500" />
-                <span className="font-medium">Role:</span>
-                <Badge variant="outline">admin</Badge>
+                <Badge variant="default">admin</Badge>
+                <Badge variant="secondary">active</Badge>
+                <Badge variant="outline">verified</Badge>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
 
-        {/* Initialize Button */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Initialize Database</CardTitle>
-            <CardDescription>
-              {initResult
-                ? "Database has been initialized successfully"
-                : "Click the button below to set up your database"}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button onClick={initializeDatabase} disabled={isInitializing} size="lg" className="w-full">
-              {isInitializing ? (
-                <>
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                  Initializing Database...
-                </>
-              ) : (
-                <>
-                  <Database className="w-4 h-4 mr-2" />
-                  Initialize Database & Create Owner Account
-                </>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Results */}
-        {initResult && (
-          <Card className="border-green-300">
-            <CardHeader className="bg-green-50">
-              <CardTitle className="text-green-700 flex items-center gap-2">
-                <CheckCircle className="w-5 h-5" />
-                Initialization Successful
-              </CardTitle>
+        {/* Results Panel */}
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Initialization Results</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
-                <p className="text-green-700">{initResult.message}</p>
-                {initResult.details && <p className="text-sm text-gray-600">{initResult.details}</p>}
-                {initResult.owner && (
-                  <div className="space-y-2">
-                    <h4 className="font-medium">Owner Account Created:</h4>
-                    <div className="bg-white p-3 rounded border space-y-1">
-                      <p className="text-sm">
-                        <strong>Email:</strong> {initResult.owner.email}
-                      </p>
-                      <p className="text-sm">
-                        <strong>Username:</strong> {initResult.owner.username}
-                      </p>
-                      <p className="text-sm">
-                        <strong>Role:</strong> {initResult.owner.role}
-                      </p>
-                      {initResult.owner.id && (
-                        <p className="text-sm">
-                          <strong>ID:</strong> {initResult.owner.id}
-                        </p>
+              {!initResult ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Database className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                  <p>Click "Initialize Database" to begin setup</p>
+                </div>
+              ) : (
+                <Tabs defaultValue="result" className="w-full">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="result">Result</TabsTrigger>
+                    <TabsTrigger value="raw">Raw Response</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="result" className="mt-4">
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2">
+                        {initResult.success ? (
+                          <CheckCircle className="w-5 h-5 text-green-600" />
+                        ) : (
+                          <AlertCircle className="w-5 h-5 text-red-600" />
+                        )}
+                        <span className={`font-medium ${initResult.success ? "text-green-600" : "text-red-600"}`}>
+                          {initResult.success ? "Success" : "Failed"}
+                        </span>
+                      </div>
+
+                      {initResult.message && (
+                        <Alert variant={initResult.success ? "default" : "destructive"}>
+                          <AlertDescription>{initResult.message}</AlertDescription>
+                        </Alert>
+                      )}
+
+                      {initResult.error && (
+                        <Alert variant="destructive">
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertDescription>
+                            <strong>Error:</strong> {initResult.error}
+                            {initResult.details && (
+                              <>
+                                <br />
+                                <strong>Details:</strong> {initResult.details}
+                              </>
+                            )}
+                          </AlertDescription>
+                        </Alert>
+                      )}
+
+                      {initResult.data?.owner && (
+                        <Card className="border-green-300">
+                          <CardHeader className="bg-green-50">
+                            <CardTitle className="text-green-700 text-sm">Owner Account Created</CardTitle>
+                          </CardHeader>
+                          <CardContent className="space-y-2">
+                            <p>
+                              <strong>ID:</strong> {initResult.data.owner.id}
+                            </p>
+                            <p>
+                              <strong>Username:</strong> {initResult.data.owner.username}
+                            </p>
+                            <p>
+                              <strong>Email:</strong> {initResult.data.owner.email}
+                            </p>
+                            <p>
+                              <strong>Role:</strong> <Badge variant="default">{initResult.data.owner.role}</Badge>
+                            </p>
+                          </CardContent>
+                        </Card>
                       )}
                     </div>
-                  </div>
-                )}
-                <div className="flex gap-2 mt-4">
-                  <Button onClick={() => (window.location.href = "/login")} size="sm">
-                    Go to Login
-                  </Button>
+                  </TabsContent>
+
+                  <TabsContent value="raw" className="mt-4">
+                    <div className="space-y-2">
+                      <h4 className="font-medium">Raw API Response</h4>
+                      <pre className="bg-gray-100 p-3 rounded text-xs overflow-auto max-h-64">
+                        {rawResponse || "No response yet"}
+                      </pre>
+                    </div>
+                  </TabsContent>
+                </Tabs>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Next Steps */}
+          {initResult?.success && (
+            <Card className="border-blue-300">
+              <CardHeader className="bg-blue-50">
+                <CardTitle className="text-blue-700">Next Steps</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <div className="space-y-2">
                   <Button
-                    onClick={() => (window.location.href = "/test-recipe-submission")}
                     variant="outline"
                     size="sm"
+                    onClick={() => (window.location.href = "/login")}
+                    className="w-full"
+                  >
+                    Go to Login Page
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => (window.location.href = "/test-recipe-submission")}
+                    className="w-full"
                   >
                     Test Recipe Submission
                   </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => (window.location.href = "/admin")}
+                    className="w-full"
+                  >
+                    Open Admin Panel
+                  </Button>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+              </CardContent>
+            </Card>
+          )}
 
-        {/* Error Display */}
-        {error && (
-          <Card className="border-red-300">
-            <CardHeader className="bg-red-50">
-              <CardTitle className="text-red-700 flex items-center gap-2">
-                <AlertCircle className="w-5 h-5" />
-                Initialization Failed
-              </CardTitle>
+          {/* JSONB Format Info */}
+          <Card className="border-purple-300">
+            <CardHeader className="bg-purple-50">
+              <CardTitle className="text-purple-700">JSONB Array Format</CardTitle>
             </CardHeader>
             <CardContent>
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-              <div className="mt-4">
-                <h4 className="font-medium text-sm mb-2">Troubleshooting Steps:</h4>
-                <ul className="list-disc pl-5 space-y-1 text-sm">
-                  <li>Check that your DATABASE_URL environment variable is set correctly</li>
-                  <li>Ensure your database is accessible and running</li>
-                  <li>Verify that the database user has CREATE TABLE permissions</li>
-                  <li>Check the server logs for more detailed error information</li>
-                </ul>
+              <div className="space-y-2 text-sm">
+                <p>
+                  <strong>Frontend sends:</strong>
+                </p>
+                <code className="block bg-gray-100 p-2 rounded text-xs">
+                  {`{
+  "ingredients": ["2 cups flour", "1 cup sugar", "3 eggs"],
+  "instructions": ["Mix ingredients", "Bake for 30 min"],
+  "tags": ["dessert", "easy"]
+}`}
+                </code>
+                <p>
+                  <strong>Database stores as:</strong>
+                </p>
+                <code className="block bg-gray-100 p-2 rounded text-xs">
+                  ingredients JSONB NOT NULL DEFAULT '[]'::jsonb
+                  <br />
+                  instructions JSONB NOT NULL DEFAULT '[]'::jsonb
+                  <br />
+                  tags JSONB DEFAULT '[]'::jsonb
+                </code>
               </div>
             </CardContent>
           </Card>
-        )}
-
-        {/* Environment Check */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Environment Variables</CardTitle>
-            <CardDescription>Required environment variables for the application</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2 text-sm">
-              <div className="flex items-center gap-2">
-                <span className="font-medium">DATABASE_URL:</span>
-                <Badge variant={process.env.DATABASE_URL ? "default" : "destructive"}>
-                  {process.env.DATABASE_URL ? "Set" : "Missing"}
-                </Badge>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="font-medium">JWT_SECRET:</span>
-                <Badge variant={process.env.JWT_SECRET ? "default" : "destructive"}>
-                  {process.env.JWT_SECRET ? "Set" : "Missing"}
-                </Badge>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="font-medium">NEXT_PUBLIC_APP_URL:</span>
-                <Badge variant={process.env.NEXT_PUBLIC_APP_URL ? "default" : "secondary"}>
-                  {process.env.NEXT_PUBLIC_APP_URL ? "Set" : "Optional"}
-                </Badge>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        </div>
       </div>
     </div>
   )

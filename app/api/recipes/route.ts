@@ -62,6 +62,17 @@ export async function POST(request: NextRequest) {
     try {
       body = await request.json()
       console.log("✅ [RECIPE-API] Request body parsed successfully")
+      console.log("📝 [RECIPE-API] Request body structure:", {
+        title: typeof body.title,
+        ingredients: Array.isArray(body.ingredients) ? `Array[${body.ingredients.length}]` : typeof body.ingredients,
+        instructions: Array.isArray(body.instructions)
+          ? `Array[${body.instructions.length}]`
+          : typeof body.instructions,
+        tags: Array.isArray(body.tags) ? `Array[${body.tags.length}]` : typeof body.tags,
+        prep_time_minutes: typeof body.prep_time_minutes,
+        cook_time_minutes: typeof body.cook_time_minutes,
+        servings: typeof body.servings,
+      })
     } catch (parseError) {
       console.error("❌ [RECIPE-API] Failed to parse request body:", parseError)
       return NextResponse.json(
@@ -91,101 +102,123 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Validate ingredients
+    // Validate ingredients - MUST be array for JSONB
     if (!body.ingredients || !Array.isArray(body.ingredients) || body.ingredients.length === 0) {
-      console.log("❌ [RECIPE-API] Invalid ingredients:", body.ingredients)
+      console.log("❌ [RECIPE-API] Invalid ingredients format:", {
+        type: typeof body.ingredients,
+        isArray: Array.isArray(body.ingredients),
+        value: body.ingredients,
+      })
       return NextResponse.json(
         {
           success: false,
-          error: "Invalid ingredients",
-          details: "Ingredients must be a non-empty array",
+          error: "Invalid ingredients format",
+          details: "Ingredients must be a non-empty array of strings for JSONB storage",
+          expected: "ingredients: ['2 cups flour', '1 cup sugar', '3 eggs']",
+          received: {
+            type: typeof body.ingredients,
+            isArray: Array.isArray(body.ingredients),
+            length: Array.isArray(body.ingredients) ? body.ingredients.length : "N/A",
+          },
         },
         { status: 400 },
       )
     }
 
-    // Validate instructions
+    // Validate instructions - MUST be array for JSONB
     if (!body.instructions || !Array.isArray(body.instructions) || body.instructions.length === 0) {
-      console.log("❌ [RECIPE-API] Invalid instructions:", body.instructions)
+      console.log("❌ [RECIPE-API] Invalid instructions format:", {
+        type: typeof body.instructions,
+        isArray: Array.isArray(body.instructions),
+        value: body.instructions,
+      })
       return NextResponse.json(
         {
           success: false,
-          error: "Invalid instructions",
-          details: "Instructions must be a non-empty array",
+          error: "Invalid instructions format",
+          details: "Instructions must be a non-empty array of strings for JSONB storage",
+          expected: "instructions: ['Mix ingredients', 'Bake for 30 minutes', 'Serve hot']",
+          received: {
+            type: typeof body.instructions,
+            isArray: Array.isArray(body.instructions),
+            length: Array.isArray(body.instructions) ? body.instructions.length : "N/A",
+          },
         },
         { status: 400 },
       )
     }
 
-    // Process ingredients - handle both object and string formats
+    // Process and validate ingredients array
     const processedIngredients = body.ingredients
       .map((ingredient: any, index: number) => {
         if (typeof ingredient === "string") {
-          return ingredient
-        } else if (typeof ingredient === "object" && ingredient !== null) {
-          // Handle ingredient objects with amount, unit, ingredient properties
-          const { amount = "", unit = "", ingredient: name = "" } = ingredient
-          return `${amount} ${unit} ${name}`.trim()
+          return ingredient.trim()
         } else {
-          console.warn(`⚠️ [RECIPE-API] Invalid ingredient at index ${index}:`, ingredient)
-          return String(ingredient)
+          console.warn(`⚠️ [RECIPE-API] Non-string ingredient at index ${index}:`, ingredient)
+          return String(ingredient).trim()
         }
       })
-      .filter((ing: string) => ing && ing.trim().length > 0)
+      .filter((ing: string) => ing && ing.length > 0)
 
-    // Process instructions - handle both object and string formats
+    // Process and validate instructions array
     const processedInstructions = body.instructions
       .map((instruction: any, index: number) => {
         if (typeof instruction === "string") {
-          return instruction
-        } else if (typeof instruction === "object" && instruction !== null) {
-          // Handle instruction objects with step_number and instruction properties
-          const { instruction: text = "", step_number = index + 1 } = instruction
-          return text
+          return instruction.trim()
         } else {
-          console.warn(`⚠️ [RECIPE-API] Invalid instruction at index ${index}:`, instruction)
-          return String(instruction)
+          console.warn(`⚠️ [RECIPE-API] Non-string instruction at index ${index}:`, instruction)
+          return String(instruction).trim()
         }
       })
-      .filter((inst: string) => inst && inst.trim().length > 0)
+      .filter((inst: string) => inst && inst.length > 0)
 
-    // Process tags
+    // Process tags array (optional)
     const processedTags = Array.isArray(body.tags)
-      ? body.tags.filter((tag: string) => tag && tag.trim().length > 0)
+      ? body.tags
+          .map((tag: any) => (typeof tag === "string" ? tag.trim() : String(tag).trim()))
+          .filter((tag: string) => tag && tag.length > 0)
       : []
 
-    // Prepare recipe data
+    // Prepare recipe data for JSONB storage
     const recipeData = {
       title: String(body.title).trim(),
       description: body.description ? String(body.description).trim() : "",
-      ingredients: processedIngredients,
-      instructions: processedInstructions,
+      ingredients: processedIngredients, // Array of strings for JSONB
+      instructions: processedInstructions, // Array of strings for JSONB
       prep_time: Number.parseInt(body.prep_time_minutes) || 0,
       cook_time: Number.parseInt(body.cook_time_minutes) || 0,
       servings: Number.parseInt(body.servings) || 1,
       difficulty: String(body.difficulty).trim(),
       category: String(body.category).trim(),
-      tags: processedTags,
+      tags: processedTags, // Array of strings for JSONB
       image_url: body.image_url ? String(body.image_url).trim() : undefined,
       author_id: user.id,
     }
 
-    console.log("📝 [RECIPE-API] Processed recipe data:", {
-      ...recipeData,
+    console.log("📝 [RECIPE-API] Processed recipe data for JSONB:", {
+      title: recipeData.title,
+      ingredients_type: typeof recipeData.ingredients,
+      ingredients_isArray: Array.isArray(recipeData.ingredients),
       ingredients_count: recipeData.ingredients.length,
+      ingredients_sample: recipeData.ingredients.slice(0, 2),
+      instructions_type: typeof recipeData.instructions,
+      instructions_isArray: Array.isArray(recipeData.instructions),
       instructions_count: recipeData.instructions.length,
+      instructions_sample: recipeData.instructions.slice(0, 2),
+      tags_type: typeof recipeData.tags,
+      tags_isArray: Array.isArray(recipeData.tags),
       tags_count: recipeData.tags.length,
       author_id: recipeData.author_id,
     })
 
-    // Validate processed data
+    // Final validation after processing
     if (recipeData.ingredients.length === 0) {
       console.log("❌ [RECIPE-API] No valid ingredients after processing")
       return NextResponse.json(
         {
           success: false,
           error: "No valid ingredients",
-          details: "At least one valid ingredient is required",
+          details: "At least one valid ingredient is required after processing",
         },
         { status: 400 },
       )
@@ -197,22 +230,26 @@ export async function POST(request: NextRequest) {
         {
           success: false,
           error: "No valid instructions",
-          details: "At least one valid instruction is required",
+          details: "At least one valid instruction is required after processing",
         },
         { status: 400 },
       )
     }
 
-    // Create recipe in database
+    // Create recipe in database with JSONB arrays
     let createdRecipe
     try {
-      console.log("💾 [RECIPE-API] Creating recipe in database...")
+      console.log("💾 [RECIPE-API] Creating recipe in database with JSONB arrays...")
       createdRecipe = await createRecipe(recipeData)
       console.log("✅ [RECIPE-API] Recipe created successfully:", {
         id: createdRecipe.id,
         title: createdRecipe.title,
         status: createdRecipe.status,
         author_id: createdRecipe.author_id,
+        ingredients_stored: Array.isArray(createdRecipe.ingredients) ? "JSONB Array" : typeof createdRecipe.ingredients,
+        instructions_stored: Array.isArray(createdRecipe.instructions)
+          ? "JSONB Array"
+          : typeof createdRecipe.instructions,
       })
     } catch (dbError) {
       console.error("❌ [RECIPE-API] Database error creating recipe:", dbError)
@@ -221,6 +258,11 @@ export async function POST(request: NextRequest) {
           success: false,
           error: "Database error",
           details: dbError instanceof Error ? dbError.message : "Failed to save recipe to database",
+          debug: {
+            ingredients_format: typeof recipeData.ingredients,
+            instructions_format: typeof recipeData.instructions,
+            expected_format: "Array of strings for JSONB storage",
+          },
         },
         { status: 500 },
       )
@@ -237,6 +279,9 @@ export async function POST(request: NextRequest) {
           status: createdRecipe.status,
           author_name: createdRecipe.author_name,
           created_at: createdRecipe.created_at,
+          ingredients_count: Array.isArray(createdRecipe.ingredients) ? createdRecipe.ingredients.length : 0,
+          instructions_count: Array.isArray(createdRecipe.instructions) ? createdRecipe.instructions.length : 0,
+          storage_format: "JSONB Arrays",
         },
       },
     }
@@ -270,7 +315,13 @@ export async function GET(request: NextRequest) {
 
     console.log("✅ [RECIPE-API] Retrieved recipes:", {
       count: recipes.length,
-      sample: recipes.slice(0, 3).map((r) => ({ id: r.id, title: r.title, status: r.status })),
+      sample: recipes.slice(0, 3).map((r) => ({
+        id: r.id,
+        title: r.title,
+        status: r.status,
+        ingredients_format: Array.isArray(r.ingredients) ? "JSONB Array" : typeof r.ingredients,
+        instructions_format: Array.isArray(r.instructions) ? "JSONB Array" : typeof r.instructions,
+      })),
     })
 
     const response = {
@@ -278,6 +329,7 @@ export async function GET(request: NextRequest) {
       data: {
         recipes,
         count: recipes.length,
+        storage_format: "JSONB Arrays",
       },
     }
 
