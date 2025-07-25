@@ -6,35 +6,72 @@ import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Database, CheckCircle, XCircle, RefreshCw, User, Table, AlertCircle, Play, Settings } from "lucide-react"
+import {
+  Database,
+  CheckCircle,
+  XCircle,
+  RefreshCw,
+  Users,
+  ChefHat,
+  Settings,
+  AlertCircle,
+  User,
+  Mail,
+  Calendar,
+} from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 
 interface DatabaseStatus {
-  tables: {
-    users: boolean
-    sessions: boolean
-    recipes: boolean
-  }
-  owner: {
-    exists: boolean
-    info: any
-  }
-  status: string
-}
-
-interface InitResult {
   success: boolean
-  message?: string
+  data?: {
+    tables: {
+      users: boolean
+      sessions: boolean
+      recipes: boolean
+    }
+    owner: {
+      exists: boolean
+      info?: {
+        id: number
+        username: string
+        email: string
+        role: string
+        status: string
+        is_verified: boolean
+        created_at: string
+      }
+    }
+    counts: {
+      users: number
+      recipes: number
+    }
+    database_ready: boolean
+  }
   error?: string
   details?: string
-  data?: any
+}
+
+interface InitResponse {
+  success: boolean
+  message?: string
+  data?: {
+    database: string
+    owner: {
+      id: number
+      username: string
+      email: string
+      role: string
+    }
+  }
+  error?: string
+  details?: string
 }
 
 export default function DatabaseSetupPage() {
   const [status, setStatus] = useState<DatabaseStatus | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isInitializing, setIsInitializing] = useState(false)
-  const [initResult, setInitResult] = useState<InitResult | null>(null)
+  const [initResult, setInitResult] = useState<InitResponse | null>(null)
   const [rawResponse, setRawResponse] = useState("")
 
   // Check database status on component mount
@@ -52,23 +89,15 @@ export default function DatabaseSetupPage() {
       })
 
       const data = await response.json()
-      console.log("📊 [DB-SETUP] Database status:", data)
+      setStatus(data)
 
-      if (data.success) {
-        setStatus(data.data)
-      } else {
-        toast({
-          title: "Status Check Failed",
-          description: data.error || "Failed to check database status",
-          variant: "destructive",
-        })
-      }
+      console.log("📊 [DB-SETUP] Database status:", data)
     } catch (error) {
       console.error("❌ [DB-SETUP] Status check error:", error)
-      toast({
-        title: "Network Error",
-        description: "Failed to connect to database",
-        variant: "destructive",
+      setStatus({
+        success: false,
+        error: "Failed to check database status",
+        details: error instanceof Error ? error.message : "Unknown error",
       })
     } finally {
       setIsLoading(false)
@@ -90,7 +119,7 @@ export default function DatabaseSetupPage() {
       const responseText = await response.text()
       setRawResponse(responseText)
 
-      let result: InitResult
+      let result: InitResponse
       try {
         result = JSON.parse(responseText)
       } catch (parseError) {
@@ -105,7 +134,7 @@ export default function DatabaseSetupPage() {
 
       if (result.success) {
         toast({
-          title: "Database Initialized!",
+          title: "Database initialized!",
           description: "Database tables and owner account created successfully",
         })
 
@@ -115,16 +144,18 @@ export default function DatabaseSetupPage() {
         }, 1000)
       } else {
         toast({
-          title: "Initialization Failed",
-          description: result.error || "Database initialization failed",
+          title: "Initialization failed",
+          description: result.error || "Failed to initialize database",
           variant: "destructive",
         })
       }
+
+      console.log("📝 [DB-SETUP] Initialization result:", result)
     } catch (error) {
       console.error("❌ [DB-SETUP] Initialization error:", error)
       const errorMessage = error instanceof Error ? error.message : "Unknown network error"
 
-      const errorResult: InitResult = {
+      const errorResult: InitResponse = {
         success: false,
         error: "Network Error",
         details: errorMessage,
@@ -141,20 +172,6 @@ export default function DatabaseSetupPage() {
     } finally {
       setIsInitializing(false)
     }
-  }
-
-  const getStatusBadge = (exists: boolean) => {
-    return exists ? (
-      <Badge variant="default" className="bg-green-100 text-green-800">
-        <CheckCircle className="w-3 h-3 mr-1" />
-        Ready
-      </Badge>
-    ) : (
-      <Badge variant="destructive">
-        <XCircle className="w-3 h-3 mr-1" />
-        Missing
-      </Badge>
-    )
   }
 
   return (
@@ -186,73 +203,122 @@ export default function DatabaseSetupPage() {
                   <Database className="w-12 h-12 mx-auto mb-4 opacity-50" />
                   <p>Loading database status...</p>
                 </div>
-              ) : (
+              ) : status.success ? (
                 <div className="space-y-4">
                   {/* Overall Status */}
-                  <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                    <span className="font-medium">Overall Status:</span>
-                    <Badge
-                      variant={status.status === "ready" ? "default" : "destructive"}
-                      className={
-                        status.status === "ready" ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"
-                      }
-                    >
-                      {status.status === "ready" ? "Ready" : "Needs Setup"}
-                    </Badge>
+                  <div className="flex items-center gap-2">
+                    {status.data?.database_ready ? (
+                      <CheckCircle className="w-5 h-5 text-green-600" />
+                    ) : (
+                      <XCircle className="w-5 h-5 text-red-600" />
+                    )}
+                    <span className={`font-medium ${status.data?.database_ready ? "text-green-600" : "text-red-600"}`}>
+                      {status.data?.database_ready ? "Database Ready" : "Database Not Ready"}
+                    </span>
                   </div>
 
                   {/* Tables Status */}
                   <div className="space-y-2">
-                    <h4 className="font-medium flex items-center gap-2">
-                      <Table className="w-4 h-4" />
-                      Database Tables
-                    </h4>
-                    <div className="space-y-2 ml-6">
-                      <div className="flex items-center justify-between">
-                        <span>Users Table:</span>
-                        {getStatusBadge(status.tables.users)}
+                    <h4 className="font-medium">Database Tables</h4>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="flex items-center gap-2">
+                        {status.data?.tables.users ? (
+                          <CheckCircle className="w-4 h-4 text-green-600" />
+                        ) : (
+                          <XCircle className="w-4 h-4 text-red-600" />
+                        )}
+                        <span className="text-sm">Users</span>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span>Sessions Table:</span>
-                        {getStatusBadge(status.tables.sessions)}
+                      <div className="flex items-center gap-2">
+                        {status.data?.tables.sessions ? (
+                          <CheckCircle className="w-4 h-4 text-green-600" />
+                        ) : (
+                          <XCircle className="w-4 h-4 text-red-600" />
+                        )}
+                        <span className="text-sm">Sessions</span>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span>Recipes Table:</span>
-                        {getStatusBadge(status.tables.recipes)}
+                      <div className="flex items-center gap-2">
+                        {status.data?.tables.recipes ? (
+                          <CheckCircle className="w-4 h-4 text-green-600" />
+                        ) : (
+                          <XCircle className="w-4 h-4 text-red-600" />
+                        )}
+                        <span className="text-sm">Recipes</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Counts */}
+                  <div className="space-y-2">
+                    <h4 className="font-medium">Data Counts</h4>
+                    <div className="flex gap-4">
+                      <div className="flex items-center gap-2">
+                        <Users className="w-4 h-4 text-blue-600" />
+                        <span className="text-sm">Users: {status.data?.counts.users || 0}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <ChefHat className="w-4 h-4 text-orange-600" />
+                        <span className="text-sm">Recipes: {status.data?.counts.recipes || 0}</span>
                       </div>
                     </div>
                   </div>
 
                   {/* Owner Account Status */}
                   <div className="space-y-2">
-                    <h4 className="font-medium flex items-center gap-2">
-                      <User className="w-4 h-4" />
-                      Owner Account
-                    </h4>
-                    <div className="ml-6">
-                      <div className="flex items-center justify-between mb-2">
-                        <span>Account Exists:</span>
-                        {getStatusBadge(status.owner.exists)}
-                      </div>
-                      {status.owner.exists && status.owner.info && (
-                        <div className="bg-green-50 p-3 rounded-lg space-y-1">
-                          <p>
-                            <strong>Username:</strong> {status.owner.info.username}
-                          </p>
-                          <p>
-                            <strong>Email:</strong> {status.owner.info.email}
-                          </p>
-                          <p>
-                            <strong>Role:</strong> <Badge variant="default">{status.owner.info.role}</Badge>
-                          </p>
-                          <p>
-                            <strong>Status:</strong> <Badge variant="secondary">{status.owner.info.status}</Badge>
-                          </p>
-                        </div>
+                    <h4 className="font-medium">Owner Account</h4>
+                    <div className="flex items-center gap-2">
+                      {status.data?.owner.exists ? (
+                        <CheckCircle className="w-4 h-4 text-green-600" />
+                      ) : (
+                        <XCircle className="w-4 h-4 text-red-600" />
                       )}
+                      <span className={`text-sm ${status.data?.owner.exists ? "text-green-600" : "text-red-600"}`}>
+                        {status.data?.owner.exists ? "Owner account exists" : "Owner account missing"}
+                      </span>
                     </div>
+
+                    {status.data?.owner.info && (
+                      <Card className="border-green-300 mt-2">
+                        <CardHeader className="bg-green-50 pb-2">
+                          <CardTitle className="text-green-700 text-sm">Owner Account Details</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-1 pt-2">
+                          <div className="flex items-center gap-2 text-sm">
+                            <User className="w-3 h-3" />
+                            <span>Username: {status.data.owner.info.username}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-sm">
+                            <Mail className="w-3 h-3" />
+                            <span>Email: {status.data.owner.info.email}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-sm">
+                            <Settings className="w-3 h-3" />
+                            <span>
+                              Role: <Badge variant="default">{status.data.owner.info.role}</Badge>
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-sm">
+                            <Calendar className="w-3 h-3" />
+                            <span>Created: {new Date(status.data.owner.info.created_at).toLocaleDateString()}</span>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
                   </div>
                 </div>
+              ) : (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    <strong>Error:</strong> {status.error}
+                    {status.details && (
+                      <>
+                        <br />
+                        <strong>Details:</strong> {status.details}
+                      </>
+                    )}
+                  </AlertDescription>
+                </Alert>
               )}
             </CardContent>
           </Card>
@@ -260,29 +326,39 @@ export default function DatabaseSetupPage() {
           {/* Initialize Button */}
           <Card>
             <CardHeader>
-              <CardTitle>Initialize Database</CardTitle>
-              <CardDescription>Create tables and owner account if they don't exist</CardDescription>
+              <CardTitle>Database Initialization</CardTitle>
+              <CardDescription>Create database tables and owner account</CardDescription>
             </CardHeader>
             <CardContent>
-              <Button onClick={initializeDatabase} disabled={isInitializing} className="w-full" size="lg">
+              <Button
+                onClick={initializeDatabase}
+                disabled={isInitializing || (status?.data?.database_ready && status?.data?.owner.exists)}
+                className="w-full"
+              >
                 {isInitializing ? (
                   <>
                     <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                    Initializing...
+                    Initializing Database...
+                  </>
+                ) : status?.data?.database_ready && status?.data?.owner.exists ? (
+                  <>
+                    <CheckCircle className="w-4 h-4 mr-2" />
+                    Database Already Initialized
                   </>
                 ) : (
                   <>
-                    <Play className="w-4 h-4 mr-2" />
+                    <Database className="w-4 h-4 mr-2" />
                     Initialize Database
                   </>
                 )}
               </Button>
 
-              {status?.status === "ready" && (
-                <Alert className="mt-4">
-                  <CheckCircle className="h-4 w-4" />
-                  <AlertDescription>Database is already initialized and ready to use!</AlertDescription>
-                </Alert>
+              {status?.data?.database_ready && status?.data?.owner.exists && (
+                <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded">
+                  <p className="text-green-700 text-sm">
+                    ✅ Database is ready! You can now login with the owner credentials.
+                  </p>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -341,28 +417,24 @@ export default function DatabaseSetupPage() {
                         </Alert>
                       )}
 
-                      {initResult.data && (
+                      {initResult.data?.owner && (
                         <Card className="border-green-300">
                           <CardHeader className="bg-green-50">
-                            <CardTitle className="text-green-700 text-sm">Setup Details</CardTitle>
+                            <CardTitle className="text-green-700 text-sm">Owner Account Created</CardTitle>
                           </CardHeader>
                           <CardContent className="space-y-2">
                             <p>
-                              <strong>Database:</strong> {initResult.data.database}
+                              <strong>ID:</strong> {initResult.data.owner.id}
                             </p>
-                            {initResult.data.owner && (
-                              <div>
-                                <strong>Owner Account:</strong>
-                                <div className="ml-4 mt-1">
-                                  <p>ID: {initResult.data.owner.id}</p>
-                                  <p>Username: {initResult.data.owner.username}</p>
-                                  <p>Email: {initResult.data.owner.email}</p>
-                                  <p>
-                                    Role: <Badge variant="default">{initResult.data.owner.role}</Badge>
-                                  </p>
-                                </div>
-                              </div>
-                            )}
+                            <p>
+                              <strong>Username:</strong> {initResult.data.owner.username}
+                            </p>
+                            <p>
+                              <strong>Email:</strong> {initResult.data.owner.email}
+                            </p>
+                            <p>
+                              <strong>Role:</strong> <Badge variant="default">{initResult.data.owner.role}</Badge>
+                            </p>
                           </CardContent>
                         </Card>
                       )}
@@ -382,26 +454,28 @@ export default function DatabaseSetupPage() {
             </CardContent>
           </Card>
 
-          {/* Quick Actions */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Quick Actions</CardTitle>
+          {/* Owner Credentials */}
+          <Card className="border-blue-300">
+            <CardHeader className="bg-blue-50">
+              <CardTitle className="text-blue-700">Owner Login Credentials</CardTitle>
+              <CardDescription>Use these credentials to login after initialization</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
-              <Button variant="outline" size="sm" onClick={() => (window.location.href = "/login")} className="w-full">
-                Go to Login Page
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => (window.location.href = "/test-recipe-submission")}
-                className="w-full"
-              >
-                Test Recipe Submission
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => (window.location.href = "/admin")} className="w-full">
-                Admin Dashboard
-              </Button>
+              <div className="flex items-center gap-2">
+                <Mail className="w-4 h-4 text-gray-500" />
+                <span className="font-medium">Email:</span>
+                <code className="bg-gray-100 px-2 py-1 rounded text-sm">aaronhirshka@gmail.com</code>
+              </div>
+              <div className="flex items-center gap-2">
+                <Settings className="w-4 h-4 text-gray-500" />
+                <span className="font-medium">Password:</span>
+                <code className="bg-gray-100 px-2 py-1 rounded text-sm">Morton2121</code>
+              </div>
+              <div className="flex items-center gap-2">
+                <User className="w-4 h-4 text-gray-500" />
+                <span className="font-medium">Role:</span>
+                <Badge variant="default">owner</Badge>
+              </div>
             </CardContent>
           </Card>
         </div>

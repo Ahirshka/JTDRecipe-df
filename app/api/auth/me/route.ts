@@ -3,7 +3,7 @@ import { findSessionByToken, findUserById } from "@/lib/neon"
 import { cookies } from "next/headers"
 
 export async function GET(request: NextRequest) {
-  console.log("🔄 [AUTH-API] Me request received")
+  console.log("🔍 [AUTH-ME-API] Authentication check request received")
 
   try {
     // Get session token from cookies
@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
     const sessionToken = cookieStore.get("session_token")?.value
 
     if (!sessionToken) {
-      console.log("❌ [AUTH-API] No session token found")
+      console.log("❌ [AUTH-ME-API] No session token found")
       return NextResponse.json(
         {
           success: false,
@@ -22,13 +22,13 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    console.log(`🔍 [AUTH-API] Verifying session token: ${sessionToken.substring(0, 10)}...`)
+    console.log(`🔍 [AUTH-ME-API] Checking session token: ${sessionToken.substring(0, 10)}...`)
 
     // Find session by token
     const session = await findSessionByToken(sessionToken)
 
     if (!session) {
-      console.log(`❌ [AUTH-API] Invalid or expired session token: ${sessionToken.substring(0, 10)}...`)
+      console.log(`❌ [AUTH-ME-API] Invalid or expired session token`)
       return NextResponse.json(
         {
           success: false,
@@ -39,24 +39,24 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    console.log(`✅ [AUTH-API] Valid session found for user ID: ${session.user_id}`)
+    console.log(`✅ [AUTH-ME-API] Valid session found for user ID: ${session.user_id}`)
 
     // Find user by ID
     const user = await findUserById(session.user_id)
 
     if (!user) {
-      console.log(`❌ [AUTH-API] User not found for session: ${session.user_id}`)
+      console.log(`❌ [AUTH-ME-API] User not found for session: ${session.user_id}`)
       return NextResponse.json(
         {
           success: false,
           error: "User not found",
-          details: "User associated with session not found",
+          details: "User associated with session no longer exists",
         },
         { status: 404 },
       )
     }
 
-    console.log(`✅ [AUTH-API] User found: ${user.username}`)
+    console.log(`✅ [AUTH-ME-API] User authenticated: ${user.username}`)
 
     // Return user data (without password)
     const { password, ...userData } = user
@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
       user: userData,
     })
   } catch (error) {
-    console.error("❌ [AUTH-API] Me error:", error)
+    console.error("❌ [AUTH-ME-API] Authentication check error:", error)
 
     return NextResponse.json(
       {

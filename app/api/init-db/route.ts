@@ -15,6 +15,7 @@ export async function POST() {
         {
           success: false,
           error: "Database initialization failed",
+          details: "Failed to create database tables",
         },
         { status: 500 },
       )
@@ -38,11 +39,11 @@ export async function POST() {
       )
     }
 
-    console.log("✅ [INIT-DB-API] Owner account created/verified successfully")
+    console.log("✅ [INIT-DB-API] Owner account created successfully:", ownerResult.user)
 
     return NextResponse.json({
       success: true,
-      message: "Database initialized and owner account created successfully",
+      message: "Database initialized successfully",
       data: {
         database: "initialized",
         owner: ownerResult.user,
@@ -55,7 +56,7 @@ export async function POST() {
       {
         success: false,
         error: "Database initialization failed",
-        details: error instanceof Error ? error.message : "Unknown error",
+        details: error instanceof Error ? error.message : "Unknown error occurred",
       },
       { status: 500 },
     )
@@ -66,49 +67,89 @@ export async function GET() {
   console.log("🔍 [INIT-DB-API] Database status check request received")
 
   try {
-    // Check if tables exist
+    // Import sql directly to check database status
     const { sql } = await import("@/lib/neon")
 
-    const tablesCheck = await sql`
-      SELECT table_name 
-      FROM information_schema.tables 
-      WHERE table_schema = 'public' 
-      AND table_name IN ('users', 'sessions', 'recipes');
+    // Check if users table exists
+    const usersTableCheck = await sql`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public'
+        AND table_name = 'users'
+      );
     `
+    const usersTableExists = usersTableCheck[0].exists
 
-    const existingTables = tablesCheck.map((row: any) => row.table_name)
+    // Check if sessions table exists
+    const sessionsTableCheck = await sql`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public'
+        AND table_name = 'sessions'
+      );
+    `
+    const sessionsTableExists = sessionsTableCheck[0].exists
+
+    // Check if recipes table exists
+    const recipesTableCheck = await sql`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public'
+        AND table_name = 'recipes'
+      );
+    `
+    const recipesTableExists = recipesTableCheck[0].exists
 
     // Check if owner account exists
     let ownerExists = false
     let ownerInfo = null
 
-    if (existingTables.includes("users")) {
+    if (usersTableExists) {
       const ownerCheck = await sql`
-        SELECT id, username, email, role, status, is_verified 
+        SELECT id, username, email, role, status, is_verified, created_at 
         FROM users 
         WHERE email = 'aaronhirshka@gmail.com'
         LIMIT 1;
       `
-
-      if (ownerCheck.length > 0) {
-        ownerExists = true
+      ownerExists = ownerCheck.length > 0
+      if (ownerExists) {
         ownerInfo = ownerCheck[0]
       }
     }
+
+    // Get user count
+    let userCount = 0
+    if (usersTableExists) {
+      const userCountResult = await sql`SELECT COUNT(*) as count FROM users;`
+      userCount = Number.parseInt(userCountResult[0].count)
+    }
+
+    // Get recipe count
+    let recipeCount = 0
+    if (recipesTableExists) {
+      const recipeCountResult = await sql`SELECT COUNT(*) as count FROM recipes;`
+      recipeCount = Number.parseInt(recipeCountResult[0].count)
+    }
+
+    console.log("✅ [INIT-DB-API] Database status check completed")
 
     return NextResponse.json({
       success: true,
       data: {
         tables: {
-          users: existingTables.includes("users"),
-          sessions: existingTables.includes("sessions"),
-          recipes: existingTables.includes("recipes"),
+          users: usersTableExists,
+          sessions: sessionsTableExists,
+          recipes: recipesTableExists,
         },
         owner: {
           exists: ownerExists,
           info: ownerInfo,
         },
-        status: existingTables.length === 3 && ownerExists ? "ready" : "needs_initialization",
+        counts: {
+          users: userCount,
+          recipes: recipeCount,
+        },
+        database_ready: usersTableExists && sessionsTableExists && recipesTableExists && ownerExists,
       },
     })
   } catch (error) {
@@ -118,7 +159,7 @@ export async function GET() {
       {
         success: false,
         error: "Database status check failed",
-        details: error instanceof Error ? error.message : "Unknown error",
+        details: error instanceof Error ? error.message : "Unknown error occurred",
       },
       { status: 500 },
     )

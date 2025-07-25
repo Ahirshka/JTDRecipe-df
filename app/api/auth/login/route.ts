@@ -39,13 +39,33 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log(`✅ [AUTH-API] User found: ${user.username}, verifying password...`)
+    console.log(`✅ [AUTH-API] User found: ${user.username} (ID: ${user.id})`)
+    console.log(`🔍 [AUTH-API] User details:`, {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      is_verified: user.is_verified,
+      has_password: !!user.password,
+      password_length: user.password ? user.password.length : 0,
+    })
 
     // Verify password
+    console.log(`🔐 [AUTH-API] Verifying password for user: ${user.username}`)
     const isPasswordValid = await verifyUserPassword(user, body.password)
 
     if (!isPasswordValid) {
       console.log(`❌ [AUTH-API] Invalid password for user: ${user.username}`)
+      console.log(`🔍 [AUTH-API] Password verification failed - checking password hash format`)
+
+      // Additional debugging for password issues
+      if (user.password) {
+        console.log(`🔍 [AUTH-API] Stored password hash starts with: ${user.password.substring(0, 10)}...`)
+        console.log(`🔍 [AUTH-API] Password hash length: ${user.password.length}`)
+        console.log(`🔍 [AUTH-API] Input password: ${body.password}`)
+      }
+
       return NextResponse.json(
         {
           success: false,
@@ -76,6 +96,18 @@ export async function POST(request: NextRequest) {
     // Create session
     const session = await createSession(user.id)
 
+    if (!session) {
+      console.log(`❌ [AUTH-API] Failed to create session for user: ${user.username}`)
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Session creation failed",
+          details: "Unable to create user session",
+        },
+        { status: 500 },
+      )
+    }
+
     // Set session cookie
     cookies().set({
       name: "session_token",
@@ -95,7 +127,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message: "Login successful",
-      user: userData,
+      data: {
+        user: userData,
+      },
     })
   } catch (error) {
     console.error("❌ [AUTH-API] Login error:", error)
