@@ -1,33 +1,33 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { deleteUserSession } from "@/lib/neon"
+import { deleteSession } from "@/lib/neon"
 import { cookies } from "next/headers"
 
 export async function POST(request: NextRequest) {
-  console.log("🔄 [AUTH-LOGOUT] POST request received")
+  console.log("🔄 [AUTH-API] Logout request received")
 
   try {
-    const cookieStore = await cookies()
+    // Get session token from cookies
+    const cookieStore = cookies()
     const sessionToken = cookieStore.get("session_token")?.value
 
     if (sessionToken) {
+      console.log(`🔄 [AUTH-API] Deleting session: ${sessionToken.substring(0, 10)}...`)
+
       // Delete session from database
-      await deleteUserSession(sessionToken)
-      console.log("✅ [AUTH-LOGOUT] Session deleted from database")
+      await deleteSession(sessionToken)
     }
 
-    // Clear the cookie
-    cookieStore.delete("session_token")
-    console.log("✅ [AUTH-LOGOUT] Session cookie cleared")
+    // Clear session cookie
+    cookies().delete("session_token")
 
-    return NextResponse.json(
-      {
-        success: true,
-        message: "Logout successful",
-      },
-      { status: 200 },
-    )
+    console.log("✅ [AUTH-API] Logout successful")
+
+    return NextResponse.json({
+      success: true,
+      message: "Logged out successfully",
+    })
   } catch (error) {
-    console.error("❌ [AUTH-LOGOUT] Logout error:", error)
+    console.error("❌ [AUTH-API] Logout error:", error)
 
     return NextResponse.json(
       {

@@ -1,48 +1,72 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { getCurrentUserFromRequest } from "@/lib/server-auth"
+import { findSessionByToken, findUserById } from "@/lib/neon"
+import { cookies } from "next/headers"
 
 export async function GET(request: NextRequest) {
-  console.log("🔄 [AUTH-ME] GET request received")
+  console.log("🔄 [AUTH-API] Me request received")
 
   try {
-    const user = await getCurrentUserFromRequest(request)
+    // Get session token from cookies
+    const cookieStore = cookies()
+    const sessionToken = cookieStore.get("session_token")?.value
 
-    if (!user) {
-      console.log("❌ [AUTH-ME] No authenticated user found")
+    if (!sessionToken) {
+      console.log("❌ [AUTH-API] No session token found")
       return NextResponse.json(
         {
           success: false,
           error: "Not authenticated",
-          details: "No valid session found",
+          details: "No session token found",
         },
         { status: 401 },
       )
     }
 
-    console.log("✅ [AUTH-ME] User authenticated:", user.username)
+    console.log(`🔍 [AUTH-API] Verifying session token: ${sessionToken.substring(0, 10)}...`)
 
-    return NextResponse.json(
-      {
-        success: true,
-        data: {
-          user: {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            role: user.role,
-            status: user.status,
-            is_verified: user.is_verified,
-            avatar_url: user.avatar_url,
-            bio: user.bio,
-            location: user.location,
-            website: user.website,
-          },
+    // Find session by token
+    const session = await findSessionByToken(sessionToken)
+
+    if (!session) {
+      console.log(`❌ [AUTH-API] Invalid or expired session token: ${sessionToken.substring(0, 10)}...`)
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid session",
+          details: "Session token is invalid or expired",
         },
-      },
-      { status: 200 },
-    )
+        { status: 401 },
+      )
+    }
+
+    console.log(`✅ [AUTH-API] Valid session found for user ID: ${session.user_id}`)
+
+    // Find user by ID
+    const user = await findUserById(session.user_id)
+
+    if (!user) {
+      console.log(`❌ [AUTH-API] User not found for session: ${session.user_id}`)
+      return NextResponse.json(
+        {
+          success: false,
+          error: "User not found",
+          details: "User associated with session not found",
+        },
+        { status: 404 },
+      )
+    }
+
+    console.log(`✅ [AUTH-API] User found: ${user.username}`)
+
+    // Return user data (without password)
+    const { password, ...userData } = user
+
+    return NextResponse.json({
+      success: true,
+      user: userData,
+    })
   } catch (error) {
-    console.error("❌ [AUTH-ME] Authentication check error:", error)
+    console.error("❌ [AUTH-API] Me error:", error)
 
     return NextResponse.json(
       {

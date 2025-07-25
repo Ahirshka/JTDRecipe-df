@@ -1,20 +1,17 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { findUserByEmail, verifyUserPassword, createSession } from "@/lib/neon"
 import { cookies } from "next/headers"
-import { randomBytes } from "crypto"
 
 export async function POST(request: NextRequest) {
-  console.log("🔄 [AUTH-LOGIN] POST request received")
+  console.log("🔄 [AUTH-API] Login request received")
 
   try {
+    // Parse request body
     const body = await request.json()
-    console.log("📝 [AUTH-LOGIN] Request body:", { ...body, password: "[REDACTED]" })
-
-    const { email, password } = body
 
     // Validate required fields
-    if (!email || !password) {
-      console.log("❌ [AUTH-LOGIN] Missing required fields")
+    if (!body.email || !body.password) {
+      console.log("❌ [AUTH-API] Missing email or password")
       return NextResponse.json(
         {
           success: false,
@@ -25,84 +22,83 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    console.log(`🔍 [AUTH-API] Looking up user with email: ${body.email}`)
+
     // Find user by email
-    const user = await findUserByEmail(email)
+    const user = await findUserByEmail(body.email)
+
     if (!user) {
-      console.log("❌ [AUTH-LOGIN] User not found")
+      console.log(`❌ [AUTH-API] User not found with email: ${body.email}`)
       return NextResponse.json(
         {
           success: false,
           error: "Invalid credentials",
-          details: "Email or password is incorrect",
+          details: "User not found with this email",
         },
         { status: 401 },
       )
     }
+
+    console.log(`✅ [AUTH-API] User found: ${user.username}, verifying password...`)
 
     // Verify password
-    const isPasswordValid = await verifyUserPassword(user, password)
+    const isPasswordValid = await verifyUserPassword(user, body.password)
+
     if (!isPasswordValid) {
-      console.log("❌ [AUTH-LOGIN] Invalid password")
+      console.log(`❌ [AUTH-API] Invalid password for user: ${user.username}`)
       return NextResponse.json(
         {
           success: false,
           error: "Invalid credentials",
-          details: "Email or password is incorrect",
+          details: "Incorrect password",
         },
         { status: 401 },
       )
     }
 
-    // Check if user account is active
+    console.log(`✅ [AUTH-API] Password verified for user: ${user.username}`)
+
+    // Check if user is active
     if (user.status !== "active") {
-      console.log("❌ [AUTH-LOGIN] User account not active:", user.status)
+      console.log(`❌ [AUTH-API] User account not active: ${user.status}`)
       return NextResponse.json(
         {
           success: false,
-          error: "Account not active",
+          error: "Account inactive",
           details: `Your account status is: ${user.status}`,
         },
         { status: 403 },
       )
     }
 
-    // Generate session token
-    const sessionToken = randomBytes(32).toString("hex")
+    console.log(`🔄 [AUTH-API] Creating session for user: ${user.username}`)
 
-    // Create session in database
-    await createSession(user.id, sessionToken)
+    // Create session
+    const session = await createSession(user.id)
 
-    // Set HTTP-only cookie
-    const cookieStore = await cookies()
-    cookieStore.set("session_token", sessionToken, {
+    // Set session cookie
+    cookies().set({
+      name: "session_token",
+      value: session.token,
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 7, // 7 days
       path: "/",
+      expires: session.expires,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
     })
 
-    console.log("✅ [AUTH-LOGIN] Login successful for user:", user.username)
+    console.log(`✅ [AUTH-API] Login successful for user: ${user.username}`)
 
-    return NextResponse.json(
-      {
-        success: true,
-        message: "Login successful",
-        data: {
-          user: {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            role: user.role,
-            status: user.status,
-            is_verified: user.is_verified,
-          },
-        },
-      },
-      { status: 200 },
-    )
+    // Return user data (without password)
+    const { password, ...userData } = user
+
+    return NextResponse.json({
+      success: true,
+      message: "Login successful",
+      user: userData,
+    })
   } catch (error) {
-    console.error("❌ [AUTH-LOGIN] Login error:", error)
+    console.error("❌ [AUTH-API] Login error:", error)
 
     return NextResponse.json(
       {

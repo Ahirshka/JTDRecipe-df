@@ -1,34 +1,9 @@
 "use server"
 
-import { revalidatePath } from "next/cache"
-import { sql, initializeDatabase } from "@/lib/neon"
+import { createRecipe, findSessionByToken, findUserById } from "@/lib/neon"
+import { cookies } from "next/headers"
 
-export interface Recipe {
-  id: string
-  title: string
-  description?: string
-  author_id: string
-  author_username: string
-  category: string
-  difficulty: string
-  prep_time_minutes: number
-  cook_time_minutes: number
-  servings: number
-  image_url?: string
-  rating: number
-  review_count: number
-  view_count: number
-  moderation_status: string
-  moderation_notes?: string
-  is_published: boolean
-  created_at: string
-  updated_at: string
-  ingredients?: Array<{ ingredient: string; amount: string; unit: string }>
-  instructions?: Array<{ instruction: string; step_number: number }>
-  tags?: string[]
-}
-
-export interface CreateRecipeData {
+export interface RecipeFormData {
   title: string
   description?: string
   category: string
@@ -37,457 +12,279 @@ export interface CreateRecipeData {
   cook_time_minutes: number
   servings: number
   image_url?: string
-  ingredients: Array<{ ingredient: string; amount: string; unit: string }>
-  instructions: Array<{ instruction: string; step_number: number }>
+  ingredients: string[]
+  instructions: string[]
   tags: string[]
 }
 
-// Create a new recipe (for user submission)
-export async function createRecipe(
-  recipeData: CreateRecipeData,
-): Promise<{ success: boolean; error?: string; recipeId?: string }> {
+export async function submitRecipe(formData: RecipeFormData) {
+  console.log("🔄 [SERVER-ACTION] Recipe submission started")
+
   try {
-    console.log("Creating recipe with data:", recipeData)
+    // Get session token from cookies
+    const cookieStore = cookies()
+    const sessionToken = cookieStore.get("session_token")?.value
 
-    // Initialize database first
-    await initializeDatabase()
+    console.log("🔍 [SERVER-ACTION] Session token:", sessionToken ? `${sessionToken.substring(0, 10)}...` : "Not found")
 
-    // Get current user from session/auth context
-    // For now, we'll use a default user ID - this should be replaced with actual auth
-    const authorId = 1 // This should come from the authenticated user
-    const authorUsername = "Aaron Hirshka" // This should come from the authenticated user
-
-    const recipeId = `recipe_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-
-    console.log("Starting database transaction...")
-
-    await sql.begin(async (sql) => {
-      // Insert main recipe
-      console.log("Inserting main recipe...")
-      await sql`
-        INSERT INTO recipes (
-          id, title, description, author_id, author_username, category, difficulty,
-          prep_time_minutes, cook_time_minutes, servings, image_url,
-          moderation_status, is_published, created_at, updated_at
-        ) VALUES (
-          ${recipeId}, ${recipeData.title}, ${recipeData.description || ""}, ${authorId},
-          ${authorUsername}, ${recipeData.category}, ${recipeData.difficulty}, 
-          ${recipeData.prep_time_minutes}, ${recipeData.cook_time_minutes}, ${recipeData.servings}, 
-          ${recipeData.image_url || null}, 'pending', false, NOW(), NOW()
-        )
-      `
-
-      // Insert ingredients
-      console.log("Inserting ingredients...")
-      for (const ingredient of recipeData.ingredients) {
-        if (ingredient.ingredient.trim()) {
-          await sql`
-            INSERT INTO recipe_ingredients (recipe_id, ingredient, amount, unit)
-            VALUES (${recipeId}, ${ingredient.ingredient}, ${ingredient.amount || ""}, ${ingredient.unit || ""})
-          `
-        }
+    if (!sessionToken) {
+      console.log("❌ [SERVER-ACTION] No session token provided")
+      return {
+        success: false,
+        error: "Authentication required",
       }
+    }
 
-      // Insert instructions
-      console.log("Inserting instructions...")
-      for (const instruction of recipeData.instructions) {
-        if (instruction.instruction.trim()) {
-          await sql`
-            INSERT INTO recipe_instructions (recipe_id, instruction, step_number)
-            VALUES (${recipeId}, ${instruction.instruction}, ${instruction.step_number})
-          `
-        }
+    // Verify session
+    const session = await findSessionByToken(sessionToken)
+    if (!session) {
+      console.log("❌ [SERVER-ACTION] Invalid or expired session")
+      return {
+        success: false,
+        error: "Invalid or expired session",
       }
+    }
 
-      // Insert tags
-      console.log("Inserting tags...")
-      for (const tag of recipeData.tags) {
-        if (tag.trim()) {
-          await sql`
-            INSERT INTO recipe_tags (recipe_id, tag)
-            VALUES (${recipeId}, ${tag})
-          `
-        }
+    // Get user details
+    const user = await findUserById(session.user_id)
+    if (!user) {
+      console.log("❌ [SERVER-ACTION] User not found for session")
+      return {
+        success: false,
+        error: "User not found",
       }
+    }
+
+    console.log("✅ [SERVER-ACTION] User authenticated:", {
+      id: user.id,
+      username: user.username,
+      role: user.role,
     })
 
-    console.log("Recipe created successfully with ID:", recipeId)
-    revalidatePath("/admin")
+    // Validate required fields
+    const requiredFields = [
+      "title",
+      "category",
+      "difficulty",
+      "prep_time_minutes",
+      "cook_time_minutes",
+      "servings",
+      "ingredients",
+      "instructions",
+    ]
 
-    return { success: true, recipeId }
-  } catch (error) {
-    console.error("Create recipe error:", error)
-    return { success: false, error: `Failed to create recipe: ${error.message}` }
-  }
-}
-
-// Get all approved and published recipes for the website
-export async function getApprovedRecipes(): Promise<Recipe[]> {
-  try {
-    await initializeDatabase()
-
-    const recipes = await sql`
-      SELECT 
-        r.*,
-        u.username as author_username,
-        COALESCE(r.rating, 0) as rating,
-        COALESCE(r.review_count, 0) as review_count,
-        COALESCE(r.view_count, 0) as view_count,
-        COALESCE(
-          json_agg(
-            DISTINCT jsonb_build_object(
-              'ingredient', ri.ingredient,
-              'amount', ri.amount,
-              'unit', ri.unit
-            )
-          ) FILTER (WHERE ri.ingredient IS NOT NULL), 
-          '[]'::json
-        ) as ingredients,
-        COALESCE(
-          json_agg(
-            DISTINCT jsonb_build_object(
-              'instruction', inst.instruction,
-              'step_number', inst.step_number
-            )
-            ORDER BY inst.step_number
-          ) FILTER (WHERE inst.instruction IS NOT NULL), 
-          '[]'::json
-        ) as instructions,
-        COALESCE(
-          array_agg(DISTINCT rt.tag) FILTER (WHERE rt.tag IS NOT NULL), 
-          ARRAY[]::text[]
-        ) as tags
-      FROM recipes r
-      JOIN users u ON r.author_id = u.id
-      LEFT JOIN recipe_ingredients ri ON r.id = ri.recipe_id
-      LEFT JOIN recipe_instructions inst ON r.id = inst.recipe_id
-      LEFT JOIN recipe_tags rt ON r.id = rt.recipe_id
-      WHERE r.moderation_status = 'approved' 
-        AND r.is_published = true
-      GROUP BY r.id, u.username
-      ORDER BY r.created_at DESC
-    `
-
-    return recipes.map((row: any) => ({
-      id: row.id,
-      title: row.title,
-      description: row.description,
-      author_id: row.author_id,
-      author_username: row.author_username,
-      category: row.category,
-      difficulty: row.difficulty,
-      prep_time_minutes: row.prep_time_minutes || 0,
-      cook_time_minutes: row.cook_time_minutes || 0,
-      servings: row.servings || 1,
-      image_url: row.image_url,
-      rating: Number.parseFloat(row.rating) || 0,
-      review_count: Number.parseInt(row.review_count) || 0,
-      view_count: Number.parseInt(row.view_count) || 0,
-      moderation_status: row.moderation_status,
-      moderation_notes: row.moderation_notes,
-      is_published: row.is_published,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      ingredients: Array.isArray(row.ingredients) ? row.ingredients : [],
-      instructions: Array.isArray(row.instructions) ? row.instructions : [],
-      tags: Array.isArray(row.tags) ? row.tags : [],
-    }))
-  } catch (error) {
-    console.error("Get approved recipes error:", error)
-    return []
-  }
-}
-
-// Get pending recipes for moderation
-export async function getPendingRecipes(): Promise<Recipe[]> {
-  try {
-    await initializeDatabase()
-
-    const recipes = await sql`
-      SELECT 
-        r.*,
-        u.username as author_username,
-        COALESCE(
-          json_agg(
-            DISTINCT jsonb_build_object(
-              'ingredient', ri.ingredient,
-              'amount', ri.amount,
-              'unit', ri.unit
-            )
-          ) FILTER (WHERE ri.ingredient IS NOT NULL), 
-          '[]'::json
-        ) as ingredients,
-        COALESCE(
-          json_agg(
-            DISTINCT jsonb_build_object(
-              'instruction', inst.instruction,
-              'step_number', inst.step_number
-            )
-            ORDER BY inst.step_number
-          ) FILTER (WHERE inst.instruction IS NOT NULL), 
-          '[]'::json
-        ) as instructions,
-        COALESCE(
-          array_agg(DISTINCT rt.tag) FILTER (WHERE rt.tag IS NOT NULL), 
-          ARRAY[]::text[]
-        ) as tags
-      FROM recipes r
-      JOIN users u ON r.author_id = u.id
-      LEFT JOIN recipe_ingredients ri ON r.id = ri.recipe_id
-      LEFT JOIN recipe_instructions inst ON r.id = inst.recipe_id
-      LEFT JOIN recipe_tags rt ON r.id = rt.recipe_id
-      WHERE r.moderation_status = 'pending'
-      GROUP BY r.id, u.username
-      ORDER BY r.created_at ASC
-    `
-
-    return recipes.map((row: any) => ({
-      id: row.id,
-      title: row.title,
-      description: row.description,
-      author_id: row.author_id,
-      author_username: row.author_username,
-      category: row.category,
-      difficulty: row.difficulty,
-      prep_time_minutes: row.prep_time_minutes || 0,
-      cook_time_minutes: row.cook_time_minutes || 0,
-      servings: row.servings || 1,
-      image_url: row.image_url,
-      rating: 0,
-      review_count: 0,
-      view_count: 0,
-      moderation_status: row.moderation_status,
-      moderation_notes: row.moderation_notes,
-      is_published: false,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      ingredients: Array.isArray(row.ingredients) ? row.ingredients : [],
-      instructions: Array.isArray(row.instructions) ? row.instructions : [],
-      tags: Array.isArray(row.tags) ? row.tags : [],
-    }))
-  } catch (error) {
-    console.error("Get pending recipes error:", error)
-    return []
-  }
-}
-
-// Get recipe by ID with full details
-export async function getRecipeById(id: string): Promise<Recipe | null> {
-  try {
-    await initializeDatabase()
-
-    const recipes = await sql`
-      SELECT 
-        r.*,
-        u.username as author_username,
-        COALESCE(r.rating, 0) as rating,
-        COALESCE(r.review_count, 0) as review_count,
-        COALESCE(r.view_count, 0) as view_count,
-        COALESCE(
-          json_agg(
-            DISTINCT jsonb_build_object(
-              'ingredient', ri.ingredient,
-              'amount', ri.amount,
-              'unit', ri.unit
-            )
-          ) FILTER (WHERE ri.ingredient IS NOT NULL), 
-          '[]'::json
-        ) as ingredients,
-        COALESCE(
-          json_agg(
-            DISTINCT jsonb_build_object(
-              'instruction', inst.instruction,
-              'step_number', inst.step_number
-            )
-            ORDER BY inst.step_number
-          ) FILTER (WHERE inst.instruction IS NOT NULL), 
-          '[]'::json
-        ) as instructions,
-        COALESCE(
-          array_agg(DISTINCT rt.tag) FILTER (WHERE rt.tag IS NOT NULL), 
-          ARRAY[]::text[]
-        ) as tags
-      FROM recipes r
-      JOIN users u ON r.author_id = u.id
-      LEFT JOIN recipe_ingredients ri ON r.id = ri.recipe_id
-      LEFT JOIN recipe_instructions inst ON r.id = inst.recipe_id
-      LEFT JOIN recipe_tags rt ON r.id = rt.recipe_id
-      WHERE r.id = ${id} 
-        AND r.moderation_status = 'approved' 
-        AND r.is_published = true
-      GROUP BY r.id, u.username
-    `
-
-    if (recipes.length === 0) {
-      return null
+    const missingFields = requiredFields.filter((field) => !formData[field as keyof RecipeFormData])
+    if (missingFields.length > 0) {
+      console.log("❌ [SERVER-ACTION] Missing required fields:", missingFields)
+      return {
+        success: false,
+        error: `Missing required fields: ${missingFields.join(", ")}`,
+      }
     }
 
-    const row = recipes[0]
+    // Validate arrays
+    if (!Array.isArray(formData.ingredients) || formData.ingredients.length === 0) {
+      console.log("❌ [SERVER-ACTION] Invalid ingredients array")
+      return {
+        success: false,
+        error: "Ingredients must be a non-empty array",
+      }
+    }
 
-    // Increment view count
-    await sql`
-      UPDATE recipes 
-      SET view_count = COALESCE(view_count, 0) + 1 
-      WHERE id = ${id}
-    `
+    if (!Array.isArray(formData.instructions) || formData.instructions.length === 0) {
+      console.log("❌ [SERVER-ACTION] Invalid instructions array")
+      return {
+        success: false,
+        error: "Instructions must be a non-empty array",
+      }
+    }
+
+    // Process arrays to remove empty items
+    const processedIngredients = formData.ingredients
+      .filter((item: string) => item && item.trim().length > 0)
+      .map((item: string) => item.trim())
+
+    const processedInstructions = formData.instructions
+      .filter((item: string) => item && item.trim().length > 0)
+      .map((item: string) => item.trim())
+
+    const processedTags = Array.isArray(formData.tags)
+      ? formData.tags.filter((item: string) => item && item.trim().length > 0).map((item: string) => item.trim())
+      : []
+
+    console.log("🔄 [SERVER-ACTION] Processed arrays:", {
+      ingredients: processedIngredients.length,
+      instructions: processedInstructions.length,
+      tags: processedTags.length,
+    })
+
+    // Prepare recipe data
+    const recipeData = {
+      title: formData.title.trim(),
+      description: formData.description?.trim() || null,
+      author_id: user.id,
+      author_username: user.username,
+      category: formData.category.trim(),
+      difficulty: formData.difficulty.trim(),
+      prep_time_minutes: Number(formData.prep_time_minutes),
+      cook_time_minutes: Number(formData.cook_time_minutes),
+      servings: Number(formData.servings),
+      image_url: formData.image_url?.trim() || null,
+      ingredients: processedIngredients,
+      instructions: processedInstructions,
+      tags: processedTags,
+    }
+
+    console.log("📝 [SERVER-ACTION] Final recipe data prepared:", {
+      title: recipeData.title,
+      author: recipeData.author_username,
+      category: recipeData.category,
+      difficulty: recipeData.difficulty,
+      prep_time: recipeData.prep_time_minutes,
+      cook_time: recipeData.cook_time_minutes,
+      servings: recipeData.servings,
+      ingredients_count: recipeData.ingredients.length,
+      instructions_count: recipeData.instructions.length,
+      tags_count: recipeData.tags.length,
+    })
+
+    // Create recipe in database
+    const result = await createRecipe(recipeData)
+
+    if (!result || !result.success) {
+      console.log("❌ [SERVER-ACTION] Failed to create recipe in database")
+      return {
+        success: false,
+        error: result?.error || "Failed to create recipe in database",
+      }
+    }
+
+    console.log("✅ [SERVER-ACTION] Recipe created successfully:", result.recipeId)
 
     return {
-      id: row.id,
-      title: row.title,
-      description: row.description,
-      author_id: row.author_id,
-      author_username: row.author_username,
-      category: row.category,
-      difficulty: row.difficulty,
-      prep_time_minutes: row.prep_time_minutes || 0,
-      cook_time_minutes: row.cook_time_minutes || 0,
-      servings: row.servings || 1,
-      image_url: row.image_url,
-      rating: Number.parseFloat(row.rating) || 0,
-      review_count: Number.parseInt(row.review_count) || 0,
-      view_count: Number.parseInt(row.view_count) || 0,
-      moderation_status: row.moderation_status,
-      moderation_notes: row.moderation_notes,
-      is_published: row.is_published,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      ingredients: Array.isArray(row.ingredients) ? row.ingredients : [],
-      instructions: Array.isArray(row.instructions) ? row.instructions : [],
-      tags: Array.isArray(row.tags) ? row.tags : [],
+      success: true,
+      message: "Recipe submitted successfully and is pending moderation",
+      recipeId: result.recipeId,
+      data: {
+        title: recipeData.title,
+        author: recipeData.author_username,
+        status: "pending_moderation",
+      },
     }
   } catch (error) {
-    console.error("Get recipe by ID error:", error)
-    return null
+    console.error("❌ [SERVER-ACTION] Recipe submission error:", error)
+    return {
+      success: false,
+      error: `Server error: ${error instanceof Error ? error.message : "Unknown error"}`,
+    }
   }
 }
 
-// Moderate recipe (approve/reject)
-export async function moderateRecipe(
-  recipeId: string,
-  status: "approved" | "rejected",
-  notes?: string,
-): Promise<{ success: boolean; error?: string }> {
-  try {
-    await initializeDatabase()
+export async function getRecipesByUser(userId: number) {
+  console.log("🔄 [SERVER-ACTION] Getting recipes for user:", userId)
 
+  try {
+    const { sql } = await import("@/lib/neon")
+
+    const recipes = await sql`
+      SELECT * FROM recipes 
+      WHERE author_id = ${userId}
+      ORDER BY created_at DESC
+    `
+
+    console.log(`✅ [SERVER-ACTION] Retrieved ${recipes.length} recipes for user ${userId}`)
+
+    return {
+      success: true,
+      data: recipes,
+    }
+  } catch (error) {
+    console.error("❌ [SERVER-ACTION] Get user recipes error:", error)
+    return {
+      success: false,
+      error: `Failed to get user recipes: ${error instanceof Error ? error.message : "Unknown error"}`,
+    }
+  }
+}
+
+export async function deleteRecipe(recipeId: string) {
+  console.log("🔄 [SERVER-ACTION] Deleting recipe:", recipeId)
+
+  try {
+    // Get session token from cookies
+    const cookieStore = cookies()
+    const sessionToken = cookieStore.get("session_token")?.value
+
+    if (!sessionToken) {
+      console.log("❌ [SERVER-ACTION] No session token provided")
+      return {
+        success: false,
+        error: "Authentication required",
+      }
+    }
+
+    // Verify session
+    const session = await findSessionByToken(sessionToken)
+    if (!session) {
+      console.log("❌ [SERVER-ACTION] Invalid or expired session")
+      return {
+        success: false,
+        error: "Invalid or expired session",
+      }
+    }
+
+    // Get user details
+    const user = await findUserById(session.user_id)
+    if (!user) {
+      console.log("❌ [SERVER-ACTION] User not found for session")
+      return {
+        success: false,
+        error: "User not found",
+      }
+    }
+
+    const { sql } = await import("@/lib/neon")
+
+    // Check if user owns the recipe or is admin
+    const recipe = await sql`
+      SELECT * FROM recipes 
+      WHERE id = ${recipeId}
+      LIMIT 1
+    `
+
+    if (recipe.length === 0) {
+      console.log("❌ [SERVER-ACTION] Recipe not found")
+      return {
+        success: false,
+        error: "Recipe not found",
+      }
+    }
+
+    if (recipe[0].author_id !== user.id && user.role !== "admin") {
+      console.log("❌ [SERVER-ACTION] User not authorized to delete recipe")
+      return {
+        success: false,
+        error: "Not authorized to delete this recipe",
+      }
+    }
+
+    // Delete recipe
     await sql`
-      UPDATE recipes 
-      SET 
-        moderation_status = ${status}, 
-        is_published = ${status === "approved"},
-        moderation_notes = ${notes || null},
-        updated_at = NOW()
+      DELETE FROM recipes 
       WHERE id = ${recipeId}
     `
 
-    revalidatePath("/")
-    revalidatePath("/admin")
-    revalidatePath("/search")
+    console.log("✅ [SERVER-ACTION] Recipe deleted successfully:", recipeId)
 
-    return { success: true }
+    return {
+      success: true,
+      message: "Recipe deleted successfully",
+    }
   } catch (error) {
-    console.error("Moderate recipe error:", error)
-    return { success: false, error: "Failed to moderate recipe" }
-  }
-}
-
-// Update recipe
-export async function updateRecipe(
-  id: string,
-  recipeData: Partial<CreateRecipeData>,
-): Promise<{ success: boolean; error?: string }> {
-  try {
-    console.log("Updating recipe:", id)
-
-    revalidatePath("/")
-    revalidatePath(`/recipe/${id}`)
-
-    return { success: true }
-  } catch (error) {
-    console.error("Update recipe error:", error)
-    return { success: false, error: "Failed to update recipe" }
-  }
-}
-
-// Delete recipe
-export async function deleteRecipe(id: string): Promise<{ success: boolean; error?: string }> {
-  try {
-    console.log("Deleting recipe:", id)
-
-    revalidatePath("/")
-    revalidatePath("/admin")
-
-    return { success: true }
-  } catch (error) {
-    console.error("Delete recipe error:", error)
-    return { success: false, error: "Failed to delete recipe" }
-  }
-}
-
-// Get recipes by category
-export async function getRecipesByCategory(category: string): Promise<Recipe[]> {
-  try {
-    const allRecipes = await getApprovedRecipes()
-    return allRecipes.filter((recipe) => recipe.category.toLowerCase() === category.toLowerCase())
-  } catch (error) {
-    console.error("Get recipes by category error:", error)
-    return []
-  }
-}
-
-// Search recipes
-export async function searchRecipes(query: string): Promise<Recipe[]> {
-  try {
-    await initializeDatabase()
-
-    const recipes = await sql`
-      SELECT 
-        r.*,
-        u.username as author_username,
-        COALESCE(r.rating, 0) as rating,
-        COALESCE(r.review_count, 0) as review_count,
-        COALESCE(r.view_count, 0) as view_count,
-        ts_rank(search_vector, plainto_tsquery('english', ${query})) as rank
-      FROM recipes r
-      JOIN users u ON r.author_id = u.id
-      WHERE r.moderation_status = 'approved' 
-        AND r.is_published = true
-        AND (
-          search_vector @@ plainto_tsquery('english', ${query})
-          OR title ILIKE ${"%" + query + "%"}
-          OR description ILIKE ${"%" + query + "%"}
-          OR category ILIKE ${"%" + query + "%"}
-        )
-      ORDER BY rank DESC, r.created_at DESC
-      LIMIT 50
-    `
-
-    return recipes.map((row: any) => ({
-      id: row.id,
-      title: row.title,
-      description: row.description,
-      author_id: row.author_id,
-      author_username: row.author_username,
-      category: row.category,
-      difficulty: row.difficulty,
-      prep_time_minutes: row.prep_time_minutes || 0,
-      cook_time_minutes: row.cook_time_minutes || 0,
-      servings: row.servings || 1,
-      image_url: row.image_url,
-      rating: Number.parseFloat(row.rating) || 0,
-      review_count: Number.parseInt(row.review_count) || 0,
-      view_count: Number.parseInt(row.view_count) || 0,
-      moderation_status: row.moderation_status,
-      moderation_notes: row.moderation_notes,
-      is_published: row.is_published,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      ingredients: [],
-      instructions: [],
-      tags: [],
-    }))
-  } catch (error) {
-    console.error("Search recipes error:", error)
-    return []
+    console.error("❌ [SERVER-ACTION] Delete recipe error:", error)
+    return {
+      success: false,
+      error: `Failed to delete recipe: ${error instanceof Error ? error.message : "Unknown error"}`,
+    }
   }
 }
