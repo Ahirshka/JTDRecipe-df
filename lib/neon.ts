@@ -545,6 +545,33 @@ export async function findSessionByToken(token: string): Promise<Session | null>
   }
 }
 
+// Validate session - ADDED MISSING EXPORT
+export async function validateSession(token: string): Promise<{ user: User; session: Session } | null> {
+  console.log(`🔄 [NEON-DB] Validating session token: ${token.substring(0, 10)}...`)
+
+  try {
+    // Find session by token
+    const session = await findSessionByToken(token)
+    if (!session) {
+      console.log(`❌ [NEON-DB] Session validation failed: session not found`)
+      return null
+    }
+
+    // Find user by session user_id
+    const user = await findUserById(session.user_id)
+    if (!user) {
+      console.log(`❌ [NEON-DB] Session validation failed: user not found`)
+      return null
+    }
+
+    console.log(`✅ [NEON-DB] Session validated successfully for user: ${user.username}`)
+    return { user, session }
+  } catch (error) {
+    console.error(`❌ [NEON-DB] Error validating session:`, error)
+    return null
+  }
+}
+
 // Delete session by token
 export async function deleteSessionByToken(token: string): Promise<boolean> {
   console.log("🗑️ [NEON] Deleting session by token:", token.substring(0, 10) + "...")

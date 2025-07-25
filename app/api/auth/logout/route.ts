@@ -1,35 +1,35 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { deleteSession } from "@/lib/auth-system"
-import { cookies } from "next/headers"
+import { logoutUser } from "@/lib/auth-system"
 
 export async function POST(request: NextRequest) {
-  console.log("🚪 [API-LOGOUT] Logout request received")
+  console.log("🔄 [API] Logout request received")
 
   try {
-    const cookieStore = await cookies()
-    const sessionToken = cookieStore.get("session")?.value
+    const result = await logoutUser()
 
-    if (sessionToken) {
-      // Delete session from database
-      await deleteSession(sessionToken)
-      console.log("✅ [API-LOGOUT] Session deleted from database")
+    if (result.success) {
+      console.log("✅ [API] Logout successful")
+      return NextResponse.json({
+        success: true,
+        message: result.message,
+      })
+    } else {
+      console.log("❌ [API] Logout failed:", result.message)
+      return NextResponse.json(
+        {
+          success: false,
+          message: result.message,
+        },
+        { status: 500 },
+      )
     }
-
-    // Clear session cookie
-    cookieStore.delete("session")
-    console.log("✅ [API-LOGOUT] Session cookie cleared")
-
-    return NextResponse.json({
-      success: true,
-      message: "Logged out successfully",
-    })
   } catch (error) {
-    console.error("❌ [API-LOGOUT] Server error:", error)
+    console.error("❌ [API] Logout error:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Internal server error",
-        details: error instanceof Error ? error.message : "Unknown error",
+        message: "Internal server error",
+        error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )

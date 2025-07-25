@@ -1,8 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { createUser } from "@/lib/auth-system"
+import { registerUser } from "@/lib/auth-system"
 
 export async function POST(request: NextRequest) {
-  console.log("📝 [API-REGISTER] Registration request received")
+  console.log("🔄 [API] Registration request received")
 
   try {
     const body = await request.json()
@@ -10,11 +10,11 @@ export async function POST(request: NextRequest) {
 
     // Validate input
     if (!username || !email || !password) {
-      console.log("❌ [API-REGISTER] Missing required fields")
+      console.log("❌ [API] Missing required fields")
       return NextResponse.json(
         {
           success: false,
-          error: "Username, email, and password are required",
+          message: "Username, email, and password are required",
         },
         { status: 400 },
       )
@@ -23,30 +23,28 @@ export async function POST(request: NextRequest) {
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
     if (!emailRegex.test(email)) {
-      console.log("❌ [API-REGISTER] Invalid email format")
       return NextResponse.json(
         {
           success: false,
-          error: "Invalid email format",
+          message: "Invalid email format",
         },
         { status: 400 },
       )
     }
 
-    // Validate password length
+    // Validate password strength
     if (password.length < 6) {
-      console.log("❌ [API-REGISTER] Password too short")
       return NextResponse.json(
         {
           success: false,
-          error: "Password must be at least 6 characters long",
+          message: "Password must be at least 6 characters long",
         },
         { status: 400 },
       )
     }
 
-    // Create user
-    const result = await createUser({
+    // Attempt registration
+    const result = await registerUser({
       username,
       email,
       password,
@@ -54,30 +52,34 @@ export async function POST(request: NextRequest) {
     })
 
     if (result.success) {
-      console.log("✅ [API-REGISTER] User registered successfully")
+      console.log("✅ [API] Registration successful")
       return NextResponse.json({
         success: true,
-        message: "User registered successfully",
-        user: result.user,
+        message: result.message,
+        user: {
+          id: result.user?.id,
+          username: result.user?.username,
+          email: result.user?.email,
+          role: result.user?.role,
+        },
       })
     } else {
-      console.log("❌ [API-REGISTER] Registration failed:", result.error)
+      console.log("❌ [API] Registration failed:", result.message)
       return NextResponse.json(
         {
           success: false,
-          error: result.error,
-          details: result.details,
+          message: result.message,
         },
         { status: 400 },
       )
     }
   } catch (error) {
-    console.error("❌ [API-REGISTER] Server error:", error)
+    console.error("❌ [API] Registration error:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Internal server error",
-        details: error instanceof Error ? error.message : "Unknown error",
+        message: "Internal server error",
+        error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )

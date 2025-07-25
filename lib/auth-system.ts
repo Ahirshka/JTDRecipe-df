@@ -1,298 +1,345 @@
+import { cookies } from "next/headers"
 import bcrypt from "bcryptjs"
-import { sql } from "./neon"
-import crypto from "crypto"
+import { randomBytes } from "crypto"
+import {
+  sql,
+  findUserByEmail,
+  findUserByUsername,
+  createUser as createUserInDB,
+  validateSession,
+  deleteSession,
+  type User,
+  type Session,
+} from "./neon"
 
-// User types
-export interface User {
-  id: number
-  username: string
+// Re-export createUser for external use
+export { createUser } from "./neon"
+
+// Auth interfaces
+export interface LoginCredentials {
   email: string
-  role: string
-  status: string
-  is_verified: boolean
-  created_at: string
-  updated_at: string
+  password: string
 }
 
-export interface CreateUserData {
+export interface RegisterData {
   username: string
   email: string
   password: string
   role?: string
-  status?: string
-  is_verified?: boolean
 }
 
-export interface LoginResult {
+export interface AuthResult {
   success: boolean
-  error?: string
-  details?: string
+  message: string
   user?: User
-  sessionToken?: string
+  error?: string
 }
 
-// Hash password with bcrypt
-export async function hashPassword(password: string): Promise<string> {
-  console.log("🔐 [AUTH] Hashing password...")
-  const saltRounds = 12
-  const hash = await bcrypt.hash(password, saltRounds)
-  console.log("✅ [AUTH] Password hashed successfully")
-  return hash
+export interface SessionResult {
+  success: boolean
+  user?: User
+  session?: Session
+  error?: string
 }
 
-// Verify password with bcrypt
-export async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  console.log("🔐 [AUTH] Verifying password...")
-  try {
-    const isValid = await bcrypt.compare(password, hash)
-    console.log(`${isValid ? "✅" : "❌"} [AUTH] Password verification: ${isValid ? "valid" : "invalid"}`)
-    return isValid
-  } catch (error) {
-    console.error("❌ [AUTH] Password verification error:", error)
-    return false
-  }
+// Cookie configuration
+const COOKIE_NAME = "auth_session"
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax" as const,
+  maxAge: 60 * 60 * 24 * 7, // 7 days
+  path: "/",
 }
 
-// Create a new user
-export async function createUser(userData: CreateUserData): Promise<LoginResult> {
-  console.log("👤 [AUTH] Creating user:", userData.email)
+// Create session and set cookie
+export async function createSession(userId: number): Promise<{ token: string; expires: Date } | null> {
+  console.log(`🔄 [AUTH] Creating session for user ID: ${userId}`)
 
   try {
-    // Check if user already exists
-    const existingUser = await sql`
-      SELECT id, email, username FROM users 
-      WHERE email = ${userData.email} OR username = ${userData.username}
-    `
-
-    if (existingUser.length > 0) {
-      const existing = existingUser[0]
-      const conflict = existing.email === userData.email ? "email" : "username"
-      console.log(`❌ [AUTH] User creation failed: ${conflict} already exists`)
-      return {
-        success: false,
-        error: `User with this ${conflict} already exists`,
-      }
-    }
-
-    // Hash password
-    const passwordHash = await hashPassword(userData.password)
-
-    // Create user
-    const newUser = await sql`
-      INSERT INTO users (username, email, password_hash, role, status, is_verified)
-      VALUES (
-        ${userData.username},
-        ${userData.email},
-        ${passwordHash},
-        ${userData.role || "user"},
-        ${userData.status || "active"},
-        ${userData.is_verified || false}
-      )
-      RETURNING id, username, email, role, status, is_verified, created_at, updated_at
-    `
-
-    if (newUser.length === 0) {
-      console.log("❌ [AUTH] User creation failed: No user returned")
-      return {
-        success: false,
-        error: "Failed to create user",
-      }
-    }
-
-    const user = newUser[0] as User
-    console.log("✅ [AUTH] User created successfully:", user.id)
-
-    return {
-      success: true,
-      user,
-    }
-  } catch (error) {
-    console.error("❌ [AUTH] User creation error:", error)
-    return {
-      success: false,
-      error: "Database error during user creation",
-      details: error instanceof Error ? error.message : "Unknown error",
-    }
-  }
-}
-
-// Find user by email
-export async function findUserByEmail(email: string): Promise<User | null> {
-  console.log("🔍 [AUTH] Finding user by email:", email)
-
-  try {
-    const users = await sql`
-      SELECT id, username, email, password_hash, role, status, is_verified, created_at, updated_at
-      FROM users 
-      WHERE email = ${email}
-    `
-
-    if (users.length === 0) {
-      console.log("❌ [AUTH] User not found")
-      return null
-    }
-
-    const user = users[0] as User & { password_hash: string }
-    console.log("✅ [AUTH] User found:", user.id)
-    return user
-  } catch (error) {
-    console.error("❌ [AUTH] Error finding user:", error)
-    return null
-  }
-}
-
-// Generate session token
-export function generateSessionToken(): string {
-  return crypto.randomBytes(32).toString("hex")
-}
-
-// Create session
-export async function createSession(userId: number): Promise<string | null> {
-  console.log("🎫 [AUTH] Creating session for user:", userId)
-
-  try {
-    const token = generateSessionToken()
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
-
+    // Ensure sessions table exists
     await sql`
-      INSERT INTO sessions (user_id, token, expires_at)
-      VALUES (${userId}, ${token}, ${expiresAt})
+      CREATE TABLE IF NOT EXISTS sessions (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token VARCHAR(255) NOT NULL UNIQUE,
+        expires TIMESTAMP NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
     `
 
-    console.log("✅ [AUTH] Session created successfully")
-    return token
-  } catch (error) {
-    console.error("❌ [AUTH] Session creation error:", error)
-    return null
-  }
-}
+    // Generate random token
+    const token = randomBytes(32).toString("hex")
 
-// Validate session
-export async function validateSession(token: string): Promise<User | null> {
-  console.log("🎫 [AUTH] Validating session token")
+    // Set expiration to 7 days from now
+    const expires = new Date()
+    expires.setDate(expires.getDate() + 7)
 
-  try {
-    const sessions = await sql`
-      SELECT s.user_id, s.expires_at, u.id, u.username, u.email, u.role, u.status, u.is_verified, u.created_at, u.updated_at
-      FROM sessions s
-      JOIN users u ON s.user_id = u.id
-      WHERE s.token = ${token} AND s.expires_at > NOW()
+    // Create session in database
+    await sql`
+      INSERT INTO sessions (user_id, token, expires)
+      VALUES (${userId}, ${token}, ${expires.toISOString()});
     `
 
-    if (sessions.length === 0) {
-      console.log("❌ [AUTH] Invalid or expired session")
-      return null
+    console.log(`✅ [AUTH] Session created for user ID: ${userId}`)
+
+    return {
+      token,
+      expires,
     }
-
-    const session = sessions[0]
-    const user: User = {
-      id: session.id,
-      username: session.username,
-      email: session.email,
-      role: session.role,
-      status: session.status,
-      is_verified: session.is_verified,
-      created_at: session.created_at,
-      updated_at: session.updated_at,
-    }
-
-    console.log("✅ [AUTH] Session valid for user:", user.id)
-    return user
   } catch (error) {
-    console.error("❌ [AUTH] Session validation error:", error)
-    return null
-  }
-}
-
-// Delete session
-export async function deleteSession(token: string): Promise<boolean> {
-  console.log("🗑️ [AUTH] Deleting session")
-
-  try {
-    await sql`DELETE FROM sessions WHERE token = ${token}`
-    console.log("✅ [AUTH] Session deleted successfully")
-    return true
-  } catch (error) {
-    console.error("❌ [AUTH] Session deletion error:", error)
-    return false
+    console.error(`❌ [AUTH] Error creating session:`, error)
+    throw error
   }
 }
 
 // Login user
-export async function loginUser(email: string, password: string): Promise<LoginResult> {
-  console.log("🔐 [AUTH] Attempting login for:", email)
+export async function loginUser(credentials: LoginCredentials): Promise<AuthResult> {
+  console.log("🔄 [AUTH] Attempting login for:", credentials.email)
 
   try {
-    // Find user
-    const user = (await findUserByEmail(email)) as (User & { password_hash: string }) | null
-
+    // Find user by email
+    const user = await findUserByEmail(credentials.email)
     if (!user) {
-      console.log("❌ [AUTH] Login failed: User not found")
+      console.log("❌ [AUTH] User not found")
       return {
         success: false,
-        error: "Invalid email or password",
+        message: "Invalid email or password",
       }
     }
 
     // Verify password
-    const isValidPassword = await verifyPassword(password, user.password_hash)
-
+    const isValidPassword = await bcrypt.compare(credentials.password, user.password_hash)
     if (!isValidPassword) {
-      console.log("❌ [AUTH] Login failed: Invalid password")
+      console.log("❌ [AUTH] Invalid password")
       return {
         success: false,
-        error: "Invalid email or password",
+        message: "Invalid email or password",
       }
     }
 
     // Check user status
     if (user.status !== "active") {
-      console.log("❌ [AUTH] Login failed: User not active")
+      console.log("❌ [AUTH] User account is not active")
       return {
         success: false,
-        error: "Account is not active",
+        message: "Account is not active",
       }
     }
 
     // Create session
-    const sessionToken = await createSession(user.id)
-
-    if (!sessionToken) {
-      console.log("❌ [AUTH] Login failed: Could not create session")
+    const sessionData = await createSession(user.id)
+    if (!sessionData) {
+      console.log("❌ [AUTH] Failed to create session")
       return {
         success: false,
-        error: "Failed to create session",
+        message: "Failed to create session",
       }
     }
 
-    // Remove password_hash from user object
-    const { password_hash, ...userWithoutPassword } = user
+    // Set cookie
+    const cookieStore = await cookies()
+    cookieStore.set(COOKIE_NAME, sessionData.token, COOKIE_OPTIONS)
 
-    console.log("✅ [AUTH] Login successful for user:", user.id)
-
+    console.log("✅ [AUTH] Login successful for:", user.username)
     return {
       success: true,
-      user: userWithoutPassword,
-      sessionToken,
+      message: "Login successful",
+      user,
     }
   } catch (error) {
     console.error("❌ [AUTH] Login error:", error)
     return {
       success: false,
-      error: "Database error during login",
-      details: error instanceof Error ? error.message : "Unknown error",
+      message: "Login failed",
+      error: error instanceof Error ? error.message : "Unknown error",
     }
   }
 }
 
-// Clean up expired sessions
-export async function cleanupExpiredSessions(): Promise<void> {
-  console.log("🧹 [AUTH] Cleaning up expired sessions...")
+// Register user
+export async function registerUser(userData: RegisterData): Promise<AuthResult> {
+  console.log("🔄 [AUTH] Attempting registration for:", userData.username)
 
   try {
-    const result = await sql`DELETE FROM sessions WHERE expires_at <= NOW()`
-    console.log(`✅ [AUTH] Cleaned up expired sessions`)
+    // Check if user already exists
+    const existingUserByEmail = await findUserByEmail(userData.email)
+    if (existingUserByEmail) {
+      return {
+        success: false,
+        message: "Email already registered",
+      }
+    }
+
+    const existingUserByUsername = await findUserByUsername(userData.username)
+    if (existingUserByUsername) {
+      return {
+        success: false,
+        message: "Username already taken",
+      }
+    }
+
+    // Create user
+    const user = await createUserInDB({
+      username: userData.username,
+      email: userData.email,
+      password: userData.password,
+      role: userData.role || "user",
+      status: "active",
+      is_verified: false,
+    })
+
+    if (!user) {
+      return {
+        success: false,
+        message: "Failed to create user",
+      }
+    }
+
+    console.log("✅ [AUTH] Registration successful for:", user.username)
+    return {
+      success: true,
+      message: "Registration successful",
+      user,
+    }
   } catch (error) {
-    console.error("❌ [AUTH] Error cleaning up sessions:", error)
+    console.error("❌ [AUTH] Registration error:", error)
+    return {
+      success: false,
+      message: "Registration failed",
+      error: error instanceof Error ? error.message : "Unknown error",
+    }
   }
+}
+
+// Get current session
+export async function getCurrentSession(): Promise<SessionResult> {
+  console.log("🔄 [AUTH] Getting current session")
+
+  try {
+    const cookieStore = await cookies()
+    const sessionToken = cookieStore.get(COOKIE_NAME)?.value
+
+    if (!sessionToken) {
+      console.log("❌ [AUTH] No session token found")
+      return {
+        success: false,
+        error: "No session token",
+      }
+    }
+
+    // Validate session
+    const sessionData = await validateSession(sessionToken)
+    if (!sessionData) {
+      console.log("❌ [AUTH] Invalid session")
+      return {
+        success: false,
+        error: "Invalid session",
+      }
+    }
+
+    console.log("✅ [AUTH] Valid session found for:", sessionData.user.username)
+    return {
+      success: true,
+      user: sessionData.user,
+      session: sessionData.session,
+    }
+  } catch (error) {
+    console.error("❌ [AUTH] Session validation error:", error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    }
+  }
+}
+
+// Logout user
+export async function logoutUser(): Promise<{ success: boolean; message: string }> {
+  console.log("🔄 [AUTH] Logging out user")
+
+  try {
+    const cookieStore = await cookies()
+    const sessionToken = cookieStore.get(COOKIE_NAME)?.value
+
+    if (sessionToken) {
+      // Delete session from database
+      await deleteSession(sessionToken)
+    }
+
+    // Clear cookie
+    cookieStore.delete(COOKIE_NAME)
+
+    console.log("✅ [AUTH] Logout successful")
+    return {
+      success: true,
+      message: "Logout successful",
+    }
+  } catch (error) {
+    console.error("❌ [AUTH] Logout error:", error)
+    return {
+      success: false,
+      message: "Logout failed",
+    }
+  }
+}
+
+// Check if user is authenticated
+export async function isAuthenticated(): Promise<boolean> {
+  const session = await getCurrentSession()
+  return session.success
+}
+
+// Check if user has specific role
+export async function hasRole(requiredRole: string): Promise<boolean> {
+  const session = await getCurrentSession()
+  if (!session.success || !session.user) {
+    return false
+  }
+
+  return session.user.role === requiredRole
+}
+
+// Check if user is owner
+export async function isOwner(): Promise<boolean> {
+  return await hasRole("owner")
+}
+
+// Check if user is admin
+export async function isAdmin(): Promise<boolean> {
+  const session = await getCurrentSession()
+  if (!session.success || !session.user) {
+    return false
+  }
+
+  return session.user.role === "owner" || session.user.role === "admin"
+}
+
+// Require authentication middleware
+export async function requireAuth(): Promise<User | null> {
+  const session = await getCurrentSession()
+  if (!session.success || !session.user) {
+    return null
+  }
+
+  return session.user
+}
+
+// Require specific role middleware
+export async function requireRole(requiredRole: string): Promise<User | null> {
+  const user = await requireAuth()
+  if (!user || user.role !== requiredRole) {
+    return null
+  }
+
+  return user
+}
+
+// Require admin access
+export async function requireAdmin(): Promise<User | null> {
+  const user = await requireAuth()
+  if (!user || (user.role !== "owner" && user.role !== "admin")) {
+    return null
+  }
+
+  return user
 }

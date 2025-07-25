@@ -1,52 +1,43 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { validateSession } from "@/lib/auth-system"
-import { cookies } from "next/headers"
+import { getCurrentSession } from "@/lib/auth-system"
 
 export async function GET(request: NextRequest) {
-  console.log("👤 [API-ME] Get current user request")
+  console.log("🔄 [API] Getting current user")
 
   try {
-    const cookieStore = await cookies()
-    const sessionToken = cookieStore.get("session")?.value
+    const session = await getCurrentSession()
 
-    if (!sessionToken) {
-      console.log("❌ [API-ME] No session token found")
+    if (session.success && session.user) {
+      console.log("✅ [API] Current user found:", session.user.username)
+      return NextResponse.json({
+        success: true,
+        user: {
+          id: session.user.id,
+          username: session.user.username,
+          email: session.user.email,
+          role: session.user.role,
+          status: session.user.status,
+          is_verified: session.user.is_verified,
+          created_at: session.user.created_at,
+        },
+      })
+    } else {
+      console.log("❌ [API] No valid session found")
       return NextResponse.json(
         {
           success: false,
-          error: "Not authenticated",
+          message: "Not authenticated",
         },
         { status: 401 },
       )
     }
-
-    // Validate session
-    const user = await validateSession(sessionToken)
-
-    if (!user) {
-      console.log("❌ [API-ME] Invalid session")
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid session",
-        },
-        { status: 401 },
-      )
-    }
-
-    console.log("✅ [API-ME] User authenticated:", user.id)
-
-    return NextResponse.json({
-      success: true,
-      user,
-    })
   } catch (error) {
-    console.error("❌ [API-ME] Server error:", error)
+    console.error("❌ [API] Get current user error:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Internal server error",
-        details: error instanceof Error ? error.message : "Unknown error",
+        message: "Internal server error",
+        error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )
