@@ -3,69 +3,55 @@ import { findUserByEmail, verifyUserPassword, createSession } from "@/lib/neon"
 import { cookies } from "next/headers"
 
 export async function POST(request: NextRequest) {
-  console.log("🔄 [AUTH-API] Login request received")
+  console.log("🔐 [LOGIN-API] Login request received")
 
   try {
-    // Parse request body
     const body = await request.json()
+    const { email, password } = body
 
-    // Validate required fields
-    if (!body.email || !body.password) {
-      console.log("❌ [AUTH-API] Missing email or password")
+    console.log("📧 [LOGIN-API] Login attempt for email:", email)
+
+    // Validate input
+    if (!email || !password) {
+      console.log("❌ [LOGIN-API] Missing email or password")
       return NextResponse.json(
         {
           success: false,
-          error: "Missing required fields",
-          details: "Email and password are required",
+          error: "Email and password are required",
         },
         { status: 400 },
       )
     }
 
-    console.log(`🔍 [AUTH-API] Looking up user with email: ${body.email}`)
-
     // Find user by email
-    const user = await findUserByEmail(body.email)
+    console.log("🔍 [LOGIN-API] Looking up user by email...")
+    const user = await findUserByEmail(email)
 
     if (!user) {
-      console.log(`❌ [AUTH-API] User not found with email: ${body.email}`)
+      console.log("❌ [LOGIN-API] User not found")
       return NextResponse.json(
         {
           success: false,
           error: "Invalid credentials",
-          details: "User not found with this email",
+          details: "User not found",
         },
         { status: 401 },
       )
     }
 
-    console.log(`✅ [AUTH-API] User found: ${user.username} (ID: ${user.id})`)
-    console.log(`🔍 [AUTH-API] User details:`, {
+    console.log("✅ [LOGIN-API] User found:", {
       id: user.id,
       username: user.username,
       email: user.email,
       role: user.role,
-      status: user.status,
-      is_verified: user.is_verified,
-      has_password: !!user.password,
-      password_length: user.password ? user.password.length : 0,
     })
 
     // Verify password
-    console.log(`🔐 [AUTH-API] Verifying password for user: ${user.username}`)
-    const isPasswordValid = await verifyUserPassword(user, body.password)
+    console.log("🔐 [LOGIN-API] Verifying password...")
+    const isPasswordValid = await verifyUserPassword(user, password)
 
     if (!isPasswordValid) {
-      console.log(`❌ [AUTH-API] Invalid password for user: ${user.username}`)
-      console.log(`🔍 [AUTH-API] Password verification failed - checking password hash format`)
-
-      // Additional debugging for password issues
-      if (user.password) {
-        console.log(`🔍 [AUTH-API] Stored password hash starts with: ${user.password.substring(0, 10)}...`)
-        console.log(`🔍 [AUTH-API] Password hash length: ${user.password.length}`)
-        console.log(`🔍 [AUTH-API] Input password: ${body.password}`)
-      }
-
+      console.log("❌ [LOGIN-API] Password verification failed")
       return NextResponse.json(
         {
           success: false,
@@ -76,69 +62,66 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log(`✅ [AUTH-API] Password verified for user: ${user.username}`)
-
-    // Check if user is active
-    if (user.status !== "active") {
-      console.log(`❌ [AUTH-API] User account not active: ${user.status}`)
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Account inactive",
-          details: `Your account status is: ${user.status}`,
-        },
-        { status: 403 },
-      )
-    }
-
-    console.log(`🔄 [AUTH-API] Creating session for user: ${user.username}`)
+    console.log("✅ [LOGIN-API] Password verified successfully")
 
     // Create session
+    console.log("🎫 [LOGIN-API] Creating session...")
     const session = await createSession(user.id)
 
     if (!session) {
-      console.log(`❌ [AUTH-API] Failed to create session for user: ${user.username}`)
+      console.log("❌ [LOGIN-API] Session creation failed")
       return NextResponse.json(
         {
           success: false,
           error: "Session creation failed",
-          details: "Unable to create user session",
         },
         { status: 500 },
       )
     }
 
+    console.log("✅ [LOGIN-API] Session created successfully")
+
     // Set session cookie
-    cookies().set({
-      name: "session_token",
-      value: session.token,
+    const cookieStore = cookies()
+    cookieStore.set("session", session.token, {
       httpOnly: true,
-      path: "/",
-      expires: session.expires,
-      sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      expires: session.expires,
+      path: "/",
     })
 
-    console.log(`✅ [AUTH-API] Login successful for user: ${user.username}`)
+    console.log("🍪 [LOGIN-API] Session cookie set")
 
-    // Return user data (without password)
-    const { password, ...userData } = user
-
-    return NextResponse.json({
+    // Return success response
+    const response = {
       success: true,
       message: "Login successful",
-      data: {
-        user: userData,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        status: user.status,
+        is_verified: user.is_verified,
       },
-    })
+      session: {
+        token: session.token,
+        expires: session.expires,
+      },
+    }
+
+    console.log("✅ [LOGIN-API] Login completed successfully for user:", user.username)
+
+    return NextResponse.json(response)
   } catch (error) {
-    console.error("❌ [AUTH-API] Login error:", error)
+    console.error("❌ [LOGIN-API] Login error:", error)
 
     return NextResponse.json(
       {
         success: false,
         error: "Login failed",
-        details: error instanceof Error ? error.message : "An unexpected error occurred",
+        details: error instanceof Error ? error.message : "Unknown error occurred",
       },
       { status: 500 },
     )

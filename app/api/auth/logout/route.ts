@@ -1,50 +1,54 @@
-import { NextResponse } from "next/server"
+import { type NextRequest, NextResponse } from "next/server"
 import { deleteSessionByToken } from "@/lib/neon"
 import { cookies } from "next/headers"
 
-export async function POST() {
-  console.log("🔄 [AUTH-LOGOUT] Processing logout request...")
+export async function POST(request: NextRequest) {
+  console.log("🚪 [LOGOUT-API] Logout request received")
 
   try {
-    // Get session token from cookies
-    const sessionToken = cookies().get("session_token")?.value
+    // Get session token from cookie
+    const cookieStore = cookies()
+    const sessionToken = cookieStore.get("session")?.value
 
-    if (sessionToken) {
-      console.log(`🗑️ [AUTH-LOGOUT] Deleting session: ${sessionToken.substring(0, 10)}...`)
+    if (!sessionToken) {
+      console.log("ℹ️ [LOGOUT-API] No session token found, already logged out")
+      return NextResponse.json({
+        success: true,
+        message: "Already logged out",
+      })
+    }
 
-      // Delete session from database
-      await deleteSessionByToken(sessionToken)
+    console.log("🎫 [LOGOUT-API] Session token found:", sessionToken.substring(0, 10) + "...")
 
-      console.log("✅ [AUTH-LOGOUT] Session deleted from database")
+    // Delete session from database
+    const sessionDeleted = await deleteSessionByToken(sessionToken)
+
+    if (sessionDeleted) {
+      console.log("✅ [LOGOUT-API] Session deleted from database")
     } else {
-      console.log("ℹ️ [AUTH-LOGOUT] No session token found")
+      console.log("⚠️ [LOGOUT-API] Session not found in database (may have already expired)")
     }
 
     // Clear session cookie
-    cookies().set({
-      name: "session_token",
-      value: "",
-      httpOnly: true,
-      path: "/",
-      expires: new Date(0),
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-    })
-
-    console.log("✅ [AUTH-LOGOUT] Session cookie cleared")
+    cookieStore.delete("session")
+    console.log("🍪 [LOGOUT-API] Session cookie cleared")
 
     return NextResponse.json({
       success: true,
-      message: "Logged out successfully",
+      message: "Logout successful",
     })
   } catch (error) {
-    console.error("❌ [AUTH-LOGOUT] Logout error:", error)
+    console.error("❌ [LOGOUT-API] Logout error:", error)
+
+    // Even if there's an error, clear the cookie
+    const cookieStore = cookies()
+    cookieStore.delete("session")
 
     return NextResponse.json(
       {
         success: false,
         error: "Logout failed",
-        details: error instanceof Error ? error.message : "Unknown error",
+        details: error instanceof Error ? error.message : "Unknown error occurred",
       },
       { status: 500 },
     )

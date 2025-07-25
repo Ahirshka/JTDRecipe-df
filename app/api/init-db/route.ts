@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { initializeDatabase, createOwnerAccount, findUserByEmail } from "@/lib/neon"
+import { initializeDatabase, reinitializeDatabase, createOwnerAccount, findUserByEmail } from "@/lib/neon"
 import { sql } from "@/lib/neon"
 
 // GET - Check database status
@@ -21,7 +21,7 @@ export async function GET() {
     }
 
     // Check if owner account exists
-    const ownerUser = await findUserByEmail("aaronhirshka@gmail.com")
+    const ownerUser = await findUserByEmail("admin@recipesite.com")
 
     // Get counts
     const counts = { users: 0, recipes: 0 }
@@ -78,14 +78,23 @@ export async function GET() {
   }
 }
 
-// POST - Initialize database
-export async function POST() {
+// POST - Initialize or reinitialize database
+export async function POST(request: Request) {
   console.log("🔄 [INIT-DB] Starting database initialization...")
 
   try {
-    // Initialize database tables
-    console.log("📋 [INIT-DB] Creating database tables...")
-    const dbInitialized = await initializeDatabase()
+    const body = await request.json().catch(() => ({}))
+    const { reinitialize = false, ownerData } = body
+
+    let dbInitialized: boolean
+
+    if (reinitialize) {
+      console.log("🔄 [INIT-DB] Reinitializing database (dropping and recreating)...")
+      dbInitialized = await reinitializeDatabase()
+    } else {
+      console.log("📋 [INIT-DB] Creating database tables...")
+      dbInitialized = await initializeDatabase()
+    }
 
     if (!dbInitialized) {
       throw new Error("Database initialization failed")
@@ -93,9 +102,9 @@ export async function POST() {
 
     console.log("✅ [INIT-DB] Database tables created successfully")
 
-    // Create owner account
+    // Create owner account with custom data if provided
     console.log("👤 [INIT-DB] Creating owner account...")
-    const ownerResult = await createOwnerAccount()
+    const ownerResult = await createOwnerAccount(ownerData)
 
     if (!ownerResult.success) {
       throw new Error(ownerResult.error || "Owner account creation failed")
@@ -105,10 +114,12 @@ export async function POST() {
 
     return NextResponse.json({
       success: true,
-      message: "Database initialized successfully",
+      message: reinitialize ? "Database reinitialized successfully" : "Database initialized successfully",
       data: {
         database: "Neon PostgreSQL",
         owner: ownerResult.user,
+        credentials: ownerResult.credentials,
+        reinitialized: reinitialize,
       },
     })
   } catch (error) {

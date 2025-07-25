@@ -2,20 +2,25 @@ import { type NextRequest, NextResponse } from "next/server"
 import { createUser, findUserByEmail, findUserByUsername } from "@/lib/neon"
 
 export async function POST(request: NextRequest) {
-  console.log("🔄 [AUTH-REGISTER] Registration request received")
+  console.log("📝 [REGISTER-API] Registration request received")
 
   try {
-    // Parse request body
     const body = await request.json()
+    const { username, email, password, role = "user" } = body
 
-    // Validate required fields
-    if (!body.username || !body.email || !body.password) {
-      console.log("❌ [AUTH-REGISTER] Missing required fields")
+    console.log("👤 [REGISTER-API] Registration attempt:", {
+      username,
+      email,
+      role,
+    })
+
+    // Validate input
+    if (!username || !email || !password) {
+      console.log("❌ [REGISTER-API] Missing required fields")
       return NextResponse.json(
         {
           success: false,
-          error: "Missing required fields",
-          details: "Username, email, and password are required",
+          error: "Username, email, and password are required",
         },
         { status: 400 },
       )
@@ -23,97 +28,110 @@ export async function POST(request: NextRequest) {
 
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    if (!emailRegex.test(body.email)) {
-      console.log("❌ [AUTH-REGISTER] Invalid email format")
+    if (!emailRegex.test(email)) {
+      console.log("❌ [REGISTER-API] Invalid email format")
       return NextResponse.json(
         {
           success: false,
           error: "Invalid email format",
-          details: "Please provide a valid email address",
         },
         { status: 400 },
       )
     }
 
-    // Validate password strength
-    if (body.password.length < 6) {
-      console.log("❌ [AUTH-REGISTER] Password too short")
+    // Validate password length
+    if (password.length < 6) {
+      console.log("❌ [REGISTER-API] Password too short")
       return NextResponse.json(
         {
           success: false,
-          error: "Password too short",
-          details: "Password must be at least 6 characters long",
+          error: "Password must be at least 6 characters long",
         },
         { status: 400 },
       )
     }
 
-    console.log(`🔍 [AUTH-REGISTER] Checking for existing user: ${body.email}`)
-
     // Check if user already exists by email
-    const existingUserByEmail = await findUserByEmail(body.email)
+    console.log("🔍 [REGISTER-API] Checking if email already exists...")
+    const existingUserByEmail = await findUserByEmail(email)
+
     if (existingUserByEmail) {
-      console.log("❌ [AUTH-REGISTER] Email already registered")
+      console.log("❌ [REGISTER-API] Email already exists")
       return NextResponse.json(
         {
           success: false,
           error: "Email already registered",
-          details: "A user with this email already exists",
         },
         { status: 409 },
       )
     }
 
-    // Check if username already exists
-    const existingUserByUsername = await findUserByUsername(body.username)
+    // Check if user already exists by username
+    console.log("🔍 [REGISTER-API] Checking if username already exists...")
+    const existingUserByUsername = await findUserByUsername(username)
+
     if (existingUserByUsername) {
-      console.log("❌ [AUTH-REGISTER] Username already taken")
+      console.log("❌ [REGISTER-API] Username already exists")
       return NextResponse.json(
         {
           success: false,
           error: "Username already taken",
-          details: "This username is already in use",
         },
         { status: 409 },
       )
     }
 
-    console.log(`👤 [AUTH-REGISTER] Creating new user: ${body.username}`)
-
     // Create new user
+    console.log("👤 [REGISTER-API] Creating new user...")
     const newUser = await createUser({
-      username: body.username,
-      email: body.email,
-      password: body.password,
-      role: "user",
+      username,
+      email,
+      password,
+      role,
       status: "active",
       is_verified: false,
     })
 
     if (!newUser) {
-      throw new Error("Failed to create user")
+      console.log("❌ [REGISTER-API] User creation failed")
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Failed to create user",
+        },
+        { status: 500 },
+      )
     }
 
-    console.log(`✅ [AUTH-REGISTER] User created successfully: ${newUser.username}`)
+    console.log("✅ [REGISTER-API] User created successfully:", {
+      id: newUser.id,
+      username: newUser.username,
+      email: newUser.email,
+      role: newUser.role,
+    })
 
-    // Return user data (without password)
-    const { password, ...userData } = newUser
-
+    // Return success response (without password)
     return NextResponse.json({
       success: true,
       message: "User registered successfully",
-      data: {
-        user: userData,
+      user: {
+        id: newUser.id,
+        username: newUser.username,
+        email: newUser.email,
+        role: newUser.role,
+        status: newUser.status,
+        is_verified: newUser.is_verified,
+        created_at: newUser.created_at,
       },
     })
   } catch (error) {
-    console.error("❌ [AUTH-REGISTER] Registration error:", error)
+    console.error("❌ [REGISTER-API] Registration error:", error)
 
     return NextResponse.json(
       {
         success: false,
         error: "Registration failed",
-        details: error instanceof Error ? error.message : "Unknown error",
+        details: error instanceof Error ? error.message : "Unknown error occurred",
       },
       { status: 500 },
     )

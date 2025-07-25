@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -18,6 +20,8 @@ import {
   User,
   Mail,
   Calendar,
+  RotateCcw,
+  Key,
 } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 
@@ -62,6 +66,11 @@ interface InitResponse {
       email: string
       role: string
     }
+    credentials: {
+      email: string
+      password: string
+    }
+    reinitialized?: boolean
   }
   error?: string
   details?: string
@@ -73,6 +82,14 @@ export default function DatabaseSetupPage() {
   const [isInitializing, setIsInitializing] = useState(false)
   const [initResult, setInitResult] = useState<InitResponse | null>(null)
   const [rawResponse, setRawResponse] = useState("")
+
+  // Owner configuration form
+  const [ownerConfig, setOwnerConfig] = useState({
+    username: "admin",
+    email: "admin@recipesite.com",
+    password: "admin123",
+    role: "owner",
+  })
 
   // Check database status on component mount
   useEffect(() => {
@@ -104,16 +121,23 @@ export default function DatabaseSetupPage() {
     }
   }
 
-  const initializeDatabase = async () => {
+  const initializeDatabase = async (reinitialize = false) => {
     setIsInitializing(true)
     setInitResult(null)
     setRawResponse("")
 
     try {
-      console.log("🔄 [DB-SETUP] Initializing database...")
+      console.log(`🔄 [DB-SETUP] ${reinitialize ? "Reinitializing" : "Initializing"} database...`)
 
       const response = await fetch("/api/init-db", {
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          reinitialize,
+          ownerData: ownerConfig,
+        }),
       })
 
       const responseText = await response.text()
@@ -134,7 +158,7 @@ export default function DatabaseSetupPage() {
 
       if (result.success) {
         toast({
-          title: "Database initialized!",
+          title: reinitialize ? "Database reinitialized!" : "Database initialized!",
           description: "Database tables and owner account created successfully",
         })
 
@@ -179,9 +203,9 @@ export default function DatabaseSetupPage() {
       <div className="mb-6">
         <h1 className="text-3xl font-bold mb-2 flex items-center gap-2">
           <Database className="w-8 h-8 text-blue-600" />
-          Database Setup
+          Database Setup & Management
         </h1>
-        <p className="text-gray-600">Initialize database tables and create the owner account</p>
+        <p className="text-gray-600">Initialize database tables and configure the owner account</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -323,27 +347,73 @@ export default function DatabaseSetupPage() {
             </CardContent>
           </Card>
 
-          {/* Initialize Button */}
+          {/* Owner Configuration */}
           <Card>
             <CardHeader>
-              <CardTitle>Database Initialization</CardTitle>
-              <CardDescription>Create database tables and owner account</CardDescription>
+              <CardTitle>Owner Account Configuration</CardTitle>
+              <CardDescription>Configure the owner account credentials</CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="username">Username</Label>
+                  <Input
+                    id="username"
+                    value={ownerConfig.username}
+                    onChange={(e) => setOwnerConfig({ ...ownerConfig, username: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={ownerConfig.email}
+                    onChange={(e) => setOwnerConfig({ ...ownerConfig, email: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    value={ownerConfig.password}
+                    onChange={(e) => setOwnerConfig({ ...ownerConfig, password: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="role">Role</Label>
+                  <Input
+                    id="role"
+                    value={ownerConfig.role}
+                    onChange={(e) => setOwnerConfig({ ...ownerConfig, role: e.target.value })}
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Database Actions */}
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Database Actions</CardTitle>
+              <CardDescription>Initialize or reinitialize the database</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
               <Button
-                onClick={initializeDatabase}
-                disabled={isInitializing || (status?.data?.database_ready && status?.data?.owner.exists)}
+                onClick={() => initializeDatabase(false)}
+                disabled={isInitializing}
                 className="w-full"
+                variant="default"
               >
                 {isInitializing ? (
                   <>
                     <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                    Initializing Database...
-                  </>
-                ) : status?.data?.database_ready && status?.data?.owner.exists ? (
-                  <>
-                    <CheckCircle className="w-4 h-4 mr-2" />
-                    Database Already Initialized
+                    Initializing...
                   </>
                 ) : (
                   <>
@@ -353,28 +423,45 @@ export default function DatabaseSetupPage() {
                 )}
               </Button>
 
-              {status?.data?.database_ready && status?.data?.owner.exists && (
-                <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded">
-                  <p className="text-green-700 text-sm">
-                    ✅ Database is ready! You can now login with the owner credentials.
-                  </p>
-                </div>
-              )}
+              <Button
+                onClick={() => initializeDatabase(true)}
+                disabled={isInitializing}
+                className="w-full"
+                variant="destructive"
+              >
+                {isInitializing ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    Reinitializing...
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="w-4 h-4 mr-2" />
+                    Reinitialize Database (Drop & Recreate)
+                  </>
+                )}
+              </Button>
+
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  <strong>Reinitialize</strong> will drop all existing tables and data, then recreate them with the new
+                  owner configuration.
+                </AlertDescription>
+              </Alert>
             </CardContent>
           </Card>
-        </div>
 
-        {/* Initialization Results */}
-        <div className="space-y-6">
+          {/* Results */}
           <Card>
             <CardHeader>
-              <CardTitle>Initialization Results</CardTitle>
+              <CardTitle>Results</CardTitle>
             </CardHeader>
             <CardContent>
               {!initResult ? (
                 <div className="text-center py-8 text-gray-500">
                   <Settings className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>Click "Initialize Database" to begin setup</p>
+                  <p>No initialization performed yet</p>
                 </div>
               ) : (
                 <Tabs defaultValue="result" className="w-full">
@@ -392,7 +479,7 @@ export default function DatabaseSetupPage() {
                           <AlertCircle className="w-5 h-5 text-red-600" />
                         )}
                         <span className={`font-medium ${initResult.success ? "text-green-600" : "text-red-600"}`}>
-                          {initResult.success ? "Initialization Successful" : "Initialization Failed"}
+                          {initResult.success ? "Success" : "Failed"}
                         </span>
                       </div>
 
@@ -417,6 +504,37 @@ export default function DatabaseSetupPage() {
                         </Alert>
                       )}
 
+                      {initResult.data?.credentials && (
+                        <Card className="border-blue-300">
+                          <CardHeader className="bg-blue-50">
+                            <CardTitle className="text-blue-700 text-sm flex items-center gap-2">
+                              <Key className="w-4 h-4" />
+                              Owner Login Credentials
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent className="space-y-2">
+                            <div className="flex items-center gap-2 text-sm">
+                              <Mail className="w-3 h-3" />
+                              <span>
+                                Email:{" "}
+                                <code className="bg-gray-100 px-2 py-1 rounded">
+                                  {initResult.data.credentials.email}
+                                </code>
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-sm">
+                              <Key className="w-3 h-3" />
+                              <span>
+                                Password:{" "}
+                                <code className="bg-gray-100 px-2 py-1 rounded">
+                                  {initResult.data.credentials.password}
+                                </code>
+                              </span>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      )}
+
                       {initResult.data?.owner && (
                         <Card className="border-green-300">
                           <CardHeader className="bg-green-50">
@@ -435,6 +553,9 @@ export default function DatabaseSetupPage() {
                             <p>
                               <strong>Role:</strong> <Badge variant="default">{initResult.data.owner.role}</Badge>
                             </p>
+                            {initResult.data.reinitialized && (
+                              <p className="text-orange-600 font-medium">Database was reinitialized</p>
+                            )}
                           </CardContent>
                         </Card>
                       )}
@@ -454,28 +575,26 @@ export default function DatabaseSetupPage() {
             </CardContent>
           </Card>
 
-          {/* Owner Credentials */}
-          <Card className="border-blue-300">
-            <CardHeader className="bg-blue-50">
-              <CardTitle className="text-blue-700">Owner Login Credentials</CardTitle>
-              <CardDescription>Use these credentials to login after initialization</CardDescription>
+          {/* Quick Actions */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Quick Actions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Mail className="w-4 h-4 text-gray-500" />
-                <span className="font-medium">Email:</span>
-                <code className="bg-gray-100 px-2 py-1 rounded text-sm">aaronhirshka@gmail.com</code>
-              </div>
-              <div className="flex items-center gap-2">
-                <Settings className="w-4 h-4 text-gray-500" />
-                <span className="font-medium">Password:</span>
-                <code className="bg-gray-100 px-2 py-1 rounded text-sm">Morton2121</code>
-              </div>
-              <div className="flex items-center gap-2">
-                <User className="w-4 h-4 text-gray-500" />
-                <span className="font-medium">Role:</span>
-                <Badge variant="default">owner</Badge>
-              </div>
+              <Button variant="outline" size="sm" onClick={() => (window.location.href = "/login")} className="w-full">
+                Go to Login Page
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => (window.location.href = "/debug-owner-login")}
+                className="w-full"
+              >
+                Debug Owner Login
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => (window.location.href = "/admin")} className="w-full">
+                Admin Dashboard
+              </Button>
             </CardContent>
           </Card>
         </div>

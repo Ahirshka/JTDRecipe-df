@@ -66,6 +66,14 @@ export interface StackAuthConfig {
   serverUrl: string
 }
 
+// Owner configuration - can be updated
+export const OWNER_CONFIG = {
+  username: "admin",
+  email: "admin@recipesite.com",
+  password: "admin123",
+  role: "owner",
+}
+
 // Get Stack Auth configuration
 export function getStackAuthConfig(): StackAuthConfig {
   console.log("🔧 [NEON] Getting Stack Auth configuration")
@@ -77,133 +85,124 @@ export function getStackAuthConfig(): StackAuthConfig {
   }
 }
 
+// Drop all tables and recreate
+export async function reinitializeDatabase(): Promise<boolean> {
+  console.log("🔄 [NEON-DB] Reinitializing database (dropping and recreating tables)...")
+
+  try {
+    // Drop tables in correct order (due to foreign key constraints)
+    console.log("🗑️ [NEON-DB] Dropping existing tables...")
+
+    await sql`DROP TABLE IF EXISTS sessions CASCADE;`
+    await sql`DROP TABLE IF EXISTS recipes CASCADE;`
+    await sql`DROP TABLE IF EXISTS users CASCADE;`
+
+    // Drop functions and triggers
+    await sql`DROP FUNCTION IF EXISTS recipes_search_update() CASCADE;`
+
+    console.log("✅ [NEON-DB] All tables dropped successfully")
+
+    // Now create fresh tables
+    return await initializeDatabase()
+  } catch (error) {
+    console.error("❌ [NEON-DB] Database reinitialization error:", error)
+    throw error
+  }
+}
+
 // Initialize database tables
 export async function initializeDatabase(): Promise<boolean> {
   console.log("🔄 [NEON-DB] Initializing database tables...")
 
   try {
     // Create users table with proper field types
-    const usersTableCheck = await sql`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public'
-        AND table_name = 'users'
+    console.log("📋 [NEON-DB] Creating users table...")
+    await sql`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(50) NOT NULL UNIQUE,
+        email VARCHAR(255) NOT NULL UNIQUE,
+        password TEXT NOT NULL,
+        role VARCHAR(20) NOT NULL DEFAULT 'user',
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        is_verified BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW()
       );
     `
-    const usersTableExists = usersTableCheck[0].exists
-
-    if (!usersTableExists) {
-      await sql`
-        CREATE TABLE users (
-          id SERIAL PRIMARY KEY,
-          username VARCHAR(50) NOT NULL UNIQUE,
-          email VARCHAR(255) NOT NULL UNIQUE,
-          password TEXT NOT NULL,
-          role VARCHAR(20) NOT NULL DEFAULT 'user',
-          status VARCHAR(20) NOT NULL DEFAULT 'active',
-          is_verified BOOLEAN NOT NULL DEFAULT false,
-          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-        );
-      `
-      console.log("✅ [NEON-DB] Users table created")
-    } else {
-      console.log("✅ [NEON-DB] Users table already exists")
-    }
+    console.log("✅ [NEON-DB] Users table created")
 
     // Create sessions table
-    const sessionsTableCheck = await sql`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public'
-        AND table_name = 'sessions'
+    console.log("📋 [NEON-DB] Creating sessions table...")
+    await sql`
+      CREATE TABLE IF NOT EXISTS sessions (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token VARCHAR(255) NOT NULL UNIQUE,
+        expires TIMESTAMP NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
       );
     `
-    const sessionsTableExists = sessionsTableCheck[0].exists
-
-    if (!sessionsTableExists) {
-      await sql`
-        CREATE TABLE sessions (
-          id SERIAL PRIMARY KEY,
-          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          token VARCHAR(255) NOT NULL UNIQUE,
-          expires TIMESTAMP NOT NULL,
-          created_at TIMESTAMP NOT NULL DEFAULT NOW()
-        );
-      `
-      console.log("✅ [NEON-DB] Sessions table created")
-    } else {
-      console.log("✅ [NEON-DB] Sessions table already exists")
-    }
+    console.log("✅ [NEON-DB] Sessions table created")
 
     // Create recipes table
-    const recipesTableCheck = await sql`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public'
-        AND table_name = 'recipes'
+    console.log("📋 [NEON-DB] Creating recipes table...")
+    await sql`
+      CREATE TABLE IF NOT EXISTS recipes (
+        id VARCHAR(50) PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        author_username VARCHAR(50) NOT NULL,
+        category VARCHAR(50) NOT NULL,
+        difficulty VARCHAR(20) NOT NULL,
+        prep_time_minutes INTEGER NOT NULL,
+        cook_time_minutes INTEGER NOT NULL,
+        servings INTEGER NOT NULL,
+        image_url TEXT,
+        ingredients JSONB NOT NULL DEFAULT '[]'::jsonb,
+        instructions JSONB NOT NULL DEFAULT '[]'::jsonb,
+        tags JSONB DEFAULT '[]'::jsonb,
+        rating DECIMAL(3,2) DEFAULT 0,
+        review_count INTEGER DEFAULT 0,
+        view_count INTEGER DEFAULT 0,
+        moderation_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        moderation_notes TEXT,
+        is_published BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        search_vector TSVECTOR
       );
     `
-    const recipesTableExists = recipesTableCheck[0].exists
 
-    if (!recipesTableExists) {
-      await sql`
-        CREATE TABLE recipes (
-          id VARCHAR(50) PRIMARY KEY,
-          title VARCHAR(255) NOT NULL,
-          description TEXT,
-          author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          author_username VARCHAR(50) NOT NULL,
-          category VARCHAR(50) NOT NULL,
-          difficulty VARCHAR(20) NOT NULL,
-          prep_time_minutes INTEGER NOT NULL,
-          cook_time_minutes INTEGER NOT NULL,
-          servings INTEGER NOT NULL,
-          image_url TEXT,
-          ingredients JSONB NOT NULL DEFAULT '[]'::jsonb,
-          instructions JSONB NOT NULL DEFAULT '[]'::jsonb,
-          tags JSONB DEFAULT '[]'::jsonb,
-          rating DECIMAL(3,2) DEFAULT 0,
-          review_count INTEGER DEFAULT 0,
-          view_count INTEGER DEFAULT 0,
-          moderation_status VARCHAR(20) NOT NULL DEFAULT 'pending',
-          moderation_notes TEXT,
-          is_published BOOLEAN NOT NULL DEFAULT false,
-          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-          search_vector TSVECTOR
-        );
-      `
+    // Add search index
+    console.log("📋 [NEON-DB] Creating search index...")
+    await sql`
+      CREATE INDEX IF NOT EXISTS recipe_search_idx ON recipes USING GIN(search_vector);
+    `
 
-      // Add search index
-      await sql`
-        CREATE INDEX recipe_search_idx ON recipes USING GIN(search_vector);
-      `
+    // Add trigger to update search_vector
+    console.log("📋 [NEON-DB] Creating search trigger...")
+    await sql`
+      CREATE OR REPLACE FUNCTION recipes_search_update() RETURNS trigger AS $$
+      BEGIN
+        NEW.search_vector :=
+          setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
+          setweight(to_tsvector('english', coalesce(NEW.description, '')), 'B') ||
+          setweight(to_tsvector('english', coalesce(NEW.category, '')), 'C') ||
+          setweight(to_tsvector('english', coalesce(NEW.difficulty, '')), 'D');
+        RETURN NEW;
+      END
+      $$ LANGUAGE plpgsql;
+    `
 
-      // Add trigger to update search_vector
-      await sql`
-        CREATE OR REPLACE FUNCTION recipes_search_update() RETURNS trigger AS $$
-        BEGIN
-          NEW.search_vector :=
-            setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
-            setweight(to_tsvector('english', coalesce(NEW.description, '')), 'B') ||
-            setweight(to_tsvector('english', coalesce(NEW.category, '')), 'C') ||
-            setweight(to_tsvector('english', coalesce(NEW.difficulty, '')), 'D');
-          RETURN NEW;
-        END
-        $$ LANGUAGE plpgsql;
-      `
+    await sql`
+      CREATE TRIGGER recipes_search_update_trigger
+      BEFORE INSERT OR UPDATE ON recipes
+      FOR EACH ROW EXECUTE FUNCTION recipes_search_update();
+    `
 
-      await sql`
-        CREATE TRIGGER recipes_search_update_trigger
-        BEFORE INSERT OR UPDATE ON recipes
-        FOR EACH ROW EXECUTE FUNCTION recipes_search_update();
-      `
-
-      console.log("✅ [NEON-DB] Recipes table created with search functionality")
-    } else {
-      console.log("✅ [NEON-DB] Recipes table already exists")
-    }
+    console.log("✅ [NEON-DB] Recipes table created with search functionality")
 
     console.log("✅ [NEON-DB] Database tables initialized successfully")
     return true
@@ -213,26 +212,40 @@ export async function initializeDatabase(): Promise<boolean> {
   }
 }
 
-// Create owner account with correct credentials
-export async function createOwnerAccount() {
+// Create owner account with configurable credentials
+export async function createOwnerAccount(ownerData?: {
+  username?: string
+  email?: string
+  password?: string
+  role?: string
+}) {
   console.log("🔄 [NEON-DB] Creating owner account...")
 
   try {
-    // First, delete any existing owner account to ensure clean state
-    await sql`
-      DELETE FROM users WHERE email = 'aaronhirshka@gmail.com';
-    `
+    // Use provided data or defaults
+    const owner = {
+      username: ownerData?.username || OWNER_CONFIG.username,
+      email: ownerData?.email || OWNER_CONFIG.email,
+      password: ownerData?.password || OWNER_CONFIG.password,
+      role: ownerData?.role || OWNER_CONFIG.role,
+    }
+
+    console.log("👤 [NEON-DB] Owner account details:", {
+      username: owner.username,
+      email: owner.email,
+      role: owner.role,
+    })
+
+    // Delete any existing owner account to ensure clean state
+    await sql`DELETE FROM users WHERE email = ${owner.email} OR username = ${owner.username};`
     console.log("🗑️ [NEON-DB] Cleared any existing owner account")
 
-    // Hash the password with a high salt rounds for security
-    const plainPassword = "Morton2121"
-    console.log("🔐 [NEON-DB] Hashing password:", plainPassword)
+    // Hash the password with high salt rounds for security
+    console.log("🔐 [NEON-DB] Hashing password...")
+    const hashedPassword = await bcrypt.hash(owner.password, 12)
+    console.log("✅ [NEON-DB] Password hashed successfully")
 
-    const hashedPassword = await bcrypt.hash(plainPassword, 12)
-    console.log("✅ [NEON-DB] Password hashed successfully, length:", hashedPassword.length)
-    console.log("🔍 [NEON-DB] Hash starts with:", hashedPassword.substring(0, 10))
-
-    // Create owner account with correct credentials
+    // Create owner account
     const result = await sql`
       INSERT INTO users (
         username, 
@@ -243,10 +256,10 @@ export async function createOwnerAccount() {
         is_verified
       )
       VALUES (
-        'aaronhirshka', 
-        'aaronhirshka@gmail.com', 
+        ${owner.username}, 
+        ${owner.email}, 
         ${hashedPassword},
-        'owner', 
+        ${owner.role}, 
         'active', 
         true
       )
@@ -257,25 +270,33 @@ export async function createOwnerAccount() {
       throw new Error("Failed to insert owner account")
     }
 
-    const owner = result[0]
+    const createdOwner = result[0]
     console.log("✅ [NEON-DB] Owner account created successfully:", {
-      id: owner.id,
-      username: owner.username,
-      email: owner.email,
-      role: owner.role,
+      id: createdOwner.id,
+      username: createdOwner.username,
+      email: createdOwner.email,
+      role: createdOwner.role,
     })
 
-    // Verify the password was stored correctly by testing it
-    const testUser = await findUserByEmail("aaronhirshka@gmail.com")
+    // Verify the password was stored correctly
+    const testUser = await findUserByEmail(owner.email)
     if (testUser) {
-      const testVerify = await bcrypt.compare(plainPassword, testUser.password)
+      const testVerify = await bcrypt.compare(owner.password, testUser.password)
       console.log("🔍 [NEON-DB] Password verification test:", testVerify ? "PASSED" : "FAILED")
+
+      if (!testVerify) {
+        console.error("❌ [NEON-DB] Password verification failed immediately after creation!")
+      }
     }
 
     return {
       success: true,
       message: "Owner account created successfully",
-      user: owner,
+      user: createdOwner,
+      credentials: {
+        email: owner.email,
+        password: owner.password,
+      },
     }
   } catch (error) {
     console.error("❌ [NEON-DB] Create owner account error:", error)
@@ -440,8 +461,6 @@ export async function verifyUserPassword(user: any, password: string): Promise<b
       console.log(`✅ [NEON-DB] Password verified successfully for user: ${user.username}`)
     } else {
       console.log(`❌ [NEON-DB] Password verification failed for user: ${user.username}`)
-
-      // Additional debugging
       console.log(`🔍 [NEON-DB] bcrypt.compare("${password}", "${user.password.substring(0, 20)}...") = ${isValid}`)
     }
 
