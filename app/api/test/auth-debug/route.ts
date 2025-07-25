@@ -33,91 +33,76 @@ export async function GET(request: NextRequest) {
     const tokenDebug = {
       authToken: authToken ? authToken.substring(0, 20) + "..." : null,
       authTokenAlt: authTokenAlt ? authTokenAlt.substring(0, 20) + "..." : null,
-      sessionToken,
-      token,
+      sessionToken: sessionToken ? sessionToken.substring(0, 20) + "..." : null,
+      token: token ? token.substring(0, 20) + "..." : null,
     }
 
     console.log("🔍 [AUTH-DEBUG] Token debug:", tokenDebug)
 
     // Try to verify tokens
     const verificationResults: any = {}
-    const tokens = [
-      { name: "authToken", value: authToken },
-      { name: "authTokenAlt", value: authTokenAlt },
-      { name: "sessionToken", value: sessionToken },
-      { name: "token", value: token },
-    ]
+    const primaryToken = authToken || authTokenAlt
 
-    let currentUser = null
-
-    for (const { name, value } of tokens) {
-      if (value) {
-        try {
-          const decoded = verifyToken(value)
-          const key = value.substring(0, 10)
-          verificationResults[key] = {
-            valid: !!decoded,
-            userId: decoded?.id,
-            username: decoded?.username,
-            role: decoded?.role,
-          }
-
-          if (decoded && !currentUser) {
-            // Try to get user from database
-            try {
-              const dbUser = await findUserById(decoded.id)
-              if (dbUser) {
-                currentUser = {
-                  id: dbUser.id,
-                  username: dbUser.username,
-                  email: dbUser.email,
-                  role: dbUser.role,
-                  status: dbUser.status,
-                  is_verified: dbUser.is_verified,
-                }
-                console.log("✅ [AUTH-DEBUG] Found user in database:", currentUser)
-              }
-            } catch (dbError) {
-              console.error("❌ [AUTH-DEBUG] Database error:", dbError)
-            }
-          }
-        } catch (error) {
-          console.error(`❌ [AUTH-DEBUG] Error verifying ${name}:`, error)
-          const key = value.substring(0, 10)
-          verificationResults[key] = {
-            valid: false,
-            error: error instanceof Error ? error.message : "Unknown error",
-          }
+    if (primaryToken) {
+      try {
+        const decoded = verifyToken(primaryToken)
+        const tokenKey = primaryToken.substring(0, 10)
+        verificationResults[tokenKey] = {
+          valid: !!decoded,
+          userId: decoded?.id,
+          username: decoded?.username,
+          role: decoded?.role,
         }
+        console.log("✅ [AUTH-DEBUG] Token verification:", verificationResults[tokenKey])
+      } catch (error) {
+        console.error("❌ [AUTH-DEBUG] Token verification error:", error)
+        verificationResults.error = error instanceof Error ? error.message : "Unknown error"
       }
     }
 
-    console.log("🔍 [AUTH-DEBUG] Verification results:", verificationResults)
+    // Try to get user from database
+    let user = null
+    if (primaryToken) {
+      try {
+        const decoded = verifyToken(primaryToken)
+        if (decoded) {
+          user = await findUserById(decoded.id)
+          console.log("✅ [AUTH-DEBUG] User found:", user ? user.username : "Not found")
+        }
+      } catch (error) {
+        console.error("❌ [AUTH-DEBUG] Error getting user:", error)
+      }
+    }
 
     // Environment check
-    const environmentDebug = {
+    const envDebug = {
       NODE_ENV: process.env.NODE_ENV,
       JWT_SECRET: !!process.env.JWT_SECRET,
       DATABASE_URL: !!process.env.DATABASE_URL,
     }
 
-    console.log("🔍 [AUTH-DEBUG] Environment debug:", environmentDebug)
+    console.log("🔍 [AUTH-DEBUG] Environment debug:", envDebug)
 
-    const debugResponse = {
+    return NextResponse.json({
       success: true,
       debug: {
         cookies: cookieDebug,
         tokens: tokenDebug,
         verification: verificationResults,
-        user: currentUser,
-        environment: environmentDebug,
+        user: user
+          ? {
+              id: user.id,
+              username: user.username,
+              email: user.email,
+              role: user.role,
+              status: user.status,
+              is_verified: user.is_verified,
+            }
+          : null,
+        environment: envDebug,
       },
       timestamp: new Date().toISOString(),
-    }
-
-    console.log("✅ [AUTH-DEBUG] Debug complete")
-
-    return NextResponse.json(debugResponse)
+    })
   } catch (error) {
     console.error("❌ [AUTH-DEBUG] Error:", error)
     return NextResponse.json(

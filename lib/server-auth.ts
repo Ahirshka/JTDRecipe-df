@@ -3,13 +3,12 @@ import { type NextRequest, NextResponse } from "next/server"
 import { verifyToken } from "@/lib/auth"
 import { findUserById } from "@/lib/neon"
 
-// Get current user from request
 export async function getCurrentUser() {
   try {
     console.log("🔍 [SERVER-AUTH] Getting current user")
 
-    // Get cookies
-    const cookieStore = await cookies()
+    // Get cookies from the request
+    const cookieStore = cookies()
     const authToken = cookieStore.get("auth-token")?.value || cookieStore.get("auth_token")?.value
 
     if (!authToken) {
@@ -19,7 +18,7 @@ export async function getCurrentUser() {
 
     console.log("✅ [SERVER-AUTH] Found auth token")
 
-    // Verify token
+    // Verify the token
     const decoded = verifyToken(authToken)
     if (!decoded) {
       console.log("❌ [SERVER-AUTH] Token verification failed")
@@ -43,7 +42,6 @@ export async function getCurrentUser() {
   }
 }
 
-// Get current user from request object (for API routes)
 export async function getCurrentUserFromRequest(request: NextRequest) {
   try {
     console.log("🔍 [SERVER-AUTH] Getting current user from request")
@@ -58,7 +56,7 @@ export async function getCurrentUserFromRequest(request: NextRequest) {
 
     console.log("✅ [SERVER-AUTH] Found auth token in request")
 
-    // Verify token
+    // Verify the token
     const decoded = verifyToken(authToken)
     if (!decoded) {
       console.log("❌ [SERVER-AUTH] Token verification failed")
@@ -82,70 +80,69 @@ export async function getCurrentUserFromRequest(request: NextRequest) {
   }
 }
 
-// Set auth cookie - REQUIRED EXPORT
-export async function setAuthCookie(token: string) {
-  try {
-    console.log("🔍 [SERVER-AUTH] Setting auth cookie")
-    const cookieStore = await cookies()
+export function setAuthCookie(token: string): NextResponse {
+  const response = NextResponse.json({ success: true })
 
-    const cookieOptions = {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax" as const,
-      maxAge: 60 * 60 * 24 * 7, // 7 days
-      path: "/",
-    }
-
-    cookieStore.set("auth-token", token, cookieOptions)
-    cookieStore.set("auth_token", token, cookieOptions) // Alternative name for compatibility
-
-    console.log("✅ [SERVER-AUTH] Auth cookie set successfully")
-  } catch (error) {
-    console.error("❌ [SERVER-AUTH] Error setting auth cookie:", error)
-    throw error
-  }
-}
-
-// Clear auth cookie - REQUIRED EXPORT
-export async function clearAuthCookie() {
-  try {
-    console.log("🔍 [SERVER-AUTH] Clearing auth cookie")
-    const cookieStore = await cookies()
-
-    cookieStore.delete("auth-token")
-    cookieStore.delete("auth_token")
-
-    console.log("✅ [SERVER-AUTH] Auth cookie cleared successfully")
-  } catch (error) {
-    console.error("❌ [SERVER-AUTH] Error clearing auth cookie:", error)
-    throw error
-  }
-}
-
-// Create auth response with cookie
-export function createAuthResponse(data: any, token: string) {
-  const response = NextResponse.json(data)
-
-  const cookieOptions = {
+  // Set multiple cookie variations for compatibility
+  response.cookies.set("auth-token", token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "lax" as const,
+    sameSite: "lax",
     maxAge: 60 * 60 * 24 * 7, // 7 days
     path: "/",
-  }
+  })
 
-  response.cookies.set("auth-token", token, cookieOptions)
-  response.cookies.set("auth_token", token, cookieOptions)
+  response.cookies.set("auth_token", token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 60 * 60 * 24 * 7, // 7 days
+    path: "/",
+  })
 
   return response
 }
 
-// Create logout response
-export function createLogoutResponse(data: any) {
-  const response = NextResponse.json(data)
+export function clearAuthCookie(): NextResponse {
+  const response = NextResponse.json({ success: true })
 
-  response.cookies.delete("auth-token")
-  response.cookies.delete("auth_token")
+  // Clear both cookie variations
+  response.cookies.set("auth-token", "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 0,
+    path: "/",
+  })
+
+  response.cookies.set("auth_token", "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 0,
+    path: "/",
+  })
 
   return response
+}
+
+export async function requireAuth(request: NextRequest) {
+  const user = await getCurrentUserFromRequest(request)
+  if (!user) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 })
+  }
+  return user
+}
+
+export async function requireRole(request: NextRequest, allowedRoles: string[]) {
+  const user = await getCurrentUserFromRequest(request)
+  if (!user) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 })
+  }
+
+  if (!allowedRoles.includes(user.role)) {
+    return NextResponse.json({ error: "Insufficient permissions" }, { status: 403 })
+  }
+
+  return user
 }
