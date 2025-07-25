@@ -5,6 +5,7 @@ if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL environment variable is not set")
 }
 
+// REQUIRED EXPORT - sql client
 export const sql = neon(process.env.DATABASE_URL)
 
 export interface User {
@@ -23,32 +24,40 @@ export interface User {
   created_at: string
   updated_at: string
   last_login_at?: string
+  warning_count?: number
+  suspension_reason?: string
+  suspension_expires_at?: string
 }
 
 export interface Recipe {
   id: string
   title: string
-  description: string
+  description?: string
   author_id: number
+  author_username: string
   category: string
   difficulty: string
   prep_time_minutes: number
   cook_time_minutes: number
   servings: number
+  ingredients?: string[]
+  instructions?: string[]
   image_url?: string
-  rating: number
-  review_count: number
-  view_count: number
-  moderation_status: string
-  moderation_notes?: string
+  rating?: number
+  review_count?: number
+  view_count?: number
   is_published: boolean
+  moderation_status: "pending" | "approved" | "rejected"
+  moderation_notes?: string
+  moderated_by?: number
+  moderated_at?: string
   created_at: string
   updated_at: string
 }
 
 export interface Comment {
   id: number
-  recipe_id: number
+  recipe_id: string
   user_id: number
   username: string
   content: string
@@ -62,7 +71,7 @@ export interface Comment {
 
 export interface Rating {
   id: number
-  recipe_id: number
+  recipe_id: string
   user_id: number
   rating: number
   created_at: string
@@ -76,27 +85,14 @@ export interface Session {
   created_at: string
 }
 
-// Stack Auth configuration - REQUIRED EXPORT
-export function getStackAuthConfig() {
-  return {
-    projectId: process.env.STACK_PROJECT_ID,
-    clientKey: process.env.STACK_CLIENT_KEY,
-    serverKey: process.env.STACK_SERVER_KEY,
-    baseUrl: process.env.STACK_BASE_URL || process.env.STACK_API_URL,
-    jwksUrl: process.env.STACK_JWKS_URL,
-  }
-}
-
-// Mock data for when database is not available
+// Mock data for fallback
 const mockUsers = new Map<number, User>()
 const mockRecipes = new Map<string, Recipe>()
 const mockSessions = new Map<number, Session>()
-const mockComments = new Map<number, Comment>()
-const mockRatings = new Map<number, Rating>()
 
 // Initialize mock data
 const initializeMockData = async () => {
-  if (mockUsers.size > 0) return // Already initialized
+  if (mockUsers.size > 0) return
 
   const ownerPasswordHash = await bcrypt.hash("Morton2121", 12)
   const ownerUser: User = {
@@ -116,161 +112,56 @@ const initializeMockData = async () => {
     last_login_at: new Date().toISOString(),
   }
 
-  const adminPasswordHash = await bcrypt.hash("admin123", 12)
-  const adminUser: User = {
-    id: 2,
-    username: "Admin User",
-    email: "admin@justthedamnrecipe.net",
-    password_hash: adminPasswordHash,
-    role: "admin",
-    status: "active",
-    is_verified: true,
-    is_profile_verified: true,
-    bio: "",
-    location: "",
-    website: "",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    last_login_at: new Date().toISOString(),
-  }
-
   mockUsers.set(ownerUser.id, ownerUser)
-  mockUsers.set(adminUser.id, adminUser)
-
-  // Add sample recipes
-  const sampleRecipe: Recipe = {
-    id: "recipe_1",
-    title: "Perfect Scrambled Eggs",
-    description: "Creamy, fluffy scrambled eggs made the right way",
-    author_id: 1,
-    category: "Breakfast",
-    difficulty: "Easy",
-    prep_time_minutes: 2,
-    cook_time_minutes: 5,
-    servings: 2,
-    ingredients: ["3 large eggs", "2 tbsp butter", "2 tbsp heavy cream", "Salt and pepper to taste"],
-    instructions: [
-      "Crack eggs into bowl",
-      "Add cream and whisk",
-      "Heat butter in pan",
-      "Add eggs and stir constantly",
-      "Remove from heat when still slightly wet",
-    ],
-    rating: 4.8,
-    review_count: 24,
-    view_count: 156,
-    moderation_status: "approved",
-    is_published: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  }
-
-  mockRecipes.set(sampleRecipe.id, sampleRecipe)
-
-  // Add sample comments
-  const sampleComment: Comment = {
-    id: 1,
-    recipe_id: 1,
-    user_id: 1,
-    username: "Aaron Hirshka",
-    content: "Great recipe!",
-    status: "approved",
-    is_flagged: false,
-    created_at: new Date().toISOString(),
-  }
-
-  mockComments.set(sampleComment.id, sampleComment)
-
-  // Add sample ratings
-  const sampleRating: Rating = {
-    id: 1,
-    recipe_id: 1,
-    user_id: 1,
-    rating: 5,
-    created_at: new Date().toISOString(),
-  }
-
-  mockRatings.set(sampleRating.id, sampleRating)
 }
 
 // Initialize mock data
 initializeMockData()
 
-// Helper function to find user by ID
+// User functions
 export async function findUserById(id: number): Promise<User | null> {
   try {
-    const users = await sql`SELECT * FROM users WHERE id = ${id} LIMIT 1`
-    return users[0] || null
+    console.log(`🔍 Finding user by ID: ${id}`)
+    const result = await sql`SELECT * FROM users WHERE id = ${id} LIMIT 1`
+
+    if (result.length === 0) {
+      console.log(`❌ User not found with ID: ${id}`)
+      return mockUsers.get(id) || null
+    }
+
+    console.log(`✅ Found user: ${result[0].username}`)
+    return result[0] as User
   } catch (error) {
-    console.error("Error finding user by ID:", error)
-    return null
+    console.error(`❌ Error finding user by ID ${id}:`, error)
+    return mockUsers.get(id) || null
   }
 }
 
-// Helper function to find user by email
 export async function findUserByEmail(email: string): Promise<User | null> {
   try {
-    const users = await sql`SELECT * FROM users WHERE email = ${email} LIMIT 1`
-    return users[0] || null
+    console.log(`🔍 Finding user by email: ${email}`)
+    const result = await sql`SELECT * FROM users WHERE email = ${email} LIMIT 1`
+
+    if (result.length === 0) {
+      console.log(`❌ User not found with email: ${email}`)
+      // Check mock data
+      for (const user of mockUsers.values()) {
+        if (user.email === email) {
+          return user
+        }
+      }
+      return null
+    }
+
+    console.log(`✅ Found user: ${result[0].username}`)
+    return result[0] as User
   } catch (error) {
-    console.error("Error finding user by email:", error)
-    return null
-  }
-}
-
-// Get all users - REQUIRED EXPORT
-export async function getAllUsers(): Promise<User[]> {
-  try {
-    const users = await sql`SELECT * FROM users ORDER BY created_at DESC`
-    return users as User[]
-  } catch (error) {
-    console.error("Error getting all users:", error)
-    return Array.from(mockUsers.values())
-  }
-}
-
-// Update user by ID - REQUIRED EXPORT
-export async function updateUserById(id: number, updates: Partial<User>): Promise<User | null> {
-  try {
-    const setClause = Object.keys(updates)
-      .map((key, index) => `${key} = $${index + 2}`)
-      .join(", ")
-
-    const values = [id, ...Object.values(updates)]
-
-    const result = await sql`
-      UPDATE users SET ${sql.unsafe(setClause)}, updated_at = NOW() WHERE id = $1 RETURNING *
-    `.apply(null, values)
-
-    return (result[0] as User) || null
-  } catch (error) {
-    console.error("Error updating user by ID:", error)
-    return null
-  }
-}
-
-// Update user - REQUIRED EXPORT
-export async function updateUser(id: number, updates: Partial<User>): Promise<User | null> {
-  try {
-    const setClause = Object.keys(updates)
-      .map((key, index) => `${key} = $${index + 2}`)
-      .join(", ")
-
-    const values = [id, ...Object.values(updates)]
-
-    const result = await sql`
-      UPDATE users SET ${sql.unsafe(setClause)}, updated_at = NOW() WHERE id = $1 RETURNING *
-    `.apply(null, values)
-
-    return (result[0] as User) || null
-  } catch (error) {
-    console.error("Error updating user:", error)
-    // Update mock data as fallback
-    const user = mockUsers.get(id)
-    if (user) {
-      const updatedUser = { ...user, ...updates, updated_at: new Date().toISOString() }
-      mockUsers.set(id, updatedUser)
-      return updatedUser
+    console.error(`❌ Error finding user by email ${email}:`, error)
+    // Check mock data as fallback
+    for (const user of mockUsers.values()) {
+      if (user.email === email) {
+        return user
+      }
     }
     return null
   }
@@ -281,17 +172,117 @@ export async function createUser(userData: {
   email: string
   password_hash: string
   role?: string
+  is_verified?: boolean
+  is_profile_verified?: boolean
 }): Promise<User> {
   try {
-    const users = await sql`
-      INSERT INTO users (username, email, password_hash, role, created_at, updated_at)
-      VALUES (${userData.username}, ${userData.email}, ${userData.password_hash}, ${userData.role || "user"}, NOW(), NOW())
+    console.log(`🔄 Creating new user: ${userData.username} (${userData.email})`)
+
+    const result = await sql`
+      INSERT INTO users (
+        username, 
+        email, 
+        password_hash, 
+        role, 
+        status, 
+        is_verified, 
+        is_profile_verified, 
+        created_at, 
+        updated_at
+      )
+      VALUES (
+        ${userData.username},
+        ${userData.email},
+        ${userData.password_hash},
+        ${userData.role || "user"},
+        ${"active"},
+        ${userData.is_verified || false},
+        ${userData.is_profile_verified || false},
+        NOW(),
+        NOW()
+      )
       RETURNING *
     `
-    return users[0]
+
+    console.log(`✅ User created: ${result[0].id}`)
+    return result[0] as User
   } catch (error) {
-    console.error("Error creating user:", error)
-    throw error
+    console.error(`❌ Error creating user:`, error)
+    throw new Error("Failed to create user")
+  }
+}
+
+// REQUIRED EXPORT - Update user
+export async function updateUser(userId: number, updates: Partial<User>): Promise<User | null> {
+  try {
+    console.log(`🔄 Updating user ${userId} with:`, updates)
+
+    // Build the SET clause dynamically
+    const setClauses = []
+    const values = []
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (value !== undefined && key !== "id") {
+        setClauses.push(`${key} = $${setClauses.length + 2}`)
+        values.push(value)
+      }
+    }
+
+    if (setClauses.length === 0) {
+      console.log(`⚠️ No valid updates provided for user ${userId}`)
+      return await findUserById(userId)
+    }
+
+    // Always update the updated_at timestamp
+    setClauses.push(`updated_at = NOW()`)
+
+    const query = `
+      UPDATE users 
+      SET ${setClauses.join(", ")} 
+      WHERE id = $1
+      RETURNING *
+    `
+
+    const result = await sql.unsafe(query, [userId, ...values])
+
+    if (result.length === 0) {
+      console.log(`❌ User not found for update: ${userId}`)
+      return null
+    }
+
+    console.log(`✅ User updated: ${userId}`)
+    return result[0] as User
+  } catch (error) {
+    console.error(`❌ Error updating user ${userId}:`, error)
+    // Update mock data as fallback
+    const user = mockUsers.get(userId)
+    if (user) {
+      const updatedUser = { ...user, ...updates, updated_at: new Date().toISOString() }
+      mockUsers.set(userId, updatedUser)
+      return updatedUser
+    }
+    return null
+  }
+}
+
+export async function updateUserById(userId: number, updates: Partial<User>): Promise<User | null> {
+  return updateUser(userId, updates)
+}
+
+export async function getAllUsers(): Promise<User[]> {
+  try {
+    console.log(`🔍 Getting all users`)
+
+    const result = await sql`
+      SELECT * FROM users
+      ORDER BY created_at DESC
+    `
+
+    console.log(`✅ Found ${result.length} users`)
+    return result as User[]
+  } catch (error) {
+    console.error(`❌ Error getting all users:`, error)
+    return Array.from(mockUsers.values())
   }
 }
 
@@ -302,24 +293,39 @@ export async function updateUserLoginTime(userId: number): Promise<void> {
       SET last_login_at = NOW(), updated_at = NOW()
       WHERE id = ${userId}
     `
+    console.log(`✅ Updated login time for user ${userId}`)
   } catch (error) {
-    console.error("Error updating user login time:", error)
+    console.error(`❌ Error updating user login time for ${userId}:`, error)
   }
 }
 
+// Session management
 export async function createSession(userId: number, token: string): Promise<Session> {
   try {
+    console.log(`🔄 Creating session for user ${userId}`)
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
 
     const result = await sql`
-      INSERT INTO user_sessions (user_id, token, expires_at, created_at)
-      VALUES (${userId}, ${token}, ${expiresAt.toISOString()}, NOW())
+      INSERT INTO user_sessions (
+        user_id,
+        token,
+        expires_at,
+        created_at
+      )
+      VALUES (
+        ${userId},
+        ${token},
+        ${expiresAt.toISOString()},
+        NOW()
+      )
       RETURNING *
     `
+
+    console.log(`✅ Session created for user ${userId}`)
     return result[0] as Session
   } catch (error) {
-    console.error("Error creating session:", error)
-    // Create mock session
+    console.error(`❌ Error creating session for user ${userId}:`, error)
+    // Create mock session as fallback
     const session: Session = {
       id: Date.now(),
       user_id: userId,
@@ -335,13 +341,26 @@ export async function createSession(userId: number, token: string): Promise<Sess
 export async function findSessionByToken(token: string): Promise<Session | null> {
   try {
     const result = await sql`
-      SELECT * FROM user_sessions WHERE token = ${token} AND expires_at > NOW() LIMIT 1
+      SELECT * FROM user_sessions 
+      WHERE token = ${token} AND expires_at > NOW() 
+      LIMIT 1
     `
-    return (result[0] as Session) || null
+
+    if (result.length === 0) {
+      // Check mock sessions
+      for (const session of mockSessions.values()) {
+        if (session.token === token && new Date(session.expires_at) > new Date()) {
+          return session
+        }
+      }
+      return null
+    }
+
+    return result[0] as Session
   } catch (error) {
-    console.error("Error finding session:", error)
-    // Check mock sessions
-    for (const [id, session] of mockSessions.entries()) {
+    console.error(`❌ Error finding session:`, error)
+    // Check mock sessions as fallback
+    for (const session of mockSessions.values()) {
       if (session.token === token && new Date(session.expires_at) > new Date()) {
         return session
       }
@@ -350,65 +369,103 @@ export async function findSessionByToken(token: string): Promise<Session | null>
   }
 }
 
-export async function deleteSession(token: string) {
+export async function deleteSession(token: string): Promise<void> {
   try {
-    await sql`DELETE FROM user_sessions WHERE token = ${token}`
-    return true
+    console.log(`🔄 Deleting session`)
+
+    await sql`
+      DELETE FROM user_sessions
+      WHERE token = ${token}
+    `
+
+    console.log(`✅ Session deleted`)
   } catch (error) {
-    console.error("Error deleting session:", error)
-    // Delete from mock sessions
+    console.error(`❌ Error deleting session:`, error)
+    // Delete from mock sessions as fallback
     for (const [id, session] of mockSessions.entries()) {
       if (session.token === token) {
         mockSessions.delete(id)
         break
       }
     }
-    return false
   }
 }
 
-export async function initializeOwnerAccount() {
-  try {
-    const ownerEmail = "aaronhirshka@gmail.com"
-    const existingOwner = await findUserByEmail(ownerEmail)
-
-    if (!existingOwner) {
-      const passwordHash = await bcrypt.hash("Morton2121", 12)
-
-      await createUser({
-        username: "Aaron Hirshka",
-        email: ownerEmail,
-        password_hash: passwordHash,
-        role: "owner",
-      })
-
-      console.log("Owner account created successfully for Aaron Hirshka")
-    } else {
-      console.log("Owner account already exists for Aaron Hirshka")
-    }
-  } catch (error) {
-    console.error("Error initializing owner account:", error)
-  }
-}
-
-// Helper function to get all recipes
+// Recipe functions
 export async function getAllRecipes(): Promise<Recipe[]> {
   try {
-    const recipes = await sql`
-      SELECT * FROM recipes 
-      WHERE moderation_status = 'approved' AND is_published = true
-      ORDER BY created_at DESC
+    console.log(`🔍 Getting all approved recipes`)
+
+    const result = await sql`
+      SELECT 
+        r.*,
+        u.username as author_username
+      FROM recipes r
+      JOIN users u ON r.author_id = u.id
+      WHERE r.moderation_status = 'approved' AND r.is_published = true
+      ORDER BY r.created_at DESC
     `
-    return recipes
+
+    console.log(`✅ Found ${result.length} approved recipes`)
+    return result as Recipe[]
   } catch (error) {
-    console.error("Error getting all recipes:", error)
+    console.error(`❌ Error getting all recipes:`, error)
     return Array.from(mockRecipes.values()).filter((r) => r.moderation_status === "approved")
+  }
+}
+
+export async function getPendingRecipes(): Promise<Recipe[]> {
+  try {
+    console.log(`🔍 Getting pending recipes`)
+
+    const result = await sql`
+      SELECT 
+        r.*,
+        u.username as author_username
+      FROM recipes r
+      JOIN users u ON r.author_id = u.id
+      WHERE r.moderation_status = 'pending'
+      ORDER BY r.created_at DESC
+    `
+
+    console.log(`✅ Found ${result.length} pending recipes`)
+    return result as Recipe[]
+  } catch (error) {
+    console.error(`❌ Error getting pending recipes:`, error)
+    return Array.from(mockRecipes.values()).filter((r) => r.moderation_status === "pending")
+  }
+}
+
+export async function getRecipeById(id: string): Promise<Recipe | null> {
+  try {
+    console.log(`🔍 Finding recipe by ID: ${id}`)
+
+    const result = await sql`
+      SELECT 
+        r.*,
+        u.username as author_username
+      FROM recipes r
+      JOIN users u ON r.author_id = u.id
+      WHERE r.id = ${id}
+      LIMIT 1
+    `
+
+    if (result.length === 0) {
+      console.log(`❌ Recipe not found with ID: ${id}`)
+      return mockRecipes.get(id) || null
+    }
+
+    console.log(`✅ Found recipe: ${result[0].title}`)
+    return result[0] as Recipe
+  } catch (error) {
+    console.error(`❌ Error finding recipe by ID ${id}:`, error)
+    return mockRecipes.get(id) || null
   }
 }
 
 export async function createRecipe(recipeData: {
   title: string
-  description: string
+  description?: string
   author_id: number
   author_username: string
   category: string
@@ -416,68 +473,97 @@ export async function createRecipe(recipeData: {
   prep_time_minutes: number
   cook_time_minutes: number
   servings: number
-  ingredients: any[]
-  instructions: any[]
-  image_url?: string
+  ingredients: string[]
+  instructions: string[]
+  image_url?: string | null
 }): Promise<Recipe> {
   try {
-    const recipeId = `recipe_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    console.log(`🔄 Creating new recipe: ${recipeData.title}`)
 
-    const recipes = await sql`
+    // Generate a unique ID
+    const recipeId = `recipe_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+
+    // Insert the main recipe record
+    const result = await sql`
       INSERT INTO recipes (
-        id, title, description, author_id, category, difficulty,
-        prep_time_minutes, cook_time_minutes, servings, image_url,
-        moderation_status, is_published, created_at, updated_at
-      ) VALUES (
-        ${recipeId}, ${recipeData.title}, ${recipeData.description}, ${recipeData.author_id},
-        ${recipeData.category}, ${recipeData.difficulty}, ${recipeData.prep_time_minutes},
-        ${recipeData.cook_time_minutes}, ${recipeData.servings}, ${recipeData.image_url || null},
-        'pending', false, NOW(), NOW()
+        id,
+        title,
+        description,
+        author_id,
+        category,
+        difficulty,
+        prep_time_minutes,
+        cook_time_minutes,
+        servings,
+        image_url,
+        moderation_status,
+        is_published,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        ${recipeId},
+        ${recipeData.title},
+        ${recipeData.description || ""},
+        ${recipeData.author_id},
+        ${recipeData.category},
+        ${recipeData.difficulty},
+        ${recipeData.prep_time_minutes},
+        ${recipeData.cook_time_minutes},
+        ${recipeData.servings},
+        ${recipeData.image_url || null},
+        ${"pending"},
+        ${false},
+        NOW(),
+        NOW()
       )
       RETURNING *
     `
 
-    return recipes[0]
-  } catch (error) {
-    console.error("Error creating recipe:", error)
-    throw error
-  }
-}
+    const recipe = result[0] as Recipe
 
-export async function getPendingRecipes(): Promise<Recipe[]> {
-  try {
-    const result = await sql`
-      SELECT * FROM recipes 
-      WHERE moderation_status = 'pending' 
-      ORDER BY created_at DESC
-    `
-
-    return result
+    console.log(`✅ Recipe created: ${recipeId}`)
+    return {
+      ...recipe,
+      author_username: recipeData.author_username,
+      ingredients: recipeData.ingredients,
+      instructions: recipeData.instructions,
+    }
   } catch (error) {
-    console.error("Error getting pending recipes:", error)
-    return Array.from(mockRecipes.values()).filter((r) => r.moderation_status === "pending")
+    console.error(`❌ Error creating recipe:`, error)
+    throw new Error(`Failed to create recipe: ${error instanceof Error ? error.message : "Unknown error"}`)
   }
 }
 
 export async function moderateRecipe(
-  id: string,
-  action: "approve" | "reject",
+  recipeId: string,
+  status: "approved" | "rejected",
   moderatorId: number,
 ): Promise<Recipe | null> {
   try {
-    const status = action === "approve" ? "approved" : "rejected"
-    const isPublished = action === "approve"
+    console.log(`🔄 Moderating recipe ${recipeId} as ${status}`)
 
     const result = await sql`
-      UPDATE recipes 
-      SET moderation_status = ${status}, is_published = ${isPublished}, moderated_by = ${moderatorId}, moderated_at = NOW()
-      WHERE id = ${id}
+      UPDATE recipes
+      SET 
+        moderation_status = ${status},
+        is_published = ${status === "approved"},
+        moderated_by = ${moderatorId},
+        moderated_at = NOW(),
+        updated_at = NOW()
+      WHERE id = ${recipeId}
       RETURNING *
     `
 
-    return (result[0] as Recipe) || null
+    if (result.length === 0) {
+      console.log(`❌ Recipe not found for moderation: ${recipeId}`)
+      return null
+    }
+
+    console.log(`✅ Recipe moderated: ${recipeId} (${status})`)
+    return result[0] as Recipe
   } catch (error) {
-    console.error("Error moderating recipe:", error)
+    console.error(`❌ Error moderating recipe ${recipeId}:`, error)
     return null
   }
 }
@@ -501,7 +587,33 @@ export async function getAdminStats() {
   }
 }
 
-// Helper function to initialize database
+export async function initializeOwnerAccount() {
+  try {
+    const ownerEmail = "aaronhirshka@gmail.com"
+    const existingOwner = await findUserByEmail(ownerEmail)
+
+    if (!existingOwner) {
+      const passwordHash = await bcrypt.hash("Morton2121", 12)
+
+      await createUser({
+        username: "Aaron Hirshka",
+        email: ownerEmail,
+        password_hash: passwordHash,
+        role: "owner",
+        is_verified: true,
+        is_profile_verified: true,
+      })
+
+      console.log("✅ Owner account created successfully for Aaron Hirshka")
+    } else {
+      console.log("✅ Owner account already exists for Aaron Hirshka")
+    }
+  } catch (error) {
+    console.error("❌ Error initializing owner account:", error)
+  }
+}
+
+// Initialize database
 export async function initializeDatabase(): Promise<void> {
   try {
     console.log("🔄 Initializing database...")
@@ -521,6 +633,9 @@ export async function initializeDatabase(): Promise<void> {
         bio TEXT,
         location VARCHAR(100),
         website VARCHAR(255),
+        warning_count INTEGER DEFAULT 0,
+        suspension_reason TEXT,
+        suspension_expires_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW(),
         last_login_at TIMESTAMP
@@ -564,48 +679,6 @@ export async function initializeDatabase(): Promise<void> {
       )
     `
 
-    // Create comments table if it doesn't exist
-    await sql`
-      CREATE TABLE IF NOT EXISTS comments (
-        id SERIAL PRIMARY KEY,
-        recipe_id INTEGER REFERENCES recipes(id) ON DELETE CASCADE,
-        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        username VARCHAR(255) NOT NULL,
-        content TEXT NOT NULL,
-        status VARCHAR(50) DEFAULT 'approved',
-        is_flagged BOOLEAN DEFAULT false,
-        flagged_reason TEXT,
-        flagged_by INTEGER REFERENCES users(id),
-        flagged_at TIMESTAMP,
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `
-
-    // Create ratings table if it doesn't exist
-    await sql`
-      CREATE TABLE IF NOT EXISTS ratings (
-        id SERIAL PRIMARY KEY,
-        recipe_id INTEGER REFERENCES recipes(id) ON DELETE CASCADE,
-        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
-        created_at TIMESTAMP DEFAULT NOW(),
-        UNIQUE(recipe_id, user_id)
-      )
-    `
-
-    // Create email_tokens table if it doesn't exist
-    await sql`
-      CREATE TABLE IF NOT EXISTS email_tokens (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        token VARCHAR(255) UNIQUE NOT NULL,
-        token_type VARCHAR(50) NOT NULL,
-        expires_at TIMESTAMP NOT NULL,
-        used BOOLEAN DEFAULT false,
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `
-
     // Initialize owner account
     await initializeOwnerAccount()
 
@@ -616,10 +689,19 @@ export async function initializeDatabase(): Promise<void> {
   }
 }
 
+// Stack Auth Config - REQUIRED EXPORT
+export function getStackAuthConfig() {
+  return {
+    projectId: process.env.STACK_PROJECT_ID,
+    clientKey: process.env.STACK_CLIENT_KEY,
+    serverKey: process.env.STACK_SERVER_KEY,
+    baseUrl: process.env.STACK_BASE_URL || process.env.STACK_API_URL,
+    jwksUrl: process.env.STACK_JWKS_URL,
+  }
+}
+
 export const mockDatabase = {
   users: mockUsers,
   recipes: mockRecipes,
   sessions: mockSessions,
-  comments: mockComments,
-  ratings: mockRatings,
 }

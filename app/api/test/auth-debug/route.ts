@@ -1,23 +1,31 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { getCurrentUser } from "@/lib/server-auth"
 import { verifyToken } from "@/lib/auth"
+import { cookies } from "next/headers"
 
 export async function GET(request: NextRequest) {
   try {
     console.log("🔍 [AUTH-DEBUG] Starting authentication debug")
 
-    // Get all cookies
-    const cookies = request.cookies.getAll()
+    // Get all cookies from both sources
+    const requestCookies = request.cookies.getAll()
+    const serverCookies = cookies().getAll()
+
     console.log(
-      "🔍 [AUTH-DEBUG] All cookies:",
-      cookies.map((c) => ({ name: c.name, hasValue: !!c.value })),
+      "🔍 [AUTH-DEBUG] Request cookies:",
+      requestCookies.map((c) => ({ name: c.name, hasValue: !!c.value })),
+    )
+
+    console.log(
+      "🔍 [AUTH-DEBUG] Server cookies:",
+      serverCookies.map((c) => ({ name: c.name, hasValue: !!c.value })),
     )
 
     // Check for auth tokens
-    const authToken = request.cookies.get("auth-token")?.value
-    const authTokenAlt = request.cookies.get("auth_token")?.value
-    const sessionToken = request.cookies.get("session")?.value
-    const token = request.cookies.get("token")?.value
+    const authToken = request.cookies.get("auth-token")?.value || cookies().get("auth-token")?.value
+    const authTokenAlt = request.cookies.get("auth_token")?.value || cookies().get("auth_token")?.value
+    const sessionToken = request.cookies.get("session")?.value || cookies().get("session")?.value
+    const token = request.cookies.get("token")?.value || cookies().get("token")?.value
 
     const debugInfo = {
       cookies: {
@@ -25,7 +33,8 @@ export async function GET(request: NextRequest) {
         auth_token: !!authTokenAlt,
         session: !!sessionToken,
         token: !!token,
-        total: cookies.length,
+        requestTotal: requestCookies.length,
+        serverTotal: serverCookies.length,
       },
       tokens: {
         authToken: authToken ? authToken.substring(0, 20) + "..." : null,

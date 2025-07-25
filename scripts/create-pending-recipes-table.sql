@@ -1,123 +1,115 @@
--- Create pending recipes system if it doesn't exist
--- This script ensures all necessary tables and columns exist for recipe moderation
+-- Check if recipes table exists
+CREATE TABLE IF NOT EXISTS recipes (
+  id VARCHAR(255) PRIMARY KEY,
+  title VARCHAR(255) NOT NULL,
+  description TEXT,
+  author_id INTEGER NOT NULL,
+  category VARCHAR(100) NOT NULL,
+  difficulty VARCHAR(50) NOT NULL,
+  prep_time_minutes INTEGER DEFAULT 0,
+  cook_time_minutes INTEGER DEFAULT 0,
+  servings INTEGER DEFAULT 1,
+  image_url TEXT,
+  rating DECIMAL(3,2) DEFAULT 0,
+  review_count INTEGER DEFAULT 0,
+  view_count INTEGER DEFAULT 0,
+  is_published BOOLEAN DEFAULT FALSE,
+  moderation_status VARCHAR(50) DEFAULT 'pending',
+  moderated_by INTEGER,
+  moderated_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (moderated_by) REFERENCES users(id) ON DELETE SET NULL
+);
 
--- First, ensure the recipes table has the necessary columns for moderation
-DO $$ 
-BEGIN
-    -- Add moderation_status column if it doesn't exist
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                   WHERE table_name = 'recipes' AND column_name = 'moderation_status') THEN
-        ALTER TABLE recipes ADD COLUMN moderation_status VARCHAR(20) DEFAULT 'pending';
-    END IF;
-    
-    -- Add is_published column if it doesn't exist
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                   WHERE table_name = 'recipes' AND column_name = 'is_published') THEN
-        ALTER TABLE recipes ADD COLUMN is_published BOOLEAN DEFAULT false;
-    END IF;
-    
-    -- Add moderated_by column if it doesn't exist
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                   WHERE table_name = 'recipes' AND column_name = 'moderated_by') THEN
-        ALTER TABLE recipes ADD COLUMN moderated_by INTEGER REFERENCES users(id);
-    END IF;
-    
-    -- Add moderated_at column if it doesn't exist
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                   WHERE table_name = 'recipes' AND column_name = 'moderated_at') THEN
-        ALTER TABLE recipes ADD COLUMN moderated_at TIMESTAMP;
-    END IF;
-    
-    -- Add moderation_notes column if it doesn't exist
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                   WHERE table_name = 'recipes' AND column_name = 'moderation_notes') THEN
-        ALTER TABLE recipes ADD COLUMN moderation_notes TEXT;
-    END IF;
-END $$;
-
--- Create recipe_ingredients table if it doesn't exist
+-- Create recipe ingredients table if it doesn't exist
 CREATE TABLE IF NOT EXISTS recipe_ingredients (
-    id SERIAL PRIMARY KEY,
-    recipe_id VARCHAR(255) NOT NULL,
-    ingredient TEXT NOT NULL,
-    amount VARCHAR(100),
-    unit VARCHAR(50),
-    created_at TIMESTAMP DEFAULT NOW(),
-    FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+  id SERIAL PRIMARY KEY,
+  recipe_id VARCHAR(255) NOT NULL,
+  ingredient TEXT NOT NULL,
+  amount VARCHAR(100),
+  unit VARCHAR(50),
+  step_number INTEGER,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
 );
 
--- Create recipe_instructions table if it doesn't exist
+-- Create recipe instructions table if it doesn't exist
 CREATE TABLE IF NOT EXISTS recipe_instructions (
-    id SERIAL PRIMARY KEY,
-    recipe_id VARCHAR(255) NOT NULL,
-    instruction TEXT NOT NULL,
-    step_number INTEGER NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW(),
-    FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+  id SERIAL PRIMARY KEY,
+  recipe_id VARCHAR(255) NOT NULL,
+  instruction TEXT NOT NULL,
+  step_number INTEGER NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
 );
 
--- Create recipe_tags table if it doesn't exist
+-- Create recipe tags table if it doesn't exist
 CREATE TABLE IF NOT EXISTS recipe_tags (
-    id SERIAL PRIMARY KEY,
-    recipe_id VARCHAR(255) NOT NULL,
-    tag VARCHAR(100) NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW(),
-    FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+  id SERIAL PRIMARY KEY,
+  recipe_id VARCHAR(255) NOT NULL,
+  tag VARCHAR(100) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+);
+
+-- Create recipe ratings table if it doesn't exist
+CREATE TABLE IF NOT EXISTS recipe_ratings (
+  id SERIAL PRIMARY KEY,
+  recipe_id VARCHAR(255) NOT NULL,
+  user_id INTEGER NOT NULL,
+  rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  comment TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE (recipe_id, user_id)
+);
+
+-- Create recipe views table if it doesn't exist
+CREATE TABLE IF NOT EXISTS recipe_views (
+  id SERIAL PRIMARY KEY,
+  recipe_id VARCHAR(255) NOT NULL,
+  user_id INTEGER,
+  ip_address VARCHAR(50),
+  viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Create recipe favorites table if it doesn't exist
+CREATE TABLE IF NOT EXISTS recipe_favorites (
+  id SERIAL PRIMARY KEY,
+  recipe_id VARCHAR(255) NOT NULL,
+  user_id INTEGER NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE (recipe_id, user_id)
+);
+
+-- Create recipe moderation history table if it doesn't exist
+CREATE TABLE IF NOT EXISTS recipe_moderation_history (
+  id SERIAL PRIMARY KEY,
+  recipe_id VARCHAR(255) NOT NULL,
+  moderator_id INTEGER NOT NULL,
+  action VARCHAR(50) NOT NULL,
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+  FOREIGN KEY (moderator_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- Create indexes for better performance
-CREATE INDEX IF NOT EXISTS idx_recipes_moderation_status ON recipes(moderation_status);
 CREATE INDEX IF NOT EXISTS idx_recipes_author_id ON recipes(author_id);
-CREATE INDEX IF NOT EXISTS idx_recipes_is_published ON recipes(is_published);
+CREATE INDEX IF NOT EXISTS idx_recipes_moderation_status ON recipes(moderation_status);
 CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe_id ON recipe_ingredients(recipe_id);
 CREATE INDEX IF NOT EXISTS idx_recipe_instructions_recipe_id ON recipe_instructions(recipe_id);
 CREATE INDEX IF NOT EXISTS idx_recipe_tags_recipe_id ON recipe_tags(recipe_id);
-
--- Update existing recipes to have pending status if they don't have one
-UPDATE recipes SET moderation_status = 'pending' WHERE moderation_status IS NULL;
-
--- Create a view for pending recipes for admin use
-CREATE OR REPLACE VIEW pending_recipes_view AS
-SELECT 
-    r.*,
-    u.username as author_username,
-    u.email as author_email,
-    COALESCE(
-        json_agg(
-            DISTINCT jsonb_build_object(
-                'ingredient', ri.ingredient,
-                'amount', ri.amount,
-                'unit', ri.unit
-            )
-        ) FILTER (WHERE ri.ingredient IS NOT NULL), 
-        '[]'::json
-    ) as ingredients,
-    COALESCE(
-        json_agg(
-            DISTINCT jsonb_build_object(
-                'instruction', inst.instruction,
-                'step_number', inst.step_number
-            )
-            ORDER BY inst.step_number
-        ) FILTER (WHERE inst.instruction IS NOT NULL), 
-        '[]'::json
-    ) as instructions,
-    COALESCE(
-        array_agg(DISTINCT rt.tag) FILTER (WHERE rt.tag IS NOT NULL), 
-        ARRAY[]::text[]
-    ) as tags
-FROM recipes r
-JOIN users u ON r.author_id = u.id
-LEFT JOIN recipe_ingredients ri ON r.id = ri.recipe_id
-LEFT JOIN recipe_instructions inst ON r.id = inst.recipe_id
-LEFT JOIN recipe_tags rt ON r.id = rt.recipe_id
-WHERE r.moderation_status = 'pending'
-GROUP BY r.id, u.username, u.email
-ORDER BY r.created_at DESC;
-
--- Grant necessary permissions
-GRANT SELECT, INSERT, UPDATE, DELETE ON recipes TO PUBLIC;
-GRANT SELECT, INSERT, UPDATE, DELETE ON recipe_ingredients TO PUBLIC;
-GRANT SELECT, INSERT, UPDATE, DELETE ON recipe_instructions TO PUBLIC;
-GRANT SELECT, INSERT, UPDATE, DELETE ON recipe_tags TO PUBLIC;
-GRANT SELECT ON pending_recipes_view TO PUBLIC;
+CREATE INDEX IF NOT EXISTS idx_recipe_ratings_recipe_id ON recipe_ratings(recipe_id);
+CREATE INDEX IF NOT EXISTS idx_recipe_ratings_user_id ON recipe_ratings(user_id);
+CREATE INDEX IF NOT EXISTS idx_recipe_views_recipe_id ON recipe_views(recipe_id);
+CREATE INDEX IF NOT EXISTS idx_recipe_favorites_recipe_id ON recipe_favorites(recipe_id);
+CREATE INDEX IF NOT EXISTS idx_recipe_favorites_user_id ON recipe_favorites(user_id);

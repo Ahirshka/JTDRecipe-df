@@ -1,10 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { getCurrentUser } from "@/lib/server-auth"
-import { createRecipe, getAllRecipes } from "@/lib/neon"
+import { createRecipe, getAllRecipes, initializeDatabase } from "@/lib/neon"
 
 export async function GET() {
   try {
     console.log("🔍 [RECIPES-GET] Fetching all recipes")
+    await initializeDatabase()
 
     const recipes = await getAllRecipes()
 
@@ -23,6 +24,14 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     console.log("🔍 [RECIPES-POST] Processing recipe submission")
+    await initializeDatabase()
+
+    // Debug: Log request headers and cookies
+    console.log("📋 [RECIPES-POST] Request headers:", Object.fromEntries(request.headers.entries()))
+    console.log(
+      "🍪 [RECIPES-POST] Request cookies:",
+      request.cookies.getAll().map((c) => ({ name: c.name, hasValue: !!c.value })),
+    )
 
     // Get current user
     const user = await getCurrentUser()
@@ -31,9 +40,12 @@ export async function POST(request: NextRequest) {
       console.log("❌ [RECIPES-POST] No authenticated user found")
       return NextResponse.json(
         {
-          error: "Authentication required",
-          message: "Please log in to submit recipes",
-          debug: "No user found in getCurrentUser()",
+          success: false,
+          error: "Authentication required. Please log in to submit recipes.",
+          debug: {
+            cookiesReceived: request.cookies.getAll().length,
+            timestamp: new Date().toISOString(),
+          },
         },
         { status: 401 },
       )
@@ -49,56 +61,77 @@ export async function POST(request: NextRequest) {
 
     if (user.status !== "active") {
       console.log("❌ [RECIPES-POST] User account not active:", user.status)
-      return NextResponse.json({ error: "Account not active" }, { status: 403 })
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Your account is not active. Please contact support.",
+        },
+        { status: 403 },
+      )
     }
 
+    // Parse request body
     const body = await request.json()
-    console.log("🔍 [RECIPES-POST] Request body received:", Object.keys(body))
-
-    const {
-      title,
-      description,
-      category,
-      difficulty,
-      prepTime,
-      cookTime,
-      servings,
-      ingredients,
-      instructions,
-      imageUrl,
-    } = body
+    console.log("📝 [RECIPES-POST] Request body received:", {
+      title: body.title,
+      category: body.category,
+      difficulty: body.difficulty,
+      hasIngredients: !!body.ingredients,
+      hasInstructions: !!body.instructions,
+    })
 
     // Validate required fields
-    if (!title || !category || !difficulty || !ingredients || !instructions) {
-      console.log("❌ [RECIPES-POST] Missing required fields")
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
+    const requiredFields = ["title", "category", "difficulty", "ingredients", "instructions"]
+    for (const field of requiredFields) {
+      if (!body[field]) {
+        console.log(`❌ [RECIPES-POST] Missing required field: ${field}`)
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Missing required field: ${field}`,
+          },
+          { status: 400 },
+        )
+      }
     }
 
     // Process ingredients and instructions
-    let processedIngredients: string[]
-    let processedInstructions: string[]
+    let processedIngredients: string[] = []
+    let processedInstructions: string[] = []
 
     try {
       // Handle ingredients - can be string or array
-      if (typeof ingredients === "string") {
-        processedIngredients = ingredients
+      if (typeof body.ingredients === "string") {
+        processedIngredients = body.ingredients
           .split("\n")
-          .map((item) => item.trim())
-          .filter((item) => item.length > 0)
-      } else if (Array.isArray(ingredients)) {
-        processedIngredients = ingredients.filter((item) => item && item.trim().length > 0)
+          .map((item: string) => item.trim())
+          .filter((item: string) => item.length > 0)
+      } else if (Array.isArray(body.ingredients)) {
+        processedIngredients = body.ingredients
+          .map((item: any) => {
+            if (typeof item === "string") return item.trim()
+            if (typeof item === "object" && item.ingredient) return item.ingredient.trim()
+            return null
+          })
+          .filter(Boolean)
       } else {
         throw new Error("Invalid ingredients format")
       }
 
       // Handle instructions - can be string or array
-      if (typeof instructions === "string") {
-        processedInstructions = instructions
+      if (typeof body.instructions === "string") {
+        processedInstructions = body.instructions
           .split("\n")
-          .map((item) => item.trim())
-          .filter((item) => item.length > 0)
-      } else if (Array.isArray(instructions)) {
-        processedInstructions = instructions.filter((item) => item && item.trim().length > 0)
+          .map((item: string) => item.trim())
+          .filter((item: string) => item.length > 0)
+      } else if (Array.isArray(body.instructions)) {
+        processedInstructions = body.instructions
+          .map((item: any) => {
+            if (typeof item === "string") return item.trim()
+            if (typeof item === "object" && item.instruction) return item.instruction.trim()
+            return null
+          })
+          .filter(Boolean)
       } else {
         throw new Error("Invalid instructions format")
       }
@@ -107,23 +140,50 @@ export async function POST(request: NextRequest) {
       console.log("✅ [RECIPES-POST] Processed instructions:", processedInstructions.length)
     } catch (error) {
       console.error("❌ [RECIPES-POST] Error processing ingredients/instructions:", error)
-      return NextResponse.json({ error: "Invalid ingredients or instructions format" }, { status: 400 })
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid ingredients or instructions format",
+        },
+        { status: 400 },
+      )
+    }
+
+    // Validate arrays
+    if (processedIngredients.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "At least one ingredient is required",
+        },
+        { status: 400 },
+      )
+    }
+
+    if (processedInstructions.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "At least one instruction is required",
+        },
+        { status: 400 },
+      )
     }
 
     // Create recipe data
     const recipeData = {
-      title: title.trim(),
-      description: description?.trim() || "",
+      title: body.title.trim(),
+      description: body.description?.trim() || "",
       author_id: user.id,
       author_username: user.username,
-      category: category.trim(),
-      difficulty: difficulty.trim(),
-      prep_time_minutes: Number.parseInt(prepTime) || 0,
-      cook_time_minutes: Number.parseInt(cookTime) || 0,
-      servings: Number.parseInt(servings) || 1,
+      category: body.category.trim(),
+      difficulty: body.difficulty.trim(),
+      prep_time_minutes: Number(body.prep_time_minutes || body.prepTime) || 0,
+      cook_time_minutes: Number(body.cook_time_minutes || body.cookTime) || 0,
+      servings: Number(body.servings) || 1,
       ingredients: processedIngredients,
       instructions: processedInstructions,
-      image_url: imageUrl?.trim() || null,
+      image_url: body.image_url || body.imageUrl || null,
     }
 
     console.log("🔍 [RECIPES-POST] Creating recipe with data:", {
@@ -154,6 +214,7 @@ export async function POST(request: NextRequest) {
     console.error("❌ [RECIPES-POST] Error creating recipe:", error)
     return NextResponse.json(
       {
+        success: false,
         error: "Failed to create recipe",
         message: "An error occurred while submitting your recipe",
         debug: error instanceof Error ? error.message : "Unknown error",
