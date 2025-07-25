@@ -1,21 +1,21 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { cookies } from "next/headers"
 import { deleteUserSession } from "@/lib/neon"
+import { cookies } from "next/headers"
 
 export async function POST(request: NextRequest) {
-  try {
-    console.log("🔄 [AUTH-LOGOUT] Starting logout process")
+  console.log("🔄 [AUTH-LOGOUT] Logout request received")
 
+  try {
     const cookieStore = cookies()
     const token = cookieStore.get("auth-token")?.value
 
     if (token) {
       // Delete session from database
       await deleteUserSession(token)
-      console.log("✅ [AUTH-LOGOUT] Session deleted from database")
+      console.log("✅ [AUTH-LOGOUT] Database session deleted")
     }
 
-    // Clear cookie
+    // Clear the cookie
     cookieStore.set("auth-token", "", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
       path: "/",
     })
 
-    console.log("✅ [AUTH-LOGOUT] Logout successful")
+    console.log("✅ [AUTH-LOGOUT] Logout completed successfully")
 
     return NextResponse.json({
       success: true,
@@ -32,6 +32,14 @@ export async function POST(request: NextRequest) {
     })
   } catch (error) {
     console.error("❌ [AUTH-LOGOUT] Logout error:", error)
-    return NextResponse.json({ success: false, error: "Logout failed" }, { status: 500 })
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Logout failed",
+        details: error instanceof Error ? error.message : "An unexpected error occurred",
+      },
+      { status: 500 },
+    )
   }
 }

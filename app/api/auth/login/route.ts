@@ -1,54 +1,91 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { findUserByEmail, verifyUserPassword, createSession } from "@/lib/neon"
+import { sign } from "jsonwebtoken"
 import { cookies } from "next/headers"
-import jwt from "jsonwebtoken"
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
+const JWT_SECRET = process.env.JWT_SECRET || "fallback-secret-key"
 
 export async function POST(request: NextRequest) {
-  try {
-    console.log("🔄 [AUTH-LOGIN] Starting login process")
+  console.log("🔄 [AUTH-LOGIN] Login request received")
 
+  try {
     const body = await request.json()
     const { email, password } = body
 
+    console.log("📝 [AUTH-LOGIN] Login attempt for email:", email)
+
     // Validation
     if (!email || !password) {
-      console.log("❌ [AUTH-LOGIN] Missing email or password")
-      return NextResponse.json({ success: false, error: "Email and password are required" }, { status: 400 })
+      console.log("❌ [AUTH-LOGIN] Missing credentials")
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Missing credentials",
+          details: "Email and password are required",
+        },
+        { status: 400 },
+      )
     }
 
     // Find user
-    const user = await findUserByEmail(email)
+    const user = await findUserByEmail(email.trim().toLowerCase())
     if (!user) {
-      console.log("❌ [AUTH-LOGIN] User not found:", email)
-      return NextResponse.json({ success: false, error: "Invalid email or password" }, { status: 401 })
+      console.log("❌ [AUTH-LOGIN] User not found")
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid credentials",
+          details: "Email or password is incorrect",
+        },
+        { status: 401 },
+      )
     }
 
     // Verify password
-    const isValidPassword = await verifyUserPassword(user, password)
-    if (!isValidPassword) {
-      console.log("❌ [AUTH-LOGIN] Invalid password for user:", email)
-      return NextResponse.json({ success: false, error: "Invalid email or password" }, { status: 401 })
+    const isPasswordValid = await verifyUserPassword(user, password)
+    if (!isPasswordValid) {
+      console.log("❌ [AUTH-LOGIN] Invalid password")
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid credentials",
+          details: "Email or password is incorrect",
+        },
+        { status: 401 },
+      )
     }
 
-    // Check if user is active
+    // Check account status
     if (user.status !== "active") {
-      console.log("❌ [AUTH-LOGIN] User account not active:", email)
-      return NextResponse.json({ success: false, error: "Account is not active" }, { status: 401 })
+      console.log("❌ [AUTH-LOGIN] Account not active:", user.status)
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Account not active",
+          details: `Your account status is: ${user.status}`,
+        },
+        { status: 403 },
+      )
     }
 
     console.log("✅ [AUTH-LOGIN] User authenticated:", user.username)
 
-    // Create session token
-    const token = jwt.sign({ userId: user.id, username: user.username, role: user.role }, JWT_SECRET, {
-      expiresIn: "7d",
-    })
+    // Create JWT token
+    const token = sign(
+      {
+        userId: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+      },
+      JWT_SECRET,
+      { expiresIn: "7d" },
+    )
 
-    // Create session in database
+    // Create database session
     await createSession(user.id, token)
 
-    // Set cookie
+    // Set HTTP-only cookie
     const cookieStore = cookies()
     cookieStore.set("auth-token", token, {
       httpOnly: true,
@@ -58,7 +95,7 @@ export async function POST(request: NextRequest) {
       path: "/",
     })
 
-    console.log("✅ [AUTH-LOGIN] Login successful")
+    console.log("✅ [AUTH-LOGIN] Login completed successfully")
 
     return NextResponse.json({
       success: true,
@@ -68,10 +105,20 @@ export async function POST(request: NextRequest) {
         username: user.username,
         email: user.email,
         role: user.role,
+        status: user.status,
+        is_verified: user.is_verified,
       },
     })
   } catch (error) {
     console.error("❌ [AUTH-LOGIN] Login error:", error)
-    return NextResponse.json({ success: false, error: "Login failed" }, { status: 500 })
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Login failed",
+        details: error instanceof Error ? error.message : "An unexpected error occurred",
+      },
+      { status: 500 },
+    )
   }
 }

@@ -1,55 +1,52 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { initializeDatabase, findUserByEmail, createUser } from "@/lib/neon"
+import { initializeDatabase, createUser, findUserByEmail } from "@/lib/neon"
 
 export async function POST(request: NextRequest) {
-  try {
-    console.log("🔄 [INIT-DB] Starting database initialization")
+  console.log("🔄 [INIT-DB] Database initialization request received")
 
+  try {
     // Initialize database tables
+    console.log("📋 [INIT-DB] Creating database tables...")
     await initializeDatabase()
-    console.log("✅ [INIT-DB] Database tables created")
 
     // Check if owner account already exists
-    const ownerEmail = "aaronhirshka@gmail.com"
-    const ownerPassword = "Morton2121"
+    const existingOwner = await findUserByEmail("aaronhirshka@gmail.com")
 
-    let ownerExists = false
-    let ownerCreated = false
-    let owner = await findUserByEmail(ownerEmail)
-
-    if (owner) {
+    if (existingOwner) {
       console.log("✅ [INIT-DB] Owner account already exists")
-      ownerExists = true
-    } else {
-      console.log("🔄 [INIT-DB] Creating owner account")
-
-      // Create owner account
-      owner = await createUser({
-        username: "owner",
-        email: ownerEmail,
-        password: ownerPassword,
-        role: "admin",
-        status: "active",
+      return NextResponse.json({
+        success: true,
+        message: "Database initialized successfully",
+        details: "Owner account already exists",
+        owner: {
+          email: "aaronhirshka@gmail.com",
+          username: existingOwner.username,
+          role: existingOwner.role,
+        },
       })
-
-      console.log("✅ [INIT-DB] Owner account created:", owner.id)
-      ownerCreated = true
     }
+
+    // Create owner account
+    console.log("👤 [INIT-DB] Creating owner account...")
+    const owner = await createUser({
+      username: "aaron_owner",
+      email: "aaronhirshka@gmail.com",
+      password: "Morton2121",
+      role: "admin",
+      status: "active",
+    })
+
+    console.log("✅ [INIT-DB] Database initialization completed successfully")
 
     return NextResponse.json({
       success: true,
       message: "Database initialized successfully",
-      ownerExists,
-      ownerCreated,
-      credentials: {
-        email: ownerEmail,
-        password: ownerPassword,
-      },
+      details: "All tables created and owner account set up",
       owner: {
-        id: owner.id,
+        email: "aaronhirshka@gmail.com",
         username: owner.username,
-        email: owner.email,
         role: owner.role,
+        id: owner.id,
       },
     })
   } catch (error) {
@@ -58,9 +55,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        message: "Database initialization failed",
-        error: error instanceof Error ? error.message : "Unknown error",
-        details: error instanceof Error ? error.stack : "No details available",
+        error: "Database initialization failed",
+        details: error instanceof Error ? error.message : "An unexpected error occurred",
       },
       { status: 500 },
     )

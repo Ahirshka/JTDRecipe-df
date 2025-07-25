@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ChefHat, Plus, Minus, AlertCircle, CheckCircle, RefreshCw, Send, Eye, EyeOff } from "lucide-react"
+import { ChefHat, Plus, AlertCircle, CheckCircle, RefreshCw, Send, Eye, EyeOff, X } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 
 interface ApiResponse {
@@ -42,14 +42,15 @@ export default function TestRecipeSubmission() {
   const [cookTime, setCookTime] = useState("30")
   const [servings, setServings] = useState("4")
   const [imageUrl, setImageUrl] = useState("")
+
+  // Single-line format arrays with '+' button functionality
   const [ingredients, setIngredients] = useState<string[]>(["2 cups flour", "1 cup sugar", "3 eggs"])
   const [instructions, setInstructions] = useState<string[]>([
-    "Mix dry ingredients",
-    "Add wet ingredients",
-    "Bake for 30 minutes",
+    "Mix dry ingredients in a large bowl",
+    "Add wet ingredients and stir until combined",
+    "Bake for 30 minutes at 350°F",
   ])
   const [tags, setTags] = useState<string[]>(["test", "debug"])
-  const [newTag, setNewTag] = useState("")
 
   // UI state
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -90,7 +91,6 @@ export default function TestRecipeSubmission() {
         return
       }
 
-      // Get response as text first to check for valid JSON
       const responseText = await response.text()
 
       try {
@@ -118,12 +118,15 @@ export default function TestRecipeSubmission() {
     }
   }
 
+  // Ingredient management functions
   const addIngredient = () => {
     setIngredients([...ingredients, ""])
   }
 
   const removeIngredient = (index: number) => {
-    setIngredients(ingredients.filter((_, i) => i !== index))
+    if (ingredients.length > 1) {
+      setIngredients(ingredients.filter((_, i) => i !== index))
+    }
   }
 
   const updateIngredient = (index: number, value: string) => {
@@ -132,12 +135,15 @@ export default function TestRecipeSubmission() {
     setIngredients(updated)
   }
 
+  // Instruction management functions
   const addInstruction = () => {
     setInstructions([...instructions, ""])
   }
 
   const removeInstruction = (index: number) => {
-    setInstructions(instructions.filter((_, i) => i !== index))
+    if (instructions.length > 1) {
+      setInstructions(instructions.filter((_, i) => i !== index))
+    }
   }
 
   const updateInstruction = (index: number, value: string) => {
@@ -146,10 +152,10 @@ export default function TestRecipeSubmission() {
     setInstructions(updated)
   }
 
-  const addTag = () => {
-    if (newTag.trim() && !tags.includes(newTag.trim())) {
-      setTags([...tags, newTag.trim()])
-      setNewTag("")
+  // Tag management functions
+  const addTag = (tagValue: string) => {
+    if (tagValue.trim() && !tags.includes(tagValue.trim())) {
+      setTags([...tags, tagValue.trim()])
     }
   }
 
@@ -173,21 +179,46 @@ export default function TestRecipeSubmission() {
     setLastResponse(null)
     setRawResponse("")
 
+    // Clean and validate arrays
+    const cleanIngredients = ingredients.filter((ing) => ing.trim()).map((ing) => ing.trim())
+    const cleanInstructions = instructions.filter((inst) => inst.trim()).map((inst) => inst.trim())
+    const cleanTags = tags.filter((tag) => tag.trim()).map((tag) => tag.trim())
+
+    if (cleanIngredients.length === 0) {
+      toast({
+        title: "Validation Error",
+        description: "At least one ingredient is required",
+        variant: "destructive",
+      })
+      setIsSubmitting(false)
+      return
+    }
+
+    if (cleanInstructions.length === 0) {
+      toast({
+        title: "Validation Error",
+        description: "At least one instruction is required",
+        variant: "destructive",
+      })
+      setIsSubmitting(false)
+      return
+    }
+
     const requestData = {
-      title,
-      description,
+      title: title.trim(),
+      description: description.trim(),
       category,
       difficulty,
       prep_time_minutes: Number.parseInt(prepTime) || 15,
       cook_time_minutes: Number.parseInt(cookTime) || 30,
       servings: Number.parseInt(servings) || 4,
-      image_url: imageUrl || undefined,
-      ingredients: ingredients.filter((ing) => ing.trim()),
-      instructions: instructions.filter((inst) => inst.trim()),
-      tags,
+      image_url: imageUrl.trim() || undefined,
+      ingredients: cleanIngredients, // Array of strings
+      instructions: cleanInstructions, // Array of strings
+      tags: cleanTags, // Array of strings
     }
 
-    console.log("🔄 [TEST-FORM] Submitting recipe:", requestData)
+    console.log("🔄 [TEST-FORM] Submitting recipe with JSONB arrays:", requestData)
     setLastRequest(requestData)
 
     try {
@@ -198,12 +229,11 @@ export default function TestRecipeSubmission() {
           "Cache-Control": "no-cache",
         },
         credentials: "include",
-        body: JSON.stringify(requestData),
+        body: JSON.stringify(requestData), // Proper JSON stringification
       })
 
       console.log("🔄 [TEST-FORM] Response status:", response.status)
 
-      // Get raw response text first
       let responseText
       try {
         responseText = await response.text()
@@ -217,7 +247,6 @@ export default function TestRecipeSubmission() {
         throw textError
       }
 
-      // Try to parse as JSON
       let responseData: ApiResponse
       try {
         responseData = JSON.parse(responseText)
@@ -280,9 +309,9 @@ export default function TestRecipeSubmission() {
       <div className="mb-6">
         <h1 className="text-3xl font-bold mb-2 flex items-center gap-2">
           <ChefHat className="w-8 h-8 text-orange-600" />
-          Test Recipe Submission
+          Test Recipe Submission (JSONB Arrays)
         </h1>
-        <p className="text-gray-600">Debug and test the recipe submission API with detailed logging</p>
+        <p className="text-gray-600">Debug and test the recipe submission API with proper JSONB array handling</p>
       </div>
 
       {/* Authentication Status */}
@@ -348,9 +377,11 @@ export default function TestRecipeSubmission() {
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Recipe Form</CardTitle>
+              <CardTitle>Recipe Form (Single-Line Format)</CardTitle>
               <CardDescription>
-                {isFormDisabled ? "Form disabled - authentication required" : "Fill out the recipe details"}
+                {isFormDisabled
+                  ? "Form disabled - authentication required"
+                  : "Fill out the recipe details with '+' buttons for arrays"}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -454,22 +485,27 @@ export default function TestRecipeSubmission() {
                 />
               </div>
 
-              {/* Ingredients */}
+              {/* Ingredients - Single Line Format */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <Label>Ingredients *</Label>
+                  <Label>Ingredients * ({ingredients.length})</Label>
                   <Button type="button" variant="outline" size="sm" onClick={addIngredient} disabled={isFormDisabled}>
-                    <Plus className="w-4 h-4" />
+                    <Plus className="w-4 h-4 mr-1" />
+                    Add Ingredient
                   </Button>
                 </div>
                 <div className="space-y-2">
                   {ingredients.map((ingredient, index) => (
-                    <div key={index} className="flex gap-2">
+                    <div key={index} className="flex gap-2 items-center">
+                      <div className="flex-shrink-0 w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center text-sm font-medium text-orange-600">
+                        {index + 1}
+                      </div>
                       <Input
                         value={ingredient}
                         onChange={(e) => updateIngredient(index, e.target.value)}
                         disabled={isFormDisabled}
-                        placeholder={`Ingredient ${index + 1}`}
+                        placeholder={`Ingredient ${index + 1} (e.g., "2 cups flour")`}
+                        className="flex-1"
                       />
                       <Button
                         type="button"
@@ -478,33 +514,35 @@ export default function TestRecipeSubmission() {
                         onClick={() => removeIngredient(index)}
                         disabled={isFormDisabled || ingredients.length <= 1}
                       >
-                        <Minus className="w-4 h-4" />
+                        <X className="w-4 h-4" />
                       </Button>
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* Instructions */}
+              {/* Instructions - Single Line Format */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <Label>Instructions *</Label>
+                  <Label>Instructions * ({instructions.length})</Label>
                   <Button type="button" variant="outline" size="sm" onClick={addInstruction} disabled={isFormDisabled}>
-                    <Plus className="w-4 h-4" />
+                    <Plus className="w-4 h-4 mr-1" />
+                    Add Step
                   </Button>
                 </div>
                 <div className="space-y-2">
                   {instructions.map((instruction, index) => (
-                    <div key={index} className="flex gap-2">
-                      <div className="flex-shrink-0 w-8 h-10 bg-gray-100 rounded flex items-center justify-center text-sm font-medium">
+                    <div key={index} className="flex gap-2 items-start">
+                      <div className="flex-shrink-0 w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center text-sm font-medium text-blue-600 mt-1">
                         {index + 1}
                       </div>
                       <Textarea
                         value={instruction}
                         onChange={(e) => updateInstruction(index, e.target.value)}
                         disabled={isFormDisabled}
-                        placeholder={`Step ${index + 1}`}
+                        placeholder={`Step ${index + 1} (e.g., "Mix dry ingredients in a large bowl")`}
                         rows={2}
+                        className="flex-1"
                       />
                       <Button
                         type="button"
@@ -512,36 +550,52 @@ export default function TestRecipeSubmission() {
                         size="sm"
                         onClick={() => removeInstruction(index)}
                         disabled={isFormDisabled || instructions.length <= 1}
+                        className="mt-1"
                       >
-                        <Minus className="w-4 h-4" />
+                        <X className="w-4 h-4" />
                       </Button>
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* Tags */}
+              {/* Tags - Badge Format */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <Label>Tags (optional)</Label>
+                  <Label>Tags (optional) ({tags.length})</Label>
                 </div>
                 <div className="flex flex-wrap gap-2 mb-2">
                   {tags.map((tag) => (
                     <Badge key={tag} variant="secondary" className="cursor-pointer" onClick={() => removeTag(tag)}>
-                      {tag} ×
+                      {tag} <X className="w-3 h-3 ml-1" />
                     </Badge>
                   ))}
                 </div>
                 <div className="flex gap-2">
                   <Input
-                    value={newTag}
-                    onChange={(e) => setNewTag(e.target.value)}
+                    placeholder="Add a tag (e.g., 'vegetarian', 'quick')"
                     disabled={isFormDisabled}
-                    placeholder="Add a tag"
-                    onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addTag())}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault()
+                        const target = e.target as HTMLInputElement
+                        addTag(target.value)
+                        target.value = ""
+                      }
+                    }}
                   />
-                  <Button type="button" onClick={addTag} disabled={isFormDisabled}>
-                    Add
+                  <Button
+                    type="button"
+                    onClick={(e) => {
+                      const input = e.currentTarget.previousElementSibling as HTMLInputElement
+                      addTag(input.value)
+                      input.value = ""
+                    }}
+                    disabled={isFormDisabled}
+                    variant="outline"
+                    size="sm"
+                  >
+                    <Plus className="w-4 h-4" />
                   </Button>
                 </div>
               </div>
@@ -555,7 +609,7 @@ export default function TestRecipeSubmission() {
                 ) : (
                   <>
                     <Send className="w-4 h-4 mr-2" />
-                    Submit Recipe
+                    Submit Recipe (JSONB Arrays)
                   </>
                 )}
               </Button>
@@ -604,7 +658,7 @@ export default function TestRecipeSubmission() {
 
                   <TabsContent value="request" className="mt-4">
                     <div className="space-y-2">
-                      <h4 className="font-medium">Last Request Data</h4>
+                      <h4 className="font-medium">Last Request Data (JSONB Arrays)</h4>
                       {requestTimestamp && <p className="text-xs text-gray-500">Sent: {requestTimestamp}</p>}
                       <pre className="bg-gray-100 p-3 rounded text-xs overflow-auto max-h-64">
                         {lastRequest ? JSON.stringify(lastRequest, null, 2) : "No request sent yet"}
@@ -655,30 +709,45 @@ export default function TestRecipeSubmission() {
             )}
           </Card>
 
-          {/* Network Status */}
-          {networkError && (
-            <Card className="border-red-300">
-              <CardHeader className="bg-red-50">
-                <CardTitle className="text-red-700 flex items-center gap-2">
-                  <AlertCircle className="w-5 h-5" />
-                  Network Error
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-red-700">{networkError}</p>
-                <div className="mt-4">
-                  <h4 className="font-medium text-sm mb-2">Troubleshooting Steps:</h4>
-                  <ul className="list-disc pl-5 space-y-1 text-sm">
-                    <li>Check your internet connection</li>
-                    <li>Verify the server is running</li>
-                    <li>Check browser console for CORS issues</li>
-                    <li>Try refreshing the page</li>
-                    <li>Check server logs for errors</li>
-                  </ul>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+          {/* Array Format Info */}
+          <Card className="border-green-300">
+            <CardHeader className="bg-green-50">
+              <CardTitle className="text-green-700 flex items-center gap-2">
+                <CheckCircle className="w-5 h-5" />
+                JSONB Array Format
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2 text-sm">
+                <p>
+                  <strong>Database Schema:</strong>
+                </p>
+                <code className="block bg-gray-100 p-2 rounded text-xs">
+                  ingredients JSONB NOT NULL DEFAULT '[]'::jsonb
+                  <br />
+                  instructions JSONB NOT NULL DEFAULT '[]'::jsonb
+                  <br />
+                  tags JSONB DEFAULT '[]'::jsonb
+                </code>
+                <p>
+                  <strong>Frontend sends:</strong>
+                </p>
+                <code className="block bg-gray-100 p-2 rounded text-xs">
+                  ingredients: ["2 cups flour", "1 cup sugar"]
+                  <br />
+                  instructions: ["Mix ingredients", "Bake for 30 min"]
+                  <br />
+                  tags: ["dessert", "easy"]
+                </code>
+                <p>
+                  <strong>Content-Type:</strong> application/json
+                </p>
+                <p>
+                  <strong>Body:</strong> JSON.stringify(requestData)
+                </p>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Quick Actions */}
           <Card>
@@ -691,14 +760,15 @@ export default function TestRecipeSubmission() {
                 size="sm"
                 onClick={() => {
                   setTitle("Quick Test Recipe")
-                  setDescription("Auto-generated test recipe")
-                  setIngredients(["1 cup test ingredient", "2 tbsp test spice"])
-                  setInstructions(["Mix ingredients", "Test the result"])
+                  setDescription("Auto-generated test recipe with JSONB arrays")
+                  setIngredients(["1 cup test ingredient", "2 tbsp test spice", "Salt to taste"])
+                  setInstructions(["Mix all ingredients in a bowl", "Cook until done", "Serve immediately"])
+                  setTags(["test", "debug", "jsonb"])
                 }}
                 disabled={isFormDisabled}
                 className="w-full"
               >
-                Fill Test Data
+                Fill Test Data (JSONB)
               </Button>
 
               <Button

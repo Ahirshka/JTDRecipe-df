@@ -69,7 +69,7 @@ export interface Session {
   created_at: Date
 }
 
-// Database initialization
+// Database initialization with JSONB arrays
 export async function initializeDatabase(): Promise<boolean> {
   try {
     console.log("🔍 [NEON] Initializing database")
@@ -112,20 +112,20 @@ export async function initializeDatabase(): Promise<boolean> {
       )
     `
 
-    // Create recipes table with TEXT fields for ingredients and instructions
+    // Create recipes table with JSONB arrays for proper array handling
     await sql_client`
       CREATE TABLE IF NOT EXISTS recipes (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         title VARCHAR(255) NOT NULL,
         description TEXT,
-        ingredients TEXT NOT NULL,
-        instructions TEXT NOT NULL,
+        ingredients JSONB NOT NULL DEFAULT '[]'::jsonb,
+        instructions JSONB NOT NULL DEFAULT '[]'::jsonb,
         prep_time INTEGER NOT NULL,
         cook_time INTEGER NOT NULL,
         servings INTEGER NOT NULL,
         difficulty VARCHAR(50) NOT NULL,
         category VARCHAR(100) NOT NULL,
-        tags TEXT DEFAULT '',
+        tags JSONB DEFAULT '[]'::jsonb,
         image_url VARCHAR(255),
         author_id UUID NOT NULL REFERENCES users(id),
         author_name VARCHAR(255) NOT NULL,
@@ -143,7 +143,7 @@ export async function initializeDatabase(): Promise<boolean> {
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         moderator_id UUID NOT NULL REFERENCES users(id),
         action VARCHAR(100) NOT NULL,
-        details TEXT,
+        details JSONB,
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `
@@ -343,7 +343,7 @@ export async function deleteUserSession(token: string): Promise<boolean> {
   }
 }
 
-// Recipe functions - Updated to handle string inputs properly
+// Recipe functions - Updated to handle JSONB arrays properly
 export async function createRecipe(recipeData: {
   title: string
   description: string
@@ -367,20 +367,30 @@ export async function createRecipe(recipeData: {
       throw new Error("Author not found")
     }
 
-    // Convert arrays to strings for database storage
-    const ingredientsString = recipeData.ingredients.join("\n")
-    const instructionsString = recipeData.instructions.join("\n")
-    const tagsString = recipeData.tags.join(",")
+    // Validate arrays
+    if (!Array.isArray(recipeData.ingredients) || recipeData.ingredients.length === 0) {
+      throw new Error("Ingredients must be a non-empty array")
+    }
+
+    if (!Array.isArray(recipeData.instructions) || recipeData.instructions.length === 0) {
+      throw new Error("Instructions must be a non-empty array")
+    }
+
+    // Filter out empty strings
+    const cleanIngredients = recipeData.ingredients.filter((item) => item && item.trim())
+    const cleanInstructions = recipeData.instructions.filter((item) => item && item.trim())
+    const cleanTags = Array.isArray(recipeData.tags) ? recipeData.tags.filter((item) => item && item.trim()) : []
 
     console.log("📝 [NEON] Recipe data for database:", {
       title: recipeData.title,
-      ingredients_count: recipeData.ingredients.length,
-      instructions_count: recipeData.instructions.length,
-      tags_count: recipeData.tags.length,
+      ingredients_count: cleanIngredients.length,
+      instructions_count: cleanInstructions.length,
+      tags_count: cleanTags.length,
       author_id: recipeData.author_id,
       author_name: author.username,
     })
 
+    // Insert with JSONB arrays
     const result = await sql_client`
       INSERT INTO recipes (
         title, description, ingredients, instructions, 
@@ -389,14 +399,14 @@ export async function createRecipe(recipeData: {
       ) VALUES (
         ${recipeData.title}, 
         ${recipeData.description}, 
-        ${ingredientsString}, 
-        ${instructionsString}, 
+        ${JSON.stringify(cleanIngredients)}, 
+        ${JSON.stringify(cleanInstructions)}, 
         ${recipeData.prep_time}, 
         ${recipeData.cook_time}, 
         ${recipeData.servings}, 
         ${recipeData.difficulty}, 
         ${recipeData.category}, 
-        ${tagsString}, 
+        ${JSON.stringify(cleanTags)}, 
         ${recipeData.image_url || null}, 
         ${recipeData.author_id}, 
         ${author.username}, 
@@ -409,16 +419,11 @@ export async function createRecipe(recipeData: {
       throw new Error("Failed to create recipe - no result returned")
     }
 
-    // Convert strings back to arrays for return
-    const recipe = result[0] as any
-    recipe.ingredients = recipe.ingredients ? recipe.ingredients.split("\n").filter((item: string) => item.trim()) : []
-    recipe.instructions = recipe.instructions
-      ? recipe.instructions.split("\n").filter((item: string) => item.trim())
-      : []
-    recipe.tags = recipe.tags ? recipe.tags.split(",").filter((item: string) => item.trim()) : []
+    // The JSONB fields are automatically parsed by the database driver
+    const recipe = result[0] as Recipe
 
     console.log("✅ [NEON] Recipe created successfully:", recipe.id)
-    return recipe as Recipe
+    return recipe
   } catch (error) {
     console.error("❌ [NEON] Error creating recipe:", error)
     throw error
@@ -435,18 +440,8 @@ export async function getAllRecipes(): Promise<Recipe[]> {
       ORDER BY created_at DESC
     `
 
-    // Convert strings back to arrays
-    const recipes = result.map((recipe) => {
-      const parsedRecipe = { ...recipe }
-      parsedRecipe.ingredients = recipe.ingredients
-        ? recipe.ingredients.split("\n").filter((item: string) => item.trim())
-        : []
-      parsedRecipe.instructions = recipe.instructions
-        ? recipe.instructions.split("\n").filter((item: string) => item.trim())
-        : []
-      parsedRecipe.tags = recipe.tags ? recipe.tags.split(",").filter((item: string) => item.trim()) : []
-      return parsedRecipe as Recipe
-    })
+    // JSONB fields are automatically parsed by the database driver
+    const recipes = result as Recipe[]
 
     console.log("✅ [NEON] Retrieved recipes:", recipes.length)
     return recipes
@@ -466,18 +461,8 @@ export async function getPendingRecipes(): Promise<Recipe[]> {
       ORDER BY created_at DESC
     `
 
-    // Convert strings back to arrays
-    const recipes = result.map((recipe) => {
-      const parsedRecipe = { ...recipe }
-      parsedRecipe.ingredients = recipe.ingredients
-        ? recipe.ingredients.split("\n").filter((item: string) => item.trim())
-        : []
-      parsedRecipe.instructions = recipe.instructions
-        ? recipe.instructions.split("\n").filter((item: string) => item.trim())
-        : []
-      parsedRecipe.tags = recipe.tags ? recipe.tags.split(",").filter((item: string) => item.trim()) : []
-      return parsedRecipe as Recipe
-    })
+    // JSONB fields are automatically parsed by the database driver
+    const recipes = result as Recipe[]
 
     console.log("✅ [NEON] Retrieved pending recipes:", recipes.length)
     return recipes
