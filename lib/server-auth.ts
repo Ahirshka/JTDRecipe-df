@@ -1,50 +1,25 @@
-import type { NextRequest } from "next/server"
 import { cookies } from "next/headers"
-import { verifyToken } from "./auth"
-import { findUserById } from "./neon"
+import { type NextRequest, NextResponse } from "next/server"
+import { verifyToken } from "@/lib/auth"
+import { findUserById } from "@/lib/neon"
 
-export interface AuthUser {
-  id: number
-  username: string
-  email: string
-  role: string
-  status: string
-  is_verified: boolean
-  is_profile_verified: boolean
-  avatar_url?: string
-  bio?: string
-  location?: string
-  website?: string
-  created_at: string
-  updated_at: string
-  last_login_at?: string
-}
-
-// Get current user from request - SERVER ONLY
-export async function getCurrentUser(request?: NextRequest): Promise<AuthUser | null> {
+// Get current user from request
+export async function getCurrentUser() {
   try {
-    console.log("🔍 [SERVER-AUTH] Getting current user...")
+    console.log("🔍 [SERVER-AUTH] Getting current user")
 
-    let authToken: string | undefined
-
-    if (request) {
-      // Use request cookies if available
-      authToken = request.cookies.get("auth-token")?.value || request.cookies.get("auth_token")?.value
-      console.log("🔍 [SERVER-AUTH] Using request cookies")
-    } else {
-      // Fallback to server cookies
-      const cookieStore = await cookies()
-      authToken = cookieStore.get("auth-token")?.value || cookieStore.get("auth_token")?.value
-      console.log("🔍 [SERVER-AUTH] Using server cookies")
-    }
+    // Get cookies
+    const cookieStore = await cookies()
+    const authToken = cookieStore.get("auth-token")?.value || cookieStore.get("auth_token")?.value
 
     if (!authToken) {
-      console.log("❌ [SERVER-AUTH] No authentication token found")
+      console.log("❌ [SERVER-AUTH] No auth token found in cookies")
       return null
     }
 
-    console.log("🔍 [SERVER-AUTH] Found auth token:", authToken.substring(0, 20) + "...")
+    console.log("✅ [SERVER-AUTH] Found auth token")
 
+    // Verify token
     const decoded = verifyToken(authToken)
     if (!decoded) {
       console.log("❌ [SERVER-AUTH] Token verification failed")
@@ -53,188 +28,124 @@ export async function getCurrentUser(request?: NextRequest): Promise<AuthUser | 
 
     console.log("✅ [SERVER-AUTH] Token verified for user:", decoded.id)
 
-    // Verify user still exists in database
-    const dbUser = await findUserById(decoded.id)
-    if (!dbUser) {
+    // Get user from database
+    const user = await findUserById(decoded.id)
+    if (!user) {
       console.log("❌ [SERVER-AUTH] User not found in database:", decoded.id)
       return null
     }
 
-    console.log("✅ [SERVER-AUTH] User found in database:", {
-      id: dbUser.id,
-      username: dbUser.username,
-      email: dbUser.email,
-      role: dbUser.role,
-      status: dbUser.status,
-    })
-
-    const authUser: AuthUser = {
-      id: dbUser.id,
-      username: dbUser.username,
-      email: dbUser.email,
-      role: dbUser.role,
-      status: dbUser.status,
-      is_verified: dbUser.is_verified,
-      is_profile_verified: dbUser.is_profile_verified,
-      avatar_url: dbUser.avatar_url,
-      bio: dbUser.bio,
-      location: dbUser.location,
-      website: dbUser.website,
-      created_at: dbUser.created_at,
-      updated_at: dbUser.updated_at,
-      last_login_at: dbUser.last_login_at,
-    }
-
-    console.log("✅ [SERVER-AUTH] Returning authenticated user")
-    return authUser
+    console.log("✅ [SERVER-AUTH] User found:", user.username)
+    return user
   } catch (error) {
     console.error("❌ [SERVER-AUTH] Error getting current user:", error)
     return null
   }
 }
 
-// Middleware helper - SERVER ONLY
-export async function requireAuth(
-  request?: NextRequest,
-  requiredRole?: string,
-): Promise<{ user: AuthUser | null; error?: string }> {
+// Get current user from request object (for API routes)
+export async function getCurrentUserFromRequest(request: NextRequest) {
   try {
-    console.log("🔍 [SERVER-AUTH] Requiring authentication, role:", requiredRole || "any")
+    console.log("🔍 [SERVER-AUTH] Getting current user from request")
 
-    const user = await getCurrentUser(request)
+    // Get auth token from request cookies
+    const authToken = request.cookies.get("auth-token")?.value || request.cookies.get("auth_token")?.value
 
-    if (!user) {
-      console.log("❌ [SERVER-AUTH] Authentication required but no user found")
-      return { user: null, error: "Authentication required" }
+    if (!authToken) {
+      console.log("❌ [SERVER-AUTH] No auth token found in request cookies")
+      return null
     }
 
-    if (user.status !== "active") {
-      console.log("❌ [SERVER-AUTH] User account not active:", user.status)
-      return { user: null, error: "Account not active" }
-    }
+    console.log("✅ [SERVER-AUTH] Found auth token in request")
 
-    if (requiredRole) {
-      const hasPermission = checkUserPermission(user.role, requiredRole)
-      if (!hasPermission) {
-        console.log("❌ [SERVER-AUTH] Insufficient permissions:", {
-          userRole: user.role,
-          requiredRole,
-        })
-        return { user: null, error: "Insufficient permissions" }
-      }
-    }
-
-    console.log("✅ [SERVER-AUTH] Authentication successful")
-    return { user }
-  } catch (error) {
-    console.error("❌ [SERVER-AUTH] Error in requireAuth:", error)
-    return { user: null, error: "Authentication failed" }
-  }
-}
-
-// Check user permissions
-function checkUserPermission(userRole: string, requiredRole: string): boolean {
-  const roleHierarchy: Record<string, number> = {
-    user: 1,
-    verified: 2,
-    moderator: 3,
-    admin: 4,
-    owner: 5,
-  }
-
-  const userLevel = roleHierarchy[userRole] || 0
-  const requiredLevel = roleHierarchy[requiredRole] || 0
-
-  return userLevel >= requiredLevel
-}
-
-// Set authentication cookie - SERVER ONLY
-export async function setAuthCookie(token: string): Promise<void> {
-  try {
-    const cookieStore = await cookies()
-
-    // Set multiple cookie formats for compatibility
-    cookieStore.set("auth-token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60, // 7 days
-      path: "/",
-    })
-
-    cookieStore.set("auth_token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60, // 7 days
-      path: "/",
-    })
-
-    console.log("✅ [SERVER-AUTH] Authentication cookies set")
-  } catch (error) {
-    console.error("❌ [SERVER-AUTH] Error setting auth cookie:", error)
-  }
-}
-
-// Clear authentication cookie - SERVER ONLY
-export async function clearAuthCookie(): Promise<void> {
-  try {
-    const cookieStore = await cookies()
-
-    // Clear all possible cookie names
-    const cookieNames = ["auth-token", "auth_token", "session", "token"]
-
-    for (const name of cookieNames) {
-      cookieStore.set(name, "", {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 0,
-        path: "/",
-      })
-    }
-
-    console.log("✅ [SERVER-AUTH] Authentication cookies cleared")
-  } catch (error) {
-    console.error("❌ [SERVER-AUTH] Error clearing auth cookies:", error)
-  }
-}
-
-// Get user from token - SERVER ONLY
-export async function getUserFromToken(token: string): Promise<AuthUser | null> {
-  try {
-    console.log("🔍 [SERVER-AUTH] Getting user from token")
-
-    const decoded = verifyToken(token)
+    // Verify token
+    const decoded = verifyToken(authToken)
     if (!decoded) {
-      console.log("❌ [SERVER-AUTH] Invalid token")
+      console.log("❌ [SERVER-AUTH] Token verification failed")
       return null
     }
 
-    const dbUser = await findUserById(decoded.id)
-    if (!dbUser) {
-      console.log("❌ [SERVER-AUTH] User not found")
+    console.log("✅ [SERVER-AUTH] Token verified for user:", decoded.id)
+
+    // Get user from database
+    const user = await findUserById(decoded.id)
+    if (!user) {
+      console.log("❌ [SERVER-AUTH] User not found in database:", decoded.id)
       return null
     }
 
-    return {
-      id: dbUser.id,
-      username: dbUser.username,
-      email: dbUser.email,
-      role: dbUser.role,
-      status: dbUser.status,
-      is_verified: dbUser.is_verified,
-      is_profile_verified: dbUser.is_profile_verified,
-      avatar_url: dbUser.avatar_url,
-      bio: dbUser.bio,
-      location: dbUser.location,
-      website: dbUser.website,
-      created_at: dbUser.created_at,
-      updated_at: dbUser.updated_at,
-      last_login_at: dbUser.last_login_at,
-    }
+    console.log("✅ [SERVER-AUTH] User found:", user.username)
+    return user
   } catch (error) {
-    console.error("❌ [SERVER-AUTH] Error getting user from token:", error)
+    console.error("❌ [SERVER-AUTH] Error getting current user from request:", error)
     return null
   }
+}
+
+// Set auth cookie - REQUIRED EXPORT
+export async function setAuthCookie(token: string) {
+  try {
+    console.log("🔍 [SERVER-AUTH] Setting auth cookie")
+    const cookieStore = await cookies()
+
+    const cookieOptions = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax" as const,
+      maxAge: 60 * 60 * 24 * 7, // 7 days
+      path: "/",
+    }
+
+    cookieStore.set("auth-token", token, cookieOptions)
+    cookieStore.set("auth_token", token, cookieOptions) // Alternative name for compatibility
+
+    console.log("✅ [SERVER-AUTH] Auth cookie set successfully")
+  } catch (error) {
+    console.error("❌ [SERVER-AUTH] Error setting auth cookie:", error)
+    throw error
+  }
+}
+
+// Clear auth cookie - REQUIRED EXPORT
+export async function clearAuthCookie() {
+  try {
+    console.log("🔍 [SERVER-AUTH] Clearing auth cookie")
+    const cookieStore = await cookies()
+
+    cookieStore.delete("auth-token")
+    cookieStore.delete("auth_token")
+
+    console.log("✅ [SERVER-AUTH] Auth cookie cleared successfully")
+  } catch (error) {
+    console.error("❌ [SERVER-AUTH] Error clearing auth cookie:", error)
+    throw error
+  }
+}
+
+// Create auth response with cookie
+export function createAuthResponse(data: any, token: string) {
+  const response = NextResponse.json(data)
+
+  const cookieOptions = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax" as const,
+    maxAge: 60 * 60 * 24 * 7, // 7 days
+    path: "/",
+  }
+
+  response.cookies.set("auth-token", token, cookieOptions)
+  response.cookies.set("auth_token", token, cookieOptions)
+
+  return response
+}
+
+// Create logout response
+export function createLogoutResponse(data: any) {
+  const response = NextResponse.json(data)
+
+  response.cookies.delete("auth-token")
+  response.cookies.delete("auth_token")
+
+  return response
 }

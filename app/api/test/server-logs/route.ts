@@ -2,10 +2,17 @@ import { type NextRequest, NextResponse } from "next/server"
 import { getCurrentUser } from "@/lib/server-auth"
 
 // In-memory log storage (for demonstration - in production use a proper logging service)
-const logs: Array<{ timestamp: string; level: string; message: string; data?: any }> = []
+const logs: Array<{
+  id: string
+  timestamp: string
+  level: "info" | "warn" | "error"
+  message: string
+  data?: any
+}> = []
 
 export function addLog(level: "info" | "warn" | "error", message: string, data?: any) {
   const logEntry = {
+    id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
     timestamp: new Date().toISOString(),
     level,
     message,
@@ -14,12 +21,18 @@ export function addLog(level: "info" | "warn" | "error", message: string, data?:
 
   logs.push(logEntry)
 
-  // Keep only last 100 logs
-  if (logs.length > 100) {
-    logs.shift()
+  // Keep only last 1000 logs to prevent memory issues
+  if (logs.length > 1000) {
+    logs.splice(0, logs.length - 1000)
   }
 
-  console.log(`[${level.toUpperCase()}] ${message}`, data || "")
+  // Also log to console
+  const logMessage = `[${level.toUpperCase()}] ${message}`
+  if (data) {
+    console.log(logMessage, data)
+  } else {
+    console.log(logMessage)
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -36,13 +49,13 @@ export async function GET(request: NextRequest) {
 
     console.log("✅ [SERVER-LOGS] Authorized user accessing logs:", user.username)
 
-    // Get query parameters
-    const { searchParams } = new URL(request.url)
-    const level = searchParams.get("level") || "all"
-    const limit = Number.parseInt(searchParams.get("limit") || "50")
+    const url = new URL(request.url)
+    const level = url.searchParams.get("level")
+    const limit = Number.parseInt(url.searchParams.get("limit") || "100")
 
     let filteredLogs = logs
-    if (level !== "all") {
+
+    if (level && ["info", "warn", "error"].includes(level)) {
       filteredLogs = logs.filter((log) => log.level === level)
     }
 
@@ -53,19 +66,11 @@ export async function GET(request: NextRequest) {
       success: true,
       logs: recentLogs,
       total: filteredLogs.length,
-      filters: {
-        level,
-        limit,
-      },
-      timestamp: new Date().toISOString(),
     })
   } catch (error) {
     console.error("❌ [SERVER-LOGS] Error fetching logs:", error)
     return NextResponse.json(
-      {
-        error: "Failed to fetch server logs",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
+      { error: "Failed to fetch server logs", message: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 },
     )
   }
@@ -87,7 +92,7 @@ export async function POST(request: NextRequest) {
     if (body.action === "clear") {
       // Clear the logs array
       logs.length = 0
-      console.log("✅ [SERVER-LOGS] Server logs cleared by:", user.username)
+      addLog("info", "Server logs cleared by:", user.username)
 
       return NextResponse.json({
         success: true,
@@ -119,5 +124,20 @@ export async function POST(request: NextRequest) {
       },
       { status: 500 },
     )
+  }
+}
+
+export async function DELETE() {
+  try {
+    logs.length = 0
+    addLog("info", "Server logs cleared")
+
+    return NextResponse.json({
+      success: true,
+      message: "Logs cleared successfully",
+    })
+  } catch (error) {
+    console.error("Error clearing logs:", error)
+    return NextResponse.json({ error: "Failed to clear logs" }, { status: 500 })
   }
 }

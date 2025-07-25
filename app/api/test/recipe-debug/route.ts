@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
 
     // Get request body
     const body = await request.json()
-    const { title, category, difficulty, ingredients, instructions } = body
+    const { title, category, difficulty, ingredients, instructions, description, prepTime, cookTime, servings } = body
 
     addLog("info", "[RECIPE-DEBUG] Recipe data received", {
       title,
@@ -123,17 +123,20 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Check if recipes table exists
+    // Check recipes table structure
     try {
-      addLog("info", "[RECIPE-DEBUG] Checking recipes table")
-      const tableCheck = await sql`
-        SELECT table_name 
-        FROM information_schema.tables 
+      addLog("info", "[RECIPE-DEBUG] Checking recipes table structure")
+      const tableStructure = await sql`
+        SELECT column_name, data_type, is_nullable
+        FROM information_schema.columns 
         WHERE table_schema = 'public' 
         AND table_name = 'recipes'
+        ORDER BY ordinal_position
       `
 
-      if (tableCheck.length === 0) {
+      addLog("info", "[RECIPE-DEBUG] Recipes table structure", { columns: tableStructure })
+
+      if (tableStructure.length === 0) {
         addLog("error", "[RECIPE-DEBUG] Recipes table does not exist")
         return NextResponse.json(
           {
@@ -144,8 +147,6 @@ export async function POST(request: NextRequest) {
           { status: 500 },
         )
       }
-
-      addLog("info", "[RECIPE-DEBUG] Recipes table exists")
     } catch (tableError) {
       addLog("error", "[RECIPE-DEBUG] Error checking recipes table", { error: tableError })
       return NextResponse.json(
@@ -159,22 +160,78 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Try to insert the recipe
+    // Try to insert the recipe using the correct column names
     try {
       addLog("info", "[RECIPE-DEBUG] Attempting to insert recipe")
 
+      // Generate a unique recipe ID
+      const recipeId = `recipe_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+
+      // Process ingredients and instructions
+      const processedIngredients = Array.isArray(ingredients) ? ingredients : [ingredients]
+      const processedInstructions = Array.isArray(instructions) ? instructions : [instructions]
+
       const result = await sql`
         INSERT INTO recipes (
-          title, category, difficulty, ingredients, instructions, 
-          user_id, status, created_at, updated_at
+          id,
+          title,
+          description,
+          author_id,
+          category,
+          difficulty,
+          prep_time_minutes,
+          cook_time_minutes,
+          servings,
+          moderation_status,
+          is_published,
+          created_at,
+          updated_at
         ) VALUES (
-          ${title}, ${category}, ${difficulty}, 
-          ${JSON.stringify(ingredients)}, ${JSON.stringify(instructions)},
-          ${dbUser.id}, 'pending', NOW(), NOW()
-        ) RETURNING id, title, status
+          ${recipeId},
+          ${title},
+          ${description || ""},
+          ${dbUser.id},
+          ${category},
+          ${difficulty},
+          ${Number.parseInt(prepTime) || 0},
+          ${Number.parseInt(cookTime) || 0},
+          ${Number.parseInt(servings) || 1},
+          ${"pending"},
+          ${false},
+          NOW(),
+          NOW()
+        ) RETURNING id, title, moderation_status
       `
 
       addLog("info", "[RECIPE-DEBUG] Recipe inserted successfully", { result })
+
+      // Insert ingredients if we have a separate ingredients table
+      try {
+        for (let i = 0; i < processedIngredients.length; i++) {
+          await sql`
+            INSERT INTO recipe_ingredients (recipe_id, ingredient, step_number)
+            VALUES (${recipeId}, ${processedIngredients[i]}, ${i + 1})
+          `
+        }
+        addLog("info", "[RECIPE-DEBUG] Ingredients inserted", { count: processedIngredients.length })
+      } catch (ingredientError) {
+        addLog("warn", "[RECIPE-DEBUG] Could not insert ingredients (table may not exist)", { error: ingredientError })
+      }
+
+      // Insert instructions if we have a separate instructions table
+      try {
+        for (let i = 0; i < processedInstructions.length; i++) {
+          await sql`
+            INSERT INTO recipe_instructions (recipe_id, instruction, step_number)
+            VALUES (${recipeId}, ${processedInstructions[i]}, ${i + 1})
+          `
+        }
+        addLog("info", "[RECIPE-DEBUG] Instructions inserted", { count: processedInstructions.length })
+      } catch (instructionError) {
+        addLog("warn", "[RECIPE-DEBUG] Could not insert instructions (table may not exist)", {
+          error: instructionError,
+        })
+      }
 
       return NextResponse.json({
         success: true,
@@ -190,6 +247,7 @@ export async function POST(request: NextRequest) {
           error: "Error inserting recipe",
           step: "recipe_insertion",
           details: insertError instanceof Error ? insertError.message : "Unknown insertion error",
+          sqlError: insertError,
         },
         { status: 500 },
       )
