@@ -2,18 +2,20 @@
 
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { RefreshCw, Trash2, Play, AlertCircle, CheckCircle, Info } from "lucide-react"
+import { Separator } from "@/components/ui/separator"
+import { RefreshCw, Trash2, Play, Database, Shield, User } from "lucide-react"
 
 interface LogEntry {
   id: string
   timestamp: string
-  level: "info" | "warn" | "error"
+  level: "info" | "warn" | "error" | "debug"
   message: string
   data?: any
 }
@@ -22,12 +24,12 @@ export default function ServerLogsPage() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [autoRefresh, setAutoRefresh] = useState(false)
-  const [filter, setFilter] = useState<string>("all")
+  const [levelFilter, setLevelFilter] = useState("all")
   const [testResult, setTestResult] = useState<any>(null)
   const [testLoading, setTestLoading] = useState(false)
 
-  // Test recipe form data
-  const [testRecipe, setTestRecipe] = useState({
+  // Recipe test form state
+  const [recipeForm, setRecipeForm] = useState({
     title: "Test Recipe",
     description: "This is a test recipe for debugging",
     category: "Test",
@@ -35,20 +37,14 @@ export default function ServerLogsPage() {
     prepTime: "5",
     cookTime: "10",
     servings: "2",
-    ingredients: "Test ingredient 1\nTest ingredient 2\nTest ingredient 3",
-    instructions: "Step 1: Test instruction\nStep 2: Another test instruction\nStep 3: Final test instruction",
+    ingredients: "1 cup flour\n2 eggs\n1 cup milk",
+    instructions: "Mix ingredients\nCook for 10 minutes\nServe hot",
   })
 
   const fetchLogs = async () => {
     try {
       setLoading(true)
-      const params = new URLSearchParams()
-      if (filter !== "all") {
-        params.append("level", filter)
-      }
-      params.append("limit", "100")
-
-      const response = await fetch(`/api/test/server-logs?${params}`)
+      const response = await fetch(`/api/test/server-logs?level=${levelFilter}&limit=100`)
       const data = await response.json()
 
       if (data.success) {
@@ -63,13 +59,9 @@ export default function ServerLogsPage() {
 
   const clearLogs = async () => {
     try {
-      const response = await fetch("/api/test/server-logs", {
-        method: "DELETE",
-      })
-      const data = await response.json()
-
-      if (data.success) {
-        setLogs([])
+      const response = await fetch("/api/test/server-logs", { method: "DELETE" })
+      if (response.ok) {
+        await fetchLogs()
       }
     } catch (error) {
       console.error("Error clearing logs:", error)
@@ -86,19 +78,51 @@ export default function ServerLogsPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(testRecipe),
+        body: JSON.stringify(recipeForm),
       })
 
-      const data = await response.json()
-      setTestResult(data)
+      const result = await response.json()
+      setTestResult(result)
 
-      // Refresh logs after test
-      setTimeout(fetchLogs, 1000)
+      // Refresh logs to see the test results
+      setTimeout(() => {
+        fetchLogs()
+      }, 1000)
     } catch (error) {
       console.error("Error testing recipe submission:", error)
       setTestResult({
         success: false,
-        error: "Network error",
+        error: "Network error occurred",
+        details: error instanceof Error ? error.message : "Unknown error",
+      })
+    } finally {
+      setTestLoading(false)
+    }
+  }
+
+  const testQuickAction = async (endpoint: string, description: string) => {
+    try {
+      setTestLoading(true)
+      setTestResult(null)
+
+      const response = await fetch(endpoint)
+      const result = await response.json()
+
+      setTestResult({
+        success: response.ok,
+        message: description,
+        data: result,
+      })
+
+      // Refresh logs
+      setTimeout(() => {
+        fetchLogs()
+      }, 1000)
+    } catch (error) {
+      console.error(`Error testing ${endpoint}:`, error)
+      setTestResult({
+        success: false,
+        error: `Failed to test ${description}`,
         details: error instanceof Error ? error.message : "Unknown error",
       })
     } finally {
@@ -108,7 +132,7 @@ export default function ServerLogsPage() {
 
   useEffect(() => {
     fetchLogs()
-  }, [filter])
+  }, [levelFilter])
 
   useEffect(() => {
     let interval: NodeJS.Timeout
@@ -118,7 +142,7 @@ export default function ServerLogsPage() {
     return () => {
       if (interval) clearInterval(interval)
     }
-  }, [autoRefresh, filter])
+  }, [autoRefresh, levelFilter])
 
   const getLevelColor = (level: string) => {
     switch (level) {
@@ -128,22 +152,15 @@ export default function ServerLogsPage() {
         return "secondary"
       case "info":
         return "default"
-      default:
+      case "debug":
         return "outline"
+      default:
+        return "default"
     }
   }
 
-  const getLevelIcon = (level: string) => {
-    switch (level) {
-      case "error":
-        return <AlertCircle className="h-4 w-4 text-red-500" />
-      case "warn":
-        return <AlertCircle className="h-4 w-4 text-yellow-500" />
-      case "info":
-        return <Info className="h-4 w-4 text-blue-500" />
-      default:
-        return <CheckCircle className="h-4 w-4 text-green-500" />
-    }
+  const formatTime = (timestamp: string) => {
+    return new Date(timestamp).toLocaleTimeString()
   }
 
   return (
@@ -151,77 +168,80 @@ export default function ServerLogsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Server Logs</h1>
-          <p className="text-muted-foreground">Monitor server activity and debug recipe submission</p>
+          <p className="text-muted-foreground">Monitor server activity and debug issues</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant={autoRefresh ? "default" : "outline"} onClick={() => setAutoRefresh(!autoRefresh)} size="sm">
-            <RefreshCw className={`h-4 w-4 mr-2 ${autoRefresh ? "animate-spin" : ""}`} />
-            {autoRefresh ? "Stop Auto-Refresh" : "Start Auto-Refresh"}
-          </Button>
-          <Button onClick={fetchLogs} disabled={loading} variant="outline" size="sm">
+          <Button onClick={fetchLogs} disabled={loading} size="sm">
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
-          <Button variant="destructive" onClick={clearLogs} size="sm">
+          <Button onClick={clearLogs} variant="outline" size="sm">
             <Trash2 className="h-4 w-4 mr-2" />
             Clear
           </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recipe Test Form */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Play className="h-5 w-5" />
-              Test Recipe Submission
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="title">Title</Label>
-                <Input
-                  id="title"
-                  value={testRecipe.title}
-                  onChange={(e) => setTestRecipe({ ...testRecipe, title: e.target.value })}
-                />
-              </div>
-              <div>
-                <Label htmlFor="category">Category</Label>
-                <Input
-                  id="category"
-                  value={testRecipe.category}
-                  onChange={(e) => setTestRecipe({ ...testRecipe, category: e.target.value })}
-                />
-              </div>
+      {/* Recipe Test Form */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Play className="h-5 w-5" />
+            Test Recipe Submission
+          </CardTitle>
+          <CardDescription>Submit a test recipe to debug the recipe creation process</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="title">Title</Label>
+              <Input
+                id="title"
+                value={recipeForm.title}
+                onChange={(e) => setRecipeForm({ ...recipeForm, title: e.target.value })}
+              />
             </div>
-
-            <div className="grid grid-cols-3 gap-4">
+            <div>
+              <Label htmlFor="category">Category</Label>
+              <Input
+                id="category"
+                value={recipeForm.category}
+                onChange={(e) => setRecipeForm({ ...recipeForm, category: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label htmlFor="difficulty">Difficulty</Label>
+              <Select
+                value={recipeForm.difficulty}
+                onValueChange={(value) => setRecipeForm({ ...recipeForm, difficulty: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Easy">Easy</SelectItem>
+                  <SelectItem value="Medium">Medium</SelectItem>
+                  <SelectItem value="Hard">Hard</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
               <div>
-                <Label htmlFor="difficulty">Difficulty</Label>
-                <Select
-                  value={testRecipe.difficulty}
-                  onValueChange={(value) => setTestRecipe({ ...testRecipe, difficulty: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Easy">Easy</SelectItem>
-                    <SelectItem value="Medium">Medium</SelectItem>
-                    <SelectItem value="Hard">Hard</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="prepTime">Prep Time (min)</Label>
+                <Label htmlFor="prepTime">Prep (min)</Label>
                 <Input
                   id="prepTime"
                   type="number"
-                  value={testRecipe.prepTime}
-                  onChange={(e) => setTestRecipe({ ...testRecipe, prepTime: e.target.value })}
+                  value={recipeForm.prepTime}
+                  onChange={(e) => setRecipeForm({ ...recipeForm, prepTime: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="cookTime">Cook (min)</Label>
+                <Input
+                  id="cookTime"
+                  type="number"
+                  value={recipeForm.cookTime}
+                  onChange={(e) => setRecipeForm({ ...recipeForm, cookTime: e.target.value })}
                 />
               </div>
               <div>
@@ -229,189 +249,184 @@ export default function ServerLogsPage() {
                 <Input
                   id="servings"
                   type="number"
-                  value={testRecipe.servings}
-                  onChange={(e) => setTestRecipe({ ...testRecipe, servings: e.target.value })}
+                  value={recipeForm.servings}
+                  onChange={(e) => setRecipeForm({ ...recipeForm, servings: e.target.value })}
                 />
               </div>
             </div>
+          </div>
 
-            <div>
-              <Label htmlFor="description">Description</Label>
-              <Textarea
-                id="description"
-                rows={2}
-                value={testRecipe.description}
-                onChange={(e) => setTestRecipe({ ...testRecipe, description: e.target.value })}
-              />
-            </div>
+          <div>
+            <Label htmlFor="description">Description</Label>
+            <Textarea
+              id="description"
+              value={recipeForm.description}
+              onChange={(e) => setRecipeForm({ ...recipeForm, description: e.target.value })}
+              rows={2}
+            />
+          </div>
 
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label htmlFor="ingredients">Ingredients (one per line)</Label>
               <Textarea
                 id="ingredients"
+                value={recipeForm.ingredients}
+                onChange={(e) => setRecipeForm({ ...recipeForm, ingredients: e.target.value })}
                 rows={4}
-                value={testRecipe.ingredients}
-                onChange={(e) => setTestRecipe({ ...testRecipe, ingredients: e.target.value })}
               />
             </div>
-
             <div>
               <Label htmlFor="instructions">Instructions (one per line)</Label>
               <Textarea
                 id="instructions"
+                value={recipeForm.instructions}
+                onChange={(e) => setRecipeForm({ ...recipeForm, instructions: e.target.value })}
                 rows={4}
-                value={testRecipe.instructions}
-                onChange={(e) => setTestRecipe({ ...testRecipe, instructions: e.target.value })}
               />
             </div>
+          </div>
 
-            <Button onClick={testRecipeSubmission} disabled={testLoading} className="w-full">
-              {testLoading ? (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                  Testing...
-                </>
-              ) : (
-                <>
-                  <Play className="h-4 w-4 mr-2" />
-                  Test Recipe Submission
-                </>
-              )}
-            </Button>
+          <Button onClick={testRecipeSubmission} disabled={testLoading} className="w-full">
+            <Play className={`h-4 w-4 mr-2 ${testLoading ? "animate-spin" : ""}`} />
+            {testLoading ? "Testing Recipe Submission..." : "Test Recipe Submission"}
+          </Button>
 
-            {testResult && (
-              <div
-                className={`mt-4 p-4 border rounded-lg ${
-                  testResult.success ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"
-                }`}
-              >
-                <div className="flex items-center gap-2 mb-2">
-                  {testResult.success ? (
-                    <CheckCircle className="h-5 w-5 text-green-600" />
-                  ) : (
-                    <AlertCircle className="h-5 w-5 text-red-600" />
-                  )}
-                  <Badge variant={testResult.success ? "default" : "destructive"}>
-                    {testResult.success ? "Success" : "Failed"}
-                  </Badge>
-                  {testResult.step && <Badge variant="outline">{testResult.step}</Badge>}
-                </div>
-                <p className="text-sm mb-2">{testResult.message || testResult.error}</p>
-                {testResult.details && <p className="text-xs text-gray-600 mb-2">Details: {testResult.details}</p>}
-                {testResult.recipe && (
-                  <div className="text-sm">
-                    <p>
-                      <strong>Recipe ID:</strong> {testResult.recipe.id}
-                    </p>
-                    <p>
-                      <strong>Title:</strong> {testResult.recipe.title}
-                    </p>
-                    <p>
-                      <strong>Status:</strong> {testResult.recipe.status}
-                    </p>
+          {testResult && (
+            <Card className={testResult.success ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}>
+              <CardContent className="pt-4">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant={testResult.success ? "default" : "destructive"}>
+                      {testResult.success ? "SUCCESS" : "ERROR"}
+                    </Badge>
+                    {testResult.step && <Badge variant="outline">{testResult.step}</Badge>}
                   </div>
-                )}
-                <details className="mt-2">
-                  <summary className="text-xs cursor-pointer">Full Response</summary>
-                  <pre className="text-xs bg-gray-100 p-2 rounded mt-1 overflow-auto">
-                    {JSON.stringify(testResult, null, 2)}
-                  </pre>
-                </details>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                  <p className="font-medium">{testResult.message || testResult.error}</p>
+                  {testResult.details && <p className="text-sm text-muted-foreground">{testResult.details}</p>}
+                  {testResult.recipe && (
+                    <div className="mt-2 p-2 bg-white rounded border">
+                      <p className="text-sm font-medium">Recipe Created:</p>
+                      <p className="text-sm">ID: {testResult.recipe.id}</p>
+                      <p className="text-sm">Title: {testResult.recipe.title}</p>
+                      <p className="text-sm">Author: {testResult.recipe.author}</p>
+                      <p className="text-sm">Status: {testResult.recipe.status}</p>
+                    </div>
+                  )}
+                  {testResult.sqlError && (
+                    <details className="mt-2">
+                      <summary className="text-sm font-medium cursor-pointer">SQL Error Details</summary>
+                      <pre className="text-xs bg-gray-100 p-2 rounded mt-1 overflow-auto">
+                        {JSON.stringify(testResult.sqlError, null, 2)}
+                      </pre>
+                    </details>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </CardContent>
+      </Card>
 
-        {/* Log Filters */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Log Filters & Quick Actions</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <Label htmlFor="filter">Filter by Level</Label>
-              <Select value={filter} onValueChange={setFilter}>
-                <SelectTrigger>
+      {/* Log Filters & Quick Actions */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Log Filters & Quick Actions</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center space-x-2">
+              <Label htmlFor="level-filter">Filter by Level</Label>
+              <Select value={levelFilter} onValueChange={setLevelFilter}>
+                <SelectTrigger className="w-32">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Levels</SelectItem>
-                  <SelectItem value="info">Info Only</SelectItem>
-                  <SelectItem value="warn">Warnings Only</SelectItem>
-                  <SelectItem value="error">Errors Only</SelectItem>
+                  <SelectItem value="error">Error</SelectItem>
+                  <SelectItem value="warn">Warning</SelectItem>
+                  <SelectItem value="info">Info</SelectItem>
+                  <SelectItem value="debug">Debug</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
-            <div className="text-sm text-muted-foreground space-y-1">
-              <p>Total logs: {logs.length}</p>
-              <p>Auto-refresh: {autoRefresh ? "On (every 2s)" : "Off"}</p>
-              <p>Filter: {filter === "all" ? "All levels" : filter}</p>
+            <div className="flex items-center space-x-2">
+              <Switch id="auto-refresh" checked={autoRefresh} onCheckedChange={setAutoRefresh} />
+              <Label htmlFor="auto-refresh">Auto-refresh</Label>
             </div>
 
-            <div className="pt-4 space-y-2">
-              <h4 className="font-medium">Quick Actions</h4>
-              <div className="space-y-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start bg-transparent"
-                  onClick={() => window.open("/api/test/auth-debug", "_blank")}
-                >
-                  Test Authentication
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start bg-transparent"
-                  onClick={() => window.open("/api/test/database-connection", "_blank")}
-                >
-                  Test Database Connection
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start bg-transparent"
-                  onClick={() => window.open("/admin", "_blank")}
-                >
-                  Admin Panel
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+            <div className="text-sm text-muted-foreground">Total logs: {logs.length}</div>
 
-      {/* Logs Display */}
+            <Separator orientation="vertical" className="h-6" />
+
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => testQuickAction("/api/test/auth-debug", "Authentication Test")}
+                disabled={testLoading}
+              >
+                <Shield className="h-4 w-4 mr-1" />
+                Test Authentication
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => testQuickAction("/api/test/database-connection", "Database Connection")}
+                disabled={testLoading}
+              >
+                <Database className="h-4 w-4 mr-1" />
+                Test Database Connection
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => testQuickAction("/api/admin/users", "Admin Panel")}
+                disabled={testLoading}
+              >
+                <User className="h-4 w-4 mr-1" />
+                Admin Panel
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Server Logs */}
       <Card>
         <CardHeader>
           <CardTitle>Server Logs ({logs.length})</CardTitle>
+          <CardDescription>
+            Auto-refresh: {autoRefresh ? "On" : "Off"} • Filter: {levelFilter === "all" ? "All levels" : levelFilter}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-2 max-h-96 overflow-y-auto">
             {logs.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">
-                No logs available. Try performing some actions or refresh the page.
-              </p>
+              <p className="text-muted-foreground text-center py-4">No logs available</p>
             ) : (
               logs.map((log) => (
-                <div key={log.id} className="border rounded-lg p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      {getLevelIcon(log.level)}
-                      <Badge variant={getLevelColor(log.level) as any}>{log.level.toUpperCase()}</Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(log.timestamp).toLocaleTimeString()}
-                      </span>
+                <div key={log.id} className="flex items-start gap-3 p-3 rounded-lg border bg-card">
+                  <Badge variant={getLevelColor(log.level)} className="mt-0.5">
+                    {log.level.toUpperCase()}
+                  </Badge>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm font-mono text-muted-foreground">{formatTime(log.timestamp)}</span>
+                      <span className="text-sm font-medium">{log.message}</span>
                     </div>
+                    {log.data && (
+                      <details className="mt-2">
+                        <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
+                          Show data
+                        </summary>
+                        <pre className="text-xs bg-muted p-2 rounded mt-1 overflow-auto">
+                          {JSON.stringify(log.data, null, 2)}
+                        </pre>
+                      </details>
+                    )}
                   </div>
-                  <p className="text-sm font-mono">{log.message}</p>
-                  {log.data && (
-                    <details className="text-xs">
-                      <summary className="cursor-pointer text-muted-foreground">Show data</summary>
-                      <pre className="bg-muted p-2 rounded mt-1 overflow-auto">{JSON.stringify(log.data, null, 2)}</pre>
-                    </details>
-                  )}
                 </div>
               ))
             )}

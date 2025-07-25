@@ -1,91 +1,114 @@
 import { type NextRequest, NextResponse } from "next/server"
 
+// In-memory log storage
 interface LogEntry {
   id: string
   timestamp: string
-  level: "info" | "warn" | "error"
+  level: "info" | "warn" | "error" | "debug"
   message: string
   data?: any
 }
 
-// In-memory log storage (in production, you'd use a proper logging service)
 let logs: LogEntry[] = []
+let logCounter = 0
 
-export function addLog(level: "info" | "warn" | "error", message: string, data?: any) {
+// Add log function that can be imported by other files
+export function addLog(level: LogEntry["level"], message: string, data?: any) {
   const logEntry: LogEntry = {
-    id: `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+    id: `log_${++logCounter}`,
     timestamp: new Date().toISOString(),
     level,
     message,
     data,
   }
 
-  logs.unshift(logEntry) // Add to beginning
+  logs.push(logEntry)
 
-  // Keep only the last 500 logs to prevent memory issues
-  if (logs.length > 500) {
-    logs = logs.slice(0, 500)
+  // Keep only last 1000 logs to prevent memory issues
+  if (logs.length > 1000) {
+    logs = logs.slice(-1000)
   }
 
-  // Also log to console for debugging
-  const logMethod = level === "error" ? console.error : level === "warn" ? console.warn : console.log
-  logMethod(`[${level.toUpperCase()}] ${message}`, data || "")
+  // Also log to console for server-side debugging
+  const consoleMessage = `[${level.toUpperCase()}] ${message}`
+  switch (level) {
+    case "error":
+      console.error(consoleMessage, data || "")
+      break
+    case "warn":
+      console.warn(consoleMessage, data || "")
+      break
+    case "debug":
+      console.debug(consoleMessage, data || "")
+      break
+    default:
+      console.log(consoleMessage, data || "")
+  }
 }
 
+// GET - Retrieve logs
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const level = searchParams.get("level")
-    const limit = Number.parseInt(searchParams.get("limit") || "50")
+    const limit = Number.parseInt(searchParams.get("limit") || "100")
 
     let filteredLogs = logs
 
-    // Filter by level if specified
     if (level && level !== "all") {
       filteredLogs = logs.filter((log) => log.level === level)
     }
 
-    // Apply limit
-    filteredLogs = filteredLogs.slice(0, limit)
+    // Return most recent logs first, limited by the limit parameter
+    const recentLogs = filteredLogs.slice(-limit).reverse()
 
     return NextResponse.json({
       success: true,
-      logs: filteredLogs,
-      total: logs.length,
+      logs: recentLogs,
+      total: filteredLogs.length,
     })
   } catch (error) {
-    console.error("Error fetching logs:", error)
-    return NextResponse.json({ error: "Failed to fetch logs" }, { status: 500 })
+    console.error("Error retrieving logs:", error)
+    return NextResponse.json({ success: false, error: "Failed to retrieve logs" }, { status: 500 })
   }
 }
 
+// POST - Add a new log entry
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
+    const { level, message, data } = body
 
-    if (body.action === "clear") {
-      logs = []
-      return NextResponse.json({ success: true, message: "Logs cleared" })
+    if (!level || !message) {
+      return NextResponse.json({ success: false, error: "Level and message are required" }, { status: 400 })
     }
 
-    if (body.level && body.message) {
-      addLog(body.level, body.message, body.data)
-      return NextResponse.json({ success: true, message: "Log added" })
-    }
+    addLog(level, message, data)
 
-    return NextResponse.json({ error: "Invalid request" }, { status: 400 })
+    return NextResponse.json({
+      success: true,
+      message: "Log entry added successfully",
+    })
   } catch (error) {
-    console.error("Error handling log request:", error)
-    return NextResponse.json({ error: "Failed to handle request" }, { status: 500 })
+    console.error("Error adding log:", error)
+    return NextResponse.json({ success: false, error: "Failed to add log entry" }, { status: 500 })
   }
 }
 
+// DELETE - Clear all logs
 export async function DELETE() {
   try {
     logs = []
-    return NextResponse.json({ success: true, message: "All logs cleared" })
+    logCounter = 0
+
+    addLog("info", "All logs cleared")
+
+    return NextResponse.json({
+      success: true,
+      message: "All logs cleared successfully",
+    })
   } catch (error) {
     console.error("Error clearing logs:", error)
-    return NextResponse.json({ error: "Failed to clear logs" }, { status: 500 })
+    return NextResponse.json({ success: false, error: "Failed to clear logs" }, { status: 500 })
   }
 }

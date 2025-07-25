@@ -42,7 +42,7 @@ export interface Recipe {
   servings: number
   ingredients?: string[]
   instructions?: string[]
-  image_url?: string
+  image_url?: string | null
   rating?: number
   review_count?: number
   view_count?: number
@@ -97,8 +97,8 @@ const initializeMockData = async () => {
   const ownerPasswordHash = await bcrypt.hash("Morton2121", 12)
   const ownerUser: User = {
     id: 1,
-    username: "Aaron Hirshka",
-    email: "aaronhirshka@gmail.com",
+    username: "Site Owner",
+    email: "owner@jtdrecipe.com",
     password_hash: ownerPasswordHash,
     role: "owner",
     status: "active",
@@ -589,14 +589,14 @@ export async function getAdminStats() {
 
 export async function initializeOwnerAccount() {
   try {
-    const ownerEmail = "aaronhirshka@gmail.com"
+    const ownerEmail = "owner@jtdrecipe.com"
     const existingOwner = await findUserByEmail(ownerEmail)
 
     if (!existingOwner) {
       const passwordHash = await bcrypt.hash("Morton2121", 12)
 
       await createUser({
-        username: "Aaron Hirshka",
+        username: "Site Owner",
         email: ownerEmail,
         password_hash: passwordHash,
         role: "owner",
@@ -604,9 +604,9 @@ export async function initializeOwnerAccount() {
         is_profile_verified: true,
       })
 
-      console.log("✅ Owner account created successfully for Aaron Hirshka")
+      console.log("✅ Owner account created successfully")
     } else {
-      console.log("✅ Owner account already exists for Aaron Hirshka")
+      console.log("✅ Owner account already exists")
     }
   } catch (error) {
     console.error("❌ Error initializing owner account:", error)

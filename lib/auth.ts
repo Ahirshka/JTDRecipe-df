@@ -12,7 +12,16 @@ import {
 } from "./neon"
 import type { User } from "@/lib/neon"
 
-const JWT_SECRET = process.env.JWT_SECRET || "fallback-secret-key"
+const JWT_SECRET = process.env.JWT_SECRET || "fallback-secret-key-for-development"
+
+export interface TokenPayload {
+  id: number
+  username: string
+  email: string
+  role: string
+  iat?: number
+  exp?: number
+}
 
 export interface AuthUser {
   id: number
@@ -52,35 +61,34 @@ export interface UserRating {
 }
 
 // Generate JWT token
-export function generateToken(user: User): string {
-  return jwt.sign(
-    {
-      id: user.id,
-      userId: user.id, // Include both for compatibility
-      username: user.username,
-      email: user.email,
-      role: user.role,
-    },
-    JWT_SECRET,
-    { expiresIn: "7d" },
-  )
+export function generateToken(payload: Omit<TokenPayload, "iat" | "exp">): string {
+  try {
+    return jwt.sign(payload, JWT_SECRET, {
+      expiresIn: "7d",
+      issuer: "jtdrecipe",
+      audience: "jtdrecipe-users",
+    })
+  } catch (error) {
+    console.error("❌ Error generating token:", error)
+    throw new Error("Failed to generate authentication token")
+  }
 }
 
 // Verify JWT token - REQUIRED EXPORT
-export function verifyToken(
-  token: string,
-): { id: number; userId: number; username: string; email: string; role: string } | null {
+export function verifyToken(token: string): TokenPayload | null {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as any
-    return {
-      id: decoded.id || decoded.userId,
-      userId: decoded.userId || decoded.id,
-      username: decoded.username,
-      email: decoded.email,
-      role: decoded.role,
-    }
+    const decoded = jwt.verify(token, JWT_SECRET, {
+      issuer: "jtdrecipe",
+      audience: "jtdrecipe-users",
+    }) as TokenPayload
+
+    return decoded
   } catch (error) {
-    console.error("Token verification failed:", error)
+    if (error instanceof jwt.JsonWebTokenError) {
+      console.log("🔍 Token verification failed:", error.message)
+    } else {
+      console.error("❌ Unexpected error verifying token:", error)
+    }
     return null
   }
 }
@@ -538,17 +546,33 @@ export async function warnUser(userId: string, reason: string): Promise<boolean>
 
 // Hash password
 export async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(password, 12)
+  try {
+    const saltRounds = 12
+    return await bcrypt.hash(password, saltRounds)
+  } catch (error) {
+    console.error("❌ Error hashing password:", error)
+    throw new Error("Failed to hash password")
+  }
 }
 
 // Verify password
-export async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  return bcrypt.compare(password, hash)
+export async function comparePassword(password: string, hash: string): Promise<boolean> {
+  try {
+    return await bcrypt.compare(password, hash)
+  } catch (error) {
+    console.error("❌ Error comparing password:", error)
+    return false
+  }
 }
 
 // Generate secure token
-export function generateSecureToken(): string {
-  return jwt.sign({ random: Math.random(), timestamp: Date.now() }, JWT_SECRET, { expiresIn: "1h" })
+export function generateRandomToken(length = 32): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+  let result = ""
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length))
+  }
+  return result
 }
 
 // Validate email format
@@ -679,3 +703,51 @@ export const ROLE_HIERARCHY: Record<UserRole, number> = {
   admin: 4,
   owner: 5,
 } as const
+
+// Check if token is expired
+export function isTokenExpired(token: string): boolean {
+  try {
+    const decoded = jwt.decode(token) as TokenPayload
+    if (!decoded || !decoded.exp) return true
+
+    const currentTime = Math.floor(Date.now() / 1000)
+    return decoded.exp < currentTime
+  } catch (error) {
+    console.error("❌ Error checking token expiration:", error)
+    return true
+  }
+}
+
+// Get token expiration date
+export function getTokenExpirationDate(token: string): Date | null {
+  try {
+    const decoded = jwt.decode(token) as TokenPayload
+    if (!decoded || !decoded.exp) return null
+
+    return new Date(decoded.exp * 1000)
+  } catch (error) {
+    console.error("❌ Error getting token expiration date:", error)
+    return null
+  }
+}
+
+// Refresh token
+export function refreshToken(token: string): string | null {
+  try {
+    const decoded = verifyToken(token)
+    if (!decoded) return null
+
+    // Generate new token with same payload but fresh expiration
+    const newPayload: Omit<TokenPayload, "iat" | "exp"> = {
+      id: decoded.id,
+      username: decoded.username,
+      email: decoded.email,
+      role: decoded.role,
+    }
+
+    return generateToken(newPayload)
+  } catch (error) {
+    console.error("❌ Error refreshing token:", error)
+    return null
+  }
+}

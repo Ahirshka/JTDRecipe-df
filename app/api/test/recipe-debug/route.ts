@@ -1,271 +1,255 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { verifyToken } from "@/lib/auth"
-import { findUserById, sql } from "@/lib/neon"
+import { getCurrentUserFromRequest } from "@/lib/server-auth"
+import { getAllRecipes, getPendingRecipes, createRecipe, getRecipeById } from "@/lib/neon"
 import { addLog } from "../server-logs/route"
 
-export async function POST(request: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
-    addLog("info", "[RECIPE-DEBUG] Starting recipe submission test")
+    addLog("info", "[RECIPE-DEBUG] Starting recipe system debug")
 
-    // Get auth token from request cookies
-    const authToken = request.cookies.get("auth-token")?.value || request.cookies.get("auth_token")?.value
-
-    if (!authToken) {
-      addLog("error", "[RECIPE-DEBUG] No authentication token found")
-      return NextResponse.json(
-        {
-          success: false,
-          error: "No authentication token found",
-          step: "authentication",
-        },
-        { status: 401 },
-      )
+    const debugInfo: any = {
+      timestamp: new Date().toISOString(),
+      authentication: {
+        user: null,
+        authenticated: false,
+      },
+      recipes: {
+        total: 0,
+        pending: 0,
+        approved: 0,
+        sampleRecipes: [],
+      },
+      database: {
+        connected: false,
+        error: null,
+      },
     }
 
-    addLog("info", "[RECIPE-DEBUG] Found auth token", { tokenPreview: authToken.substring(0, 20) + "..." })
-
-    // Verify the token
-    const decoded = verifyToken(authToken)
-    if (!decoded) {
-      addLog("error", "[RECIPE-DEBUG] Token verification failed")
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid token",
-          step: "token_verification",
-        },
-        { status: 401 },
-      )
-    }
-
-    addLog("info", "[RECIPE-DEBUG] Token verified", { userId: decoded.id, role: decoded.role })
-
-    // Get user from database
-    const dbUser = await findUserById(decoded.id)
-    if (!dbUser) {
-      addLog("error", "[RECIPE-DEBUG] User not found in database", { userId: decoded.id })
-      return NextResponse.json(
-        {
-          success: false,
-          error: "User not found",
-          step: "user_lookup",
-        },
-        { status: 404 },
-      )
-    }
-
-    addLog("info", "[RECIPE-DEBUG] User found", {
-      id: dbUser.id,
-      username: dbUser.username,
-      role: dbUser.role,
-      status: dbUser.status,
-    })
-
-    // Check user status
-    if (dbUser.status !== "active") {
-      addLog("error", "[RECIPE-DEBUG] User account not active", { status: dbUser.status })
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Account not active",
-          step: "user_status_check",
-        },
-        { status: 403 },
-      )
-    }
-
-    // Get request body
-    const body = await request.json()
-    const { title, category, difficulty, ingredients, instructions, description, prepTime, cookTime, servings } = body
-
-    addLog("info", "[RECIPE-DEBUG] Recipe data received", {
-      title,
-      category,
-      difficulty,
-      ingredientsCount: ingredients?.length || 0,
-      instructionsCount: instructions?.length || 0,
-    })
-
-    // Validate required fields
-    if (!title || !category || !difficulty || !ingredients || !instructions) {
-      addLog("error", "[RECIPE-DEBUG] Missing required fields", {
-        hasTitle: !!title,
-        hasCategory: !!category,
-        hasDifficulty: !!difficulty,
-        hasIngredients: !!ingredients,
-        hasInstructions: !!instructions,
-      })
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Missing required fields",
-          step: "validation",
-        },
-        { status: 400 },
-      )
-    }
-
-    // Test database connection
+    // Check authentication
     try {
-      addLog("info", "[RECIPE-DEBUG] Testing database connection")
-      const testQuery = await sql`SELECT 1 as test`
-      addLog("info", "[RECIPE-DEBUG] Database connection successful", { result: testQuery })
+      const currentUser = await getCurrentUserFromRequest(request)
+      debugInfo.authentication.authenticated = !!currentUser
+      debugInfo.authentication.user = currentUser
+        ? {
+            id: currentUser.id,
+            username: currentUser.username,
+            role: currentUser.role,
+            status: currentUser.status,
+          }
+        : null
+
+      addLog("info", "[RECIPE-DEBUG] Authentication check", {
+        authenticated: !!currentUser,
+        userId: currentUser?.id,
+        role: currentUser?.role,
+      })
+    } catch (authError) {
+      debugInfo.authentication.error = authError instanceof Error ? authError.message : "Unknown error"
+      addLog("error", "[RECIPE-DEBUG] Authentication check failed", { error: authError })
+    }
+
+    // Test recipe database operations
+    try {
+      // Get all recipes
+      const allRecipes = await getAllRecipes()
+      debugInfo.recipes.total = allRecipes.length
+      debugInfo.recipes.approved = allRecipes.filter((r) => r.moderation_status === "approved").length
+
+      // Get pending recipes
+      const pendingRecipes = await getPendingRecipes()
+      debugInfo.recipes.pending = pendingRecipes.length
+
+      // Sample recipes (first 3)
+      debugInfo.recipes.sampleRecipes = allRecipes.slice(0, 3).map((recipe) => ({
+        id: recipe.id,
+        title: recipe.title,
+        author_username: recipe.author_username,
+        category: recipe.category,
+        moderation_status: recipe.moderation_status,
+        created_at: recipe.created_at,
+      }))
+
+      debugInfo.database.connected = true
+
+      addLog("info", "[RECIPE-DEBUG] Recipe database operations", {
+        totalRecipes: allRecipes.length,
+        pendingRecipes: pendingRecipes.length,
+        approvedRecipes: debugInfo.recipes.approved,
+      })
     } catch (dbError) {
-      addLog("error", "[RECIPE-DEBUG] Database connection failed", { error: dbError })
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Database connection failed",
-          step: "database_connection",
-          details: dbError instanceof Error ? dbError.message : "Unknown database error",
-        },
-        { status: 500 },
-      )
+      debugInfo.database.connected = false
+      debugInfo.database.error = dbError instanceof Error ? dbError.message : "Unknown error"
+      addLog("error", "[RECIPE-DEBUG] Database operations failed", { error: dbError })
     }
 
-    // Check recipes table structure
-    try {
-      addLog("info", "[RECIPE-DEBUG] Checking recipes table structure")
-      const tableStructure = await sql`
-        SELECT column_name, data_type, is_nullable
-        FROM information_schema.columns 
-        WHERE table_schema = 'public' 
-        AND table_name = 'recipes'
-        ORDER BY ordinal_position
-      `
-
-      addLog("info", "[RECIPE-DEBUG] Recipes table structure", { columns: tableStructure })
-
-      if (tableStructure.length === 0) {
-        addLog("error", "[RECIPE-DEBUG] Recipes table does not exist")
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Recipes table does not exist",
-            step: "table_check",
-          },
-          { status: 500 },
-        )
-      }
-    } catch (tableError) {
-      addLog("error", "[RECIPE-DEBUG] Error checking recipes table", { error: tableError })
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Error checking recipes table",
-          step: "table_check",
-          details: tableError instanceof Error ? tableError.message : "Unknown table error",
-        },
-        { status: 500 },
-      )
-    }
-
-    // Try to insert the recipe using integer ID (auto-generated by database)
-    try {
-      addLog("info", "[RECIPE-DEBUG] Attempting to insert recipe")
-
-      // Process ingredients and instructions
-      const processedIngredients = Array.isArray(ingredients)
-        ? ingredients.filter((i) => i.trim())
-        : ingredients.split("\n").filter((i) => i.trim())
-
-      const processedInstructions = Array.isArray(instructions)
-        ? instructions.filter((i) => i.trim())
-        : instructions.split("\n").filter((i) => i.trim())
-
-      addLog("info", "[RECIPE-DEBUG] Processed data", {
-        ingredientsCount: processedIngredients.length,
-        instructionsCount: processedInstructions.length,
-        ingredients: processedIngredients,
-        instructions: processedInstructions,
-      })
-
-      // Insert recipe with auto-generated integer ID
-      const result = await sql`
-        INSERT INTO recipes (
-          title,
-          description,
-          author_id,
-          category,
-          difficulty,
-          prep_time_minutes,
-          cook_time_minutes,
-          servings,
-          moderation_status,
-          is_published,
-          created_at,
-          updated_at
-        ) VALUES (
-          ${title},
-          ${description || ""},
-          ${dbUser.id},
-          ${category},
-          ${difficulty},
-          ${Number.parseInt(prepTime) || 0},
-          ${Number.parseInt(cookTime) || 0},
-          ${Number.parseInt(servings) || 1},
-          ${"pending"},
-          ${false},
-          NOW(),
-          NOW()
-        ) RETURNING id, title, moderation_status
-      `
-
-      addLog("info", "[RECIPE-DEBUG] Recipe inserted successfully", { result })
-
-      const recipeId = result[0].id
-
-      // Store ingredients and instructions as JSON in the recipe record or separate tables
+    // Test recipe creation (if authenticated)
+    if (debugInfo.authentication.authenticated && debugInfo.authentication.user) {
       try {
-        // Try to update the recipe with ingredients and instructions if columns exist
-        await sql`
-          UPDATE recipes 
-          SET 
-            ingredients = ${JSON.stringify(processedIngredients)},
-            instructions = ${JSON.stringify(processedInstructions)}
-          WHERE id = ${recipeId}
-        `
-        addLog("info", "[RECIPE-DEBUG] Updated recipe with ingredients and instructions")
-      } catch (updateError) {
-        addLog("warn", "[RECIPE-DEBUG] Could not update recipe with ingredients/instructions", { error: updateError })
+        const testRecipeData = {
+          title: `Test Recipe ${Date.now()}`,
+          description: "This is a test recipe created by the debug endpoint",
+          author_id: debugInfo.authentication.user.id,
+          author_username: debugInfo.authentication.user.username,
+          category: "Test",
+          difficulty: "Easy",
+          prep_time_minutes: 10,
+          cook_time_minutes: 20,
+          servings: 4,
+          ingredients: ["Test ingredient 1", "Test ingredient 2"],
+          instructions: ["Test instruction 1", "Test instruction 2"],
+          image_url: null,
+        }
 
-        // If that fails, the columns might not exist, so the recipe is still valid without them
-        addLog("info", "[RECIPE-DEBUG] Recipe created successfully without ingredients/instructions columns")
+        const createdRecipe = await createRecipe(testRecipeData)
+        debugInfo.recipes.testRecipeCreated = {
+          id: createdRecipe.id,
+          title: createdRecipe.title,
+          moderation_status: createdRecipe.moderation_status,
+        }
+
+        addLog("info", "[RECIPE-DEBUG] Test recipe created", {
+          recipeId: createdRecipe.id,
+          title: createdRecipe.title,
+        })
+      } catch (createError) {
+        debugInfo.recipes.testRecipeError = createError instanceof Error ? createError.message : "Unknown error"
+        addLog("error", "[RECIPE-DEBUG] Test recipe creation failed", { error: createError })
       }
-
-      return NextResponse.json({
-        success: true,
-        message: "Recipe submitted successfully",
-        recipe: {
-          id: recipeId,
-          title: result[0].title,
-          status: result[0].moderation_status,
-          ingredients: processedIngredients,
-          instructions: processedInstructions,
-        },
-        step: "complete",
-      })
-    } catch (insertError) {
-      addLog("error", "[RECIPE-DEBUG] Error inserting recipe", { error: insertError })
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Error inserting recipe",
-          step: "recipe_insertion",
-          details: insertError instanceof Error ? insertError.message : "Unknown insertion error",
-          sqlError: insertError,
-        },
-        { status: 500 },
-      )
     }
+
+    addLog("info", "[RECIPE-DEBUG] Debug completed", {
+      authenticated: debugInfo.authentication.authenticated,
+      databaseConnected: debugInfo.database.connected,
+      totalRecipes: debugInfo.recipes.total,
+    })
+
+    return NextResponse.json({
+      success: true,
+      debug: debugInfo,
+      summary: {
+        systemHealthy:
+          debugInfo.database.connected &&
+          !debugInfo.database.error &&
+          (debugInfo.recipes.total >= 0 || debugInfo.recipes.pending >= 0),
+        issues: [
+          !debugInfo.database.connected && "Database connection failed",
+          debugInfo.database.error && `Database error: ${debugInfo.database.error}`,
+          !debugInfo.authentication.authenticated && "User not authenticated (optional for viewing recipes)",
+        ].filter(Boolean),
+      },
+    })
   } catch (error) {
-    addLog("error", "[RECIPE-DEBUG] Unexpected error", { error })
-    console.error("❌ [RECIPE-DEBUG] Unexpected error:", error)
+    addLog("error", "[RECIPE-DEBUG] Debug process failed", { error })
+    console.error("❌ [RECIPE-DEBUG] Error:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Unexpected error occurred",
-        step: "unexpected_error",
+        error: "Recipe debug process failed",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    )
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    addLog("info", "[RECIPE-DEBUG] Manual recipe test requested")
+
+    const currentUser = await getCurrentUserFromRequest(request)
+    if (!currentUser) {
+      addLog("error", "[RECIPE-DEBUG] Authentication required for recipe creation test")
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 })
+    }
+
+    const body = await request.json()
+    const { action, recipeId } = body
+
+    const testResult: any = {
+      action,
+      success: false,
+      data: null,
+      error: null,
+    }
+
+    try {
+      switch (action) {
+        case "create":
+          const testRecipe = await createRecipe({
+            title: `Manual Test Recipe ${Date.now()}`,
+            description: "Created via manual recipe debug test",
+            author_id: currentUser.id,
+            author_username: currentUser.username,
+            category: "Test",
+            difficulty: "Easy",
+            prep_time_minutes: 15,
+            cook_time_minutes: 30,
+            servings: 2,
+            ingredients: ["Manual test ingredient"],
+            instructions: ["Manual test instruction"],
+          })
+          testResult.success = true
+          testResult.data = {
+            id: testRecipe.id,
+            title: testRecipe.title,
+            moderation_status: testRecipe.moderation_status,
+          }
+          break
+
+        case "get":
+          if (!recipeId) {
+            throw new Error("Recipe ID required for get action")
+          }
+          const recipe = await getRecipeById(recipeId)
+          testResult.success = !!recipe
+          testResult.data = recipe
+            ? {
+                id: recipe.id,
+                title: recipe.title,
+                author_username: recipe.author_username,
+                moderation_status: recipe.moderation_status,
+              }
+            : null
+          break
+
+        case "list":
+          const recipes = await getAllRecipes()
+          testResult.success = true
+          testResult.data = {
+            count: recipes.length,
+            recipes: recipes.slice(0, 5).map((r) => ({
+              id: r.id,
+              title: r.title,
+              author_username: r.author_username,
+            })),
+          }
+          break
+
+        default:
+          throw new Error(`Unknown action: ${action}`)
+      }
+
+      addLog("info", "[RECIPE-DEBUG] Manual test completed", {
+        action,
+        success: testResult.success,
+        userId: currentUser.id,
+      })
+    } catch (error) {
+      testResult.error = error instanceof Error ? error.message : "Unknown error"
+      addLog("error", "[RECIPE-DEBUG] Manual test failed", { action, error })
+    }
+
+    return NextResponse.json({
+      success: true,
+      test: testResult,
+    })
+  } catch (error) {
+    addLog("error", "[RECIPE-DEBUG] Manual test process failed", { error })
+    console.error("❌ [RECIPE-DEBUG] Error:", error)
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Manual recipe test failed",
         details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
