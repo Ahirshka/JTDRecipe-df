@@ -1,49 +1,61 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { sql, initializeDatabase } from "@/lib/neon"
 import { getCurrentUser } from "@/lib/server-auth"
-import { hasPermission, verifyUser } from "@/lib/auth"
+import { hasPermission } from "@/lib/auth"
 
 export async function POST(request: NextRequest) {
   try {
-    console.log("🔍 Admin user verification request...")
+    console.log("🔍 Admin: User verification request...")
+    await initializeDatabase()
 
     // Check if user is authenticated and has admin permissions
     const user = await getCurrentUser()
     if (!user) {
-      console.log("❌ No authenticated user found")
       return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
     }
 
     if (!hasPermission(user.role, "admin")) {
-      console.log(`❌ User ${user.username} lacks admin permissions`)
-      return NextResponse.json({ success: false, error: "Admin permissions required" }, { status: 403 })
+      return NextResponse.json({ success: false, error: "Admin access required" }, { status: 403 })
     }
 
-    const { userId } = await request.json()
+    const { userId, action } = await request.json()
 
-    if (!userId) {
-      return NextResponse.json({ success: false, error: "User ID is required" }, { status: 400 })
+    if (!userId || !action) {
+      return NextResponse.json({ success: false, error: "User ID and action are required" }, { status: 400 })
     }
 
-    console.log(`🔄 Admin ${user.username} verifying user ${userId}`)
-
-    const success = await verifyUser(userId)
-
-    if (success) {
-      console.log(`✅ User ${userId} verified successfully`)
-      return NextResponse.json({
-        success: true,
-        message: "User verified successfully",
-      })
-    } else {
-      console.log(`❌ Failed to verify user ${userId}`)
-      return NextResponse.json({ success: false, error: "Failed to verify user" }, { status: 500 })
+    if (!["verify", "unverify"].includes(action)) {
+      return NextResponse.json(
+        { success: false, error: "Invalid action. Must be 'verify' or 'unverify'" },
+        { status: 400 },
+      )
     }
+
+    console.log(`🔄 Admin: ${action}ing user ${userId} by ${user.username}`)
+
+    // Update user verification status
+    await sql`
+      UPDATE users 
+      SET 
+        is_profile_verified = ${action === "verify"},
+        updated_at = NOW()
+      WHERE id = ${userId}
+    `
+
+    console.log(`✅ Admin: User ${userId} ${action}ed successfully`)
+
+    return NextResponse.json({
+      success: true,
+      message: `User ${action}ed successfully`,
+      action,
+      userId,
+    })
   } catch (error) {
-    console.error("❌ Error verifying user:", error)
+    console.error("❌ Admin: Error processing user verification:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Failed to verify user",
+        error: "Failed to process verification",
         details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },

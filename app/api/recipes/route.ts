@@ -1,295 +1,162 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { sql, initializeDatabase } from "@/lib/neon"
 import { getCurrentUser } from "@/lib/server-auth"
+import { createRecipe, getAllRecipes } from "@/lib/neon"
 
 export async function GET() {
   try {
-    console.log("🔍 Fetching all approved recipes...")
-    await initializeDatabase()
+    console.log("🔍 [RECIPES-GET] Fetching all recipes")
 
-    const recipes = await sql`
-      SELECT 
-        r.*,
-        u.username as author_username,
-        COALESCE(r.rating, 0) as rating,
-        COALESCE(r.review_count, 0) as review_count,
-        COALESCE(r.view_count, 0) as view_count,
-        COALESCE(
-          json_agg(
-            DISTINCT jsonb_build_object(
-              'ingredient', ri.ingredient,
-              'amount', ri.amount,
-              'unit', ri.unit
-            )
-          ) FILTER (WHERE ri.ingredient IS NOT NULL), 
-          '[]'::json
-        ) as ingredients,
-        COALESCE(
-          json_agg(
-            DISTINCT jsonb_build_object(
-              'instruction', inst.instruction,
-              'step_number', inst.step_number
-            )
-            ORDER BY inst.step_number
-          ) FILTER (WHERE inst.instruction IS NOT NULL), 
-          '[]'::json
-        ) as instructions,
-        COALESCE(
-          array_agg(DISTINCT rt.tag) FILTER (WHERE rt.tag IS NOT NULL), 
-          ARRAY[]::text[]
-        ) as tags
-      FROM recipes r
-      JOIN users u ON r.author_id = u.id
-      LEFT JOIN recipe_ingredients ri ON r.id = ri.recipe_id
-      LEFT JOIN recipe_instructions inst ON r.id = inst.recipe_id
-      LEFT JOIN recipe_tags rt ON r.id = rt.recipe_id
-      WHERE r.moderation_status = 'approved' 
-        AND r.is_published = true
-      GROUP BY r.id, u.username
-      ORDER BY r.created_at DESC
-    `
+    const recipes = await getAllRecipes()
 
-    console.log(`✅ Found ${recipes.length} approved recipes`)
+    console.log("✅ [RECIPES-GET] Found recipes:", recipes.length)
 
     return NextResponse.json({
       success: true,
-      recipes: recipes || [],
+      recipes,
     })
   } catch (error) {
-    console.error("❌ Error fetching recipes:", error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: "Failed to fetch recipes",
-        recipes: [],
-      },
-      { status: 500 },
-    )
+    console.error("❌ [RECIPES-GET] Error:", error)
+    return NextResponse.json({ error: "Failed to fetch recipes" }, { status: 500 })
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    console.log("🔍 Creating new recipe...")
-    await initializeDatabase()
+    console.log("🔍 [RECIPES-POST] Processing recipe submission")
 
-    // Debug: Log all cookies
-    const cookieStore = await request.cookies
-    console.log(
-      "🍪 Available cookies:",
-      Array.from(cookieStore.entries()).map(([name, cookie]) => ({
-        name,
-        value: cookie.value?.substring(0, 20) + "...",
-      })),
-    )
-
-    // Get authenticated user using server-side auth
+    // Get current user
     const user = await getCurrentUser()
+
     if (!user) {
-      console.log("❌ No authenticated user found")
-
-      // Additional debugging - check if user is in auth context
-      const authHeader = request.headers.get("authorization")
-      console.log("🔍 Auth header:", authHeader ? "Present" : "Missing")
-
+      console.log("❌ [RECIPES-POST] No authenticated user found")
       return NextResponse.json(
         {
-          success: false,
-          error: "Authentication required. Please log in to submit recipes.",
-          debug: {
-            cookiesFound: Array.from(cookieStore.entries()).length,
-            authHeader: !!authHeader,
-          },
+          error: "Authentication required",
+          message: "Please log in to submit recipes",
+          debug: "No user found in getCurrentUser()",
         },
         { status: 401 },
       )
     }
 
-    console.log(`✅ Authenticated user: ${user.username} (ID: ${user.id}) - Role: ${user.role}`)
+    console.log("✅ [RECIPES-POST] Authenticated user:", {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+    })
 
-    // All authenticated users can submit recipes - no role restriction needed
     if (user.status !== "active") {
-      console.log(`❌ User account not active: ${user.status}`)
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Your account is not active. Please contact support.",
-        },
-        { status: 403 },
-      )
+      console.log("❌ [RECIPES-POST] User account not active:", user.status)
+      return NextResponse.json({ error: "Account not active" }, { status: 403 })
     }
 
-    // Parse request body
     const body = await request.json()
-    console.log("📝 Recipe data received:", {
-      title: body.title,
-      category: body.category,
-      difficulty: body.difficulty,
-      ingredientCount: Array.isArray(body.ingredients) ? body.ingredients.length : 0,
-      instructionCount: Array.isArray(body.instructions) ? body.instructions.length : 0,
-    })
+    console.log("🔍 [RECIPES-POST] Request body received:", Object.keys(body))
+
+    const {
+      title,
+      description,
+      category,
+      difficulty,
+      prepTime,
+      cookTime,
+      servings,
+      ingredients,
+      instructions,
+      imageUrl,
+    } = body
 
     // Validate required fields
-    const requiredFields = ["title", "category", "difficulty", "ingredients", "instructions"]
-    for (const field of requiredFields) {
-      if (!body[field]) {
-        console.log(`❌ Missing required field: ${field}`)
-        return NextResponse.json(
-          {
-            success: false,
-            error: `Missing required field: ${field}`,
-          },
-          { status: 400 },
-        )
-      }
+    if (!title || !category || !difficulty || !ingredients || !instructions) {
+      console.log("❌ [RECIPES-POST] Missing required fields")
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
 
-    // Parse ingredients and instructions if they're strings
-    let ingredients = body.ingredients
-    let instructions = body.instructions
+    // Process ingredients and instructions
+    let processedIngredients: string[]
+    let processedInstructions: string[]
 
-    if (typeof ingredients === "string") {
-      ingredients = ingredients
-        .split("\n")
-        .filter((line) => line.trim())
-        .map((line, index) => ({
-          ingredient: line.trim(),
-          amount: "",
-          unit: "",
-        }))
-    }
-
-    if (typeof instructions === "string") {
-      instructions = instructions
-        .split("\n")
-        .filter((line) => line.trim())
-        .map((line, index) => ({
-          instruction: line.trim(),
-          step_number: index + 1,
-        }))
-    }
-
-    // Validate ingredients and instructions arrays
-    if (!Array.isArray(ingredients) || ingredients.length === 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "At least one ingredient is required",
-        },
-        { status: 400 },
-      )
-    }
-
-    if (!Array.isArray(instructions) || instructions.length === 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "At least one instruction is required",
-        },
-        { status: 400 },
-      )
-    }
-
-    // Generate unique recipe ID
-    const recipeId = `recipe_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-
-    console.log("🔄 Creating recipe with ID:", recipeId)
-
-    // Use database transaction to ensure data consistency
-    await sql.begin(async (sql) => {
-      // Insert main recipe record
-      console.log("📝 Inserting main recipe...")
-      await sql`
-        INSERT INTO recipes (
-          id, title, description, author_id, category, difficulty,
-          prep_time_minutes, cook_time_minutes, servings, image_url,
-          moderation_status, is_published, created_at, updated_at
-        ) VALUES (
-          ${recipeId}, 
-          ${body.title}, 
-          ${body.description || ""}, 
-          ${user.id},
-          ${body.category}, 
-          ${body.difficulty}, 
-          ${Number(body.prep_time_minutes) || 0}, 
-          ${Number(body.cook_time_minutes) || 0}, 
-          ${Number(body.servings) || 1}, 
-          ${body.image_url || null}, 
-          'pending', 
-          false, 
-          NOW(), 
-          NOW()
-        )
-      `
-
-      // Insert ingredients
-      console.log("🥕 Inserting ingredients...")
-      for (const ingredient of ingredients) {
-        const ingredientText = typeof ingredient === "string" ? ingredient : ingredient.ingredient
-        if (ingredientText && ingredientText.trim()) {
-          await sql`
-            INSERT INTO recipe_ingredients (recipe_id, ingredient, amount, unit)
-            VALUES (
-              ${recipeId}, 
-              ${ingredientText.trim()}, 
-              ${typeof ingredient === "object" ? ingredient.amount || "" : ""}, 
-              ${typeof ingredient === "object" ? ingredient.unit || "" : ""}
-            )
-          `
-        }
+    try {
+      // Handle ingredients - can be string or array
+      if (typeof ingredients === "string") {
+        processedIngredients = ingredients
+          .split("\n")
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0)
+      } else if (Array.isArray(ingredients)) {
+        processedIngredients = ingredients.filter((item) => item && item.trim().length > 0)
+      } else {
+        throw new Error("Invalid ingredients format")
       }
 
-      // Insert instructions
-      console.log("📋 Inserting instructions...")
-      for (let i = 0; i < instructions.length; i++) {
-        const instruction = instructions[i]
-        const instructionText = typeof instruction === "string" ? instruction : instruction.instruction
-        if (instructionText && instructionText.trim()) {
-          await sql`
-            INSERT INTO recipe_instructions (recipe_id, instruction, step_number)
-            VALUES (
-              ${recipeId}, 
-              ${instructionText.trim()}, 
-              ${i + 1}
-            )
-          `
-        }
+      // Handle instructions - can be string or array
+      if (typeof instructions === "string") {
+        processedInstructions = instructions
+          .split("\n")
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0)
+      } else if (Array.isArray(instructions)) {
+        processedInstructions = instructions.filter((item) => item && item.trim().length > 0)
+      } else {
+        throw new Error("Invalid instructions format")
       }
 
-      // Insert tags
-      if (body.tags && Array.isArray(body.tags)) {
-        console.log("🏷️ Inserting tags...")
-        for (const tag of body.tags) {
-          if (tag && tag.trim()) {
-            await sql`
-              INSERT INTO recipe_tags (recipe_id, tag)
-              VALUES (${recipeId}, ${tag.trim()})
-            `
-          }
-        }
-      }
+      console.log("✅ [RECIPES-POST] Processed ingredients:", processedIngredients.length)
+      console.log("✅ [RECIPES-POST] Processed instructions:", processedInstructions.length)
+    } catch (error) {
+      console.error("❌ [RECIPES-POST] Error processing ingredients/instructions:", error)
+      return NextResponse.json({ error: "Invalid ingredients or instructions format" }, { status: 400 })
+    }
+
+    // Create recipe data
+    const recipeData = {
+      title: title.trim(),
+      description: description?.trim() || "",
+      author_id: user.id,
+      author_username: user.username,
+      category: category.trim(),
+      difficulty: difficulty.trim(),
+      prep_time_minutes: Number.parseInt(prepTime) || 0,
+      cook_time_minutes: Number.parseInt(cookTime) || 0,
+      servings: Number.parseInt(servings) || 1,
+      ingredients: processedIngredients,
+      instructions: processedInstructions,
+      image_url: imageUrl?.trim() || null,
+    }
+
+    console.log("🔍 [RECIPES-POST] Creating recipe with data:", {
+      title: recipeData.title,
+      author_id: recipeData.author_id,
+      author_username: recipeData.author_username,
+      category: recipeData.category,
+      difficulty: recipeData.difficulty,
+      ingredientsCount: recipeData.ingredients.length,
+      instructionsCount: recipeData.instructions.length,
     })
 
-    console.log("✅ Recipe created successfully and sent for moderation")
+    // Create the recipe
+    const recipe = await createRecipe(recipeData)
+
+    console.log("✅ [RECIPES-POST] Recipe created successfully:", recipe.id)
 
     return NextResponse.json({
       success: true,
-      message: "Recipe submitted successfully and is pending moderation",
+      message: "Recipe submitted successfully and is pending review",
       recipe: {
-        id: recipeId,
-        title: body.title,
-        moderation_status: "pending",
-        author_username: user.username,
-        author_id: user.id,
+        id: recipe.id,
+        title: recipe.title,
+        status: "pending",
       },
     })
   } catch (error) {
-    console.error("❌ Error creating recipe:", error)
+    console.error("❌ [RECIPES-POST] Error creating recipe:", error)
     return NextResponse.json(
       {
-        success: false,
         error: "Failed to create recipe",
-        details: error instanceof Error ? error.message : "Unknown error",
+        message: "An error occurred while submitting your recipe",
+        debug: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )

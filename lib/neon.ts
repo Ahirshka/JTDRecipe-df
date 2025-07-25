@@ -2,7 +2,7 @@ import { neon } from "@neondatabase/serverless"
 import bcrypt from "bcryptjs"
 
 if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL is not set")
+  throw new Error("DATABASE_URL environment variable is not set")
 }
 
 export const sql = neon(process.env.DATABASE_URL)
@@ -13,40 +13,34 @@ export interface User {
   email: string
   password_hash: string
   role: string
-  avatar_url?: string
+  status: string
   is_verified: boolean
   is_profile_verified: boolean
+  avatar_url?: string
   bio?: string
   location?: string
   website?: string
-  status: string
   created_at: string
   updated_at: string
   last_login_at?: string
-  warning_count?: number
-  suspension_reason?: string
-  suspension_expires_at?: string
 }
 
 export interface Recipe {
-  id: number
+  id: string
   title: string
-  description?: string
+  description: string
   author_id: number
-  author_username: string
   category: string
   difficulty: string
   prep_time_minutes: number
   cook_time_minutes: number
   servings: number
-  ingredients: string
-  instructions: string
   image_url?: string
   rating: number
-  rating_count: number
   review_count: number
   view_count: number
   moderation_status: string
+  moderation_notes?: string
   is_published: boolean
   created_at: string
   updated_at: string
@@ -85,16 +79,17 @@ export interface Session {
 // Stack Auth configuration - REQUIRED EXPORT
 export function getStackAuthConfig() {
   return {
-    projectId: process.env.STACK_PROJECT_ID || "",
-    jwksUrl: process.env.STACK_JWKS_URL || "",
-    apiUrl: process.env.STACK_API_URL || "",
-    clientId: process.env.GOOGLE_CLIENT_ID || "",
+    projectId: process.env.STACK_PROJECT_ID,
+    clientKey: process.env.STACK_CLIENT_KEY,
+    serverKey: process.env.STACK_SERVER_KEY,
+    baseUrl: process.env.STACK_BASE_URL || process.env.STACK_API_URL,
+    jwksUrl: process.env.STACK_JWKS_URL,
   }
 }
 
 // Mock data for when database is not available
 const mockUsers = new Map<number, User>()
-const mockRecipes = new Map<number, Recipe>()
+const mockRecipes = new Map<string, Recipe>()
 const mockSessions = new Map<number, Session>()
 const mockComments = new Map<number, Comment>()
 const mockRatings = new Map<number, Rating>()
@@ -110,12 +105,12 @@ const initializeMockData = async () => {
     email: "aaronhirshka@gmail.com",
     password_hash: ownerPasswordHash,
     role: "owner",
+    status: "active",
     is_verified: true,
     is_profile_verified: true,
     bio: "",
     location: "",
     website: "",
-    status: "active",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     last_login_at: new Date().toISOString(),
@@ -128,12 +123,12 @@ const initializeMockData = async () => {
     email: "admin@justthedamnrecipe.net",
     password_hash: adminPasswordHash,
     role: "admin",
+    status: "active",
     is_verified: true,
     is_profile_verified: true,
     bio: "",
     location: "",
     website: "",
-    status: "active",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     last_login_at: new Date().toISOString(),
@@ -144,21 +139,24 @@ const initializeMockData = async () => {
 
   // Add sample recipes
   const sampleRecipe: Recipe = {
-    id: 1,
+    id: "recipe_1",
     title: "Perfect Scrambled Eggs",
     description: "Creamy, fluffy scrambled eggs made the right way",
     author_id: 1,
-    author_username: "Aaron Hirshka",
     category: "Breakfast",
     difficulty: "Easy",
     prep_time_minutes: 2,
     cook_time_minutes: 5,
     servings: 2,
-    ingredients: "3 large eggs\n2 tbsp butter\n2 tbsp heavy cream\nSalt and pepper to taste",
-    instructions:
-      "1. Crack eggs into bowl\n2. Add cream and whisk\n3. Heat butter in pan\n4. Add eggs and stir constantly\n5. Remove from heat when still slightly wet",
+    ingredients: ["3 large eggs", "2 tbsp butter", "2 tbsp heavy cream", "Salt and pepper to taste"],
+    instructions: [
+      "Crack eggs into bowl",
+      "Add cream and whisk",
+      "Heat butter in pan",
+      "Add eggs and stir constantly",
+      "Remove from heat when still slightly wet",
+    ],
     rating: 4.8,
-    rating_count: 10,
     review_count: 24,
     view_count: 156,
     moderation_status: "approved",
@@ -199,37 +197,23 @@ const initializeMockData = async () => {
 initializeMockData()
 
 // Helper function to find user by ID
-export async function findUserById(id: number) {
+export async function findUserById(id: number): Promise<User | null> {
   try {
-    const users = await sql`
-      SELECT id, username, email, role, status, is_verified, is_profile_verified, avatar_url, bio, location, website, created_at, updated_at, last_login_at, warning_count, suspension_reason, suspension_expires_at
-      FROM users 
-      WHERE id = ${id}
-    `
+    const users = await sql`SELECT * FROM users WHERE id = ${id} LIMIT 1`
     return users[0] || null
   } catch (error) {
     console.error("Error finding user by ID:", error)
-    return mockUsers.get(id) || null
+    return null
   }
 }
 
 // Helper function to find user by email
-export async function findUserByEmail(email: string) {
+export async function findUserByEmail(email: string): Promise<User | null> {
   try {
-    const users = await sql`
-      SELECT id, username, email, password_hash, role, status, is_verified, is_profile_verified, avatar_url, bio, location, website, created_at, warning_count, suspension_reason, suspension_expires_at
-      FROM users 
-      WHERE email = ${email}
-    `
+    const users = await sql`SELECT * FROM users WHERE email = ${email} LIMIT 1`
     return users[0] || null
   } catch (error) {
     console.error("Error finding user by email:", error)
-    // Check mock data
-    for (const user of mockUsers.values()) {
-      if (user.email === email) {
-        return user
-      }
-    }
     return null
   }
 }
@@ -237,11 +221,7 @@ export async function findUserByEmail(email: string) {
 // Get all users - REQUIRED EXPORT
 export async function getAllUsers(): Promise<User[]> {
   try {
-    const users = await sql`
-      SELECT id, username, email, role, status, is_verified, is_profile_verified, avatar_url, bio, location, website, created_at, updated_at, last_login_at, warning_count, suspension_reason, suspension_expires_at
-      FROM users 
-      ORDER BY created_at DESC
-    `
+    const users = await sql`SELECT * FROM users ORDER BY created_at DESC`
     return users as User[]
   } catch (error) {
     console.error("Error getting all users:", error)
@@ -265,38 +245,11 @@ export async function updateUserById(id: number, updates: Partial<User>): Promis
     return (result[0] as User) || null
   } catch (error) {
     console.error("Error updating user by ID:", error)
-    // Update mock data
-    const user = mockUsers.get(id)
-    if (user) {
-      const updatedUser = { ...user, ...updates, updated_at: new Date().toISOString() }
-      mockUsers.set(id, updatedUser)
-      return updatedUser
-    }
     return null
   }
 }
 
-export async function createUser(userData: {
-  username: string
-  email: string
-  password_hash: string
-  role: string
-  is_verified: boolean
-  is_profile_verified: boolean
-}): Promise<User> {
-  try {
-    const result = await sql`
-      INSERT INTO users (username, email, password_hash, role, is_verified, is_profile_verified, created_at, updated_at)
-      VALUES (${userData.username}, ${userData.email}, ${userData.password_hash}, ${userData.role}, ${userData.is_verified}, ${userData.is_profile_verified}, NOW(), NOW())
-      RETURNING *
-    `
-    return result[0] as User
-  } catch (error) {
-    console.error("Error creating user:", error)
-    throw error
-  }
-}
-
+// Update user - REQUIRED EXPORT
 export async function updateUser(id: number, updates: Partial<User>): Promise<User | null> {
   try {
     const setClause = Object.keys(updates)
@@ -312,7 +265,7 @@ export async function updateUser(id: number, updates: Partial<User>): Promise<Us
     return (result[0] as User) || null
   } catch (error) {
     console.error("Error updating user:", error)
-    // Update mock data
+    // Update mock data as fallback
     const user = mockUsers.get(id)
     if (user) {
       const updatedUser = { ...user, ...updates, updated_at: new Date().toISOString() }
@@ -320,6 +273,37 @@ export async function updateUser(id: number, updates: Partial<User>): Promise<Us
       return updatedUser
     }
     return null
+  }
+}
+
+export async function createUser(userData: {
+  username: string
+  email: string
+  password_hash: string
+  role?: string
+}): Promise<User> {
+  try {
+    const users = await sql`
+      INSERT INTO users (username, email, password_hash, role, created_at, updated_at)
+      VALUES (${userData.username}, ${userData.email}, ${userData.password_hash}, ${userData.role || "user"}, NOW(), NOW())
+      RETURNING *
+    `
+    return users[0]
+  } catch (error) {
+    console.error("Error creating user:", error)
+    throw error
+  }
+}
+
+export async function updateUserLoginTime(userId: number): Promise<void> {
+  try {
+    await sql`
+      UPDATE users 
+      SET last_login_at = NOW(), updated_at = NOW()
+      WHERE id = ${userId}
+    `
+  } catch (error) {
+    console.error("Error updating user login time:", error)
   }
 }
 
@@ -357,7 +341,7 @@ export async function findSessionByToken(token: string): Promise<Session | null>
   } catch (error) {
     console.error("Error finding session:", error)
     // Check mock sessions
-    for (const session of mockSessions.values()) {
+    for (const [id, session] of mockSessions.entries()) {
       if (session.token === token && new Date(session.expires_at) > new Date()) {
         return session
       }
@@ -396,8 +380,6 @@ export async function initializeOwnerAccount() {
         email: ownerEmail,
         password_hash: passwordHash,
         role: "owner",
-        is_verified: true,
-        is_profile_verified: true,
       })
 
       console.log("Owner account created successfully for Aaron Hirshka")
@@ -413,102 +395,20 @@ export async function initializeOwnerAccount() {
 export async function getAllRecipes(): Promise<Recipe[]> {
   try {
     const recipes = await sql`
-      SELECT 
-        id,
-        title,
-        description,
-        author_id,
-        author_username,
-        category,
-        difficulty,
-        prep_time_minutes,
-        cook_time_minutes,
-        servings,
-        ingredients,
-        instructions,
-        image_url,
-        COALESCE(rating::DECIMAL, 0.0) as rating,
-        COALESCE(rating_count, 0) as rating_count,
-        COALESCE(review_count, 0) as review_count,
-        COALESCE(view_count, 0) as view_count,
-        moderation_status,
-        is_published,
-        created_at,
-        updated_at
-      FROM recipes 
+      SELECT * FROM recipes 
       WHERE moderation_status = 'approved' AND is_published = true
       ORDER BY created_at DESC
     `
-
-    return recipes.map((recipe) => ({
-      ...recipe,
-      rating: Number(recipe.rating) || 0,
-      rating_count: Number(recipe.rating_count) || 0,
-      review_count: Number(recipe.review_count) || 0,
-      view_count: Number(recipe.view_count) || 0,
-      prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
-      cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
-      servings: Number(recipe.servings) || 1,
-    })) as Recipe[]
+    return recipes
   } catch (error) {
-    console.error("Error getting recipes:", error)
+    console.error("Error getting all recipes:", error)
     return Array.from(mockRecipes.values()).filter((r) => r.moderation_status === "approved")
-  }
-}
-
-export async function getRecipeById(id: number): Promise<Recipe | null> {
-  try {
-    const recipes = await sql`
-      SELECT 
-        id,
-        title,
-        description,
-        author_id,
-        author_username,
-        category,
-        difficulty,
-        prep_time_minutes,
-        cook_time_minutes,
-        servings,
-        ingredients,
-        instructions,
-        image_url,
-        COALESCE(rating::DECIMAL, 0.0) as rating,
-        COALESCE(rating_count, 0) as rating_count,
-        COALESCE(review_count, 0) as review_count,
-        COALESCE(view_count, 0) as view_count,
-        moderation_status,
-        is_published,
-        created_at,
-        updated_at
-      FROM recipes 
-      WHERE id = ${id}
-    `
-
-    if (recipes[0]) {
-      const recipe = recipes[0]
-      return {
-        ...recipe,
-        rating: Number(recipe.rating) || 0,
-        rating_count: Number(recipe.rating_count) || 0,
-        review_count: Number(recipe.review_count) || 0,
-        view_count: Number(recipe.view_count) || 0,
-        prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
-        cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
-        servings: Number(recipe.servings) || 1,
-      } as Recipe
-    }
-
-    return null
-  } catch (error) {
-    console.error("Error getting recipe by ID:", error)
-    return mockRecipes.get(id) || null
   }
 }
 
 export async function createRecipe(recipeData: {
   title: string
-  description?: string
+  description: string
   author_id: number
   author_username: string
   category: string
@@ -516,52 +416,30 @@ export async function createRecipe(recipeData: {
   prep_time_minutes: number
   cook_time_minutes: number
   servings: number
-  ingredients: string
-  instructions: string
+  ingredients: any[]
+  instructions: any[]
   image_url?: string
 }): Promise<Recipe> {
   try {
-    console.log("🔍 Creating recipe with data:", recipeData)
+    const recipeId = `recipe_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
 
-    const result = await sql`
+    const recipes = await sql`
       INSERT INTO recipes (
-        title, description, author_id, author_username, category, difficulty,
-        prep_time_minutes, cook_time_minutes, servings, ingredients, instructions,
-        image_url, rating, rating_count, review_count, view_count,
+        id, title, description, author_id, category, difficulty,
+        prep_time_minutes, cook_time_minutes, servings, image_url,
         moderation_status, is_published, created_at, updated_at
       ) VALUES (
-        ${recipeData.title}, 
-        ${recipeData.description || ""}, 
-        ${recipeData.author_id},
-        ${recipeData.author_username}, 
-        ${recipeData.category}, 
-        ${recipeData.difficulty},
-        ${recipeData.prep_time_minutes}, 
-        ${recipeData.cook_time_minutes}, 
-        ${recipeData.servings},
-        ${recipeData.ingredients}, 
-        ${recipeData.instructions}, 
-        ${recipeData.image_url || ""},
-        0.0, 0, 0, 0,
+        ${recipeId}, ${recipeData.title}, ${recipeData.description}, ${recipeData.author_id},
+        ${recipeData.category}, ${recipeData.difficulty}, ${recipeData.prep_time_minutes},
+        ${recipeData.cook_time_minutes}, ${recipeData.servings}, ${recipeData.image_url || null},
         'pending', false, NOW(), NOW()
-      ) RETURNING *
+      )
+      RETURNING *
     `
 
-    console.log("✅ Recipe created successfully:", result[0])
-
-    const recipe = result[0]
-    return {
-      ...recipe,
-      rating: Number(recipe.rating) || 0,
-      rating_count: Number(recipe.rating_count) || 0,
-      review_count: Number(recipe.review_count) || 0,
-      view_count: Number(recipe.view_count) || 0,
-      prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
-      cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
-      servings: Number(recipe.servings) || 1,
-    } as Recipe
+    return recipes[0]
   } catch (error) {
-    console.error("❌ Error creating recipe:", error)
+    console.error("Error creating recipe:", error)
     throw error
   }
 }
@@ -569,43 +447,12 @@ export async function createRecipe(recipeData: {
 export async function getPendingRecipes(): Promise<Recipe[]> {
   try {
     const result = await sql`
-      SELECT 
-        id,
-        title,
-        description,
-        author_id,
-        author_username,
-        category,
-        difficulty,
-        prep_time_minutes,
-        cook_time_minutes,
-        servings,
-        ingredients,
-        instructions,
-        image_url,
-        COALESCE(rating::DECIMAL, 0.0) as rating,
-        COALESCE(rating_count, 0) as rating_count,
-        COALESCE(review_count, 0) as review_count,
-        COALESCE(view_count, 0) as view_count,
-        moderation_status,
-        is_published,
-        created_at,
-        updated_at
-      FROM recipes 
+      SELECT * FROM recipes 
       WHERE moderation_status = 'pending' 
       ORDER BY created_at DESC
     `
 
-    return result.map((recipe) => ({
-      ...recipe,
-      rating: Number(recipe.rating) || 0,
-      rating_count: Number(recipe.rating_count) || 0,
-      review_count: Number(recipe.review_count) || 0,
-      view_count: Number(recipe.view_count) || 0,
-      prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
-      cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
-      servings: Number(recipe.servings) || 1,
-    })) as Recipe[]
+    return result
   } catch (error) {
     console.error("Error getting pending recipes:", error)
     return Array.from(mockRecipes.values()).filter((r) => r.moderation_status === "pending")
@@ -613,7 +460,7 @@ export async function getPendingRecipes(): Promise<Recipe[]> {
 }
 
 export async function moderateRecipe(
-  id: number,
+  id: string,
   action: "approve" | "reject",
   moderatorId: number,
 ): Promise<Recipe | null> {
@@ -628,21 +475,7 @@ export async function moderateRecipe(
       RETURNING *
     `
 
-    if (result[0]) {
-      const recipe = result[0]
-      return {
-        ...recipe,
-        rating: Number(recipe.rating) || 0,
-        rating_count: Number(recipe.rating_count) || 0,
-        review_count: Number(recipe.review_count) || 0,
-        view_count: Number(recipe.view_count) || 0,
-        prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
-        cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
-        servings: Number(recipe.servings) || 1,
-      } as Recipe
-    }
-
-    return null
+    return (result[0] as Recipe) || null
   } catch (error) {
     console.error("Error moderating recipe:", error)
     return null
@@ -669,36 +502,32 @@ export async function getAdminStats() {
 }
 
 // Helper function to initialize database
-export async function initializeDatabase() {
+export async function initializeDatabase(): Promise<void> {
   try {
-    console.log("🔍 Initializing database...")
+    console.log("🔄 Initializing database...")
 
-    // Create users table
+    // Create users table if it doesn't exist
     await sql`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
-        username VARCHAR(255) NOT NULL,
+        username VARCHAR(50) UNIQUE NOT NULL,
         email VARCHAR(255) UNIQUE NOT NULL,
-        password_hash VARCHAR(255) NOT NULL,
-        role VARCHAR(50) DEFAULT 'user',
-        status VARCHAR(50) DEFAULT 'active',
-        email_verified BOOLEAN DEFAULT false,
+        password_hash TEXT NOT NULL,
+        role VARCHAR(20) DEFAULT 'user',
+        status VARCHAR(20) DEFAULT 'active',
         is_verified BOOLEAN DEFAULT false,
         is_profile_verified BOOLEAN DEFAULT false,
         avatar_url TEXT,
         bio TEXT,
-        location VARCHAR(255),
+        location VARCHAR(100),
         website VARCHAR(255),
-        warning_count INTEGER DEFAULT 0,
-        suspension_reason TEXT,
-        suspension_expires_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW(),
         last_login_at TIMESTAMP
       )
     `
 
-    // Create user_sessions table
+    // Create user_sessions table if it doesn't exist
     await sql`
       CREATE TABLE IF NOT EXISTS user_sessions (
         id SERIAL PRIMARY KEY,
@@ -709,36 +538,33 @@ export async function initializeDatabase() {
       )
     `
 
-    // Create recipes table
+    // Create recipes table if it doesn't exist
     await sql`
       CREATE TABLE IF NOT EXISTS recipes (
-        id SERIAL PRIMARY KEY,
+        id VARCHAR(255) PRIMARY KEY,
         title VARCHAR(255) NOT NULL,
         description TEXT,
-        author_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        author_username VARCHAR(255) NOT NULL,
+        author_id INTEGER NOT NULL REFERENCES users(id),
         category VARCHAR(100) NOT NULL,
-        difficulty VARCHAR(50) NOT NULL,
-        prep_time_minutes INTEGER NOT NULL DEFAULT 0,
-        cook_time_minutes INTEGER NOT NULL DEFAULT 0,
-        servings INTEGER NOT NULL DEFAULT 1,
-        ingredients TEXT NOT NULL,
-        instructions TEXT NOT NULL,
+        difficulty VARCHAR(20) NOT NULL,
+        prep_time_minutes INTEGER DEFAULT 0,
+        cook_time_minutes INTEGER DEFAULT 0,
+        servings INTEGER DEFAULT 1,
         image_url TEXT,
-        rating DECIMAL(3,2) DEFAULT 0.0,
-        rating_count INTEGER DEFAULT 0,
+        rating DECIMAL(3,2) DEFAULT 0,
         review_count INTEGER DEFAULT 0,
         view_count INTEGER DEFAULT 0,
-        moderation_status VARCHAR(50) DEFAULT 'pending',
-        is_published BOOLEAN DEFAULT false,
+        moderation_status VARCHAR(20) DEFAULT 'pending',
+        moderation_notes TEXT,
         moderated_by INTEGER REFERENCES users(id),
         moderated_at TIMESTAMP,
+        is_published BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       )
     `
 
-    // Create comments table
+    // Create comments table if it doesn't exist
     await sql`
       CREATE TABLE IF NOT EXISTS comments (
         id SERIAL PRIMARY KEY,
@@ -755,7 +581,7 @@ export async function initializeDatabase() {
       )
     `
 
-    // Create ratings table
+    // Create ratings table if it doesn't exist
     await sql`
       CREATE TABLE IF NOT EXISTS ratings (
         id SERIAL PRIMARY KEY,
@@ -767,7 +593,7 @@ export async function initializeDatabase() {
       )
     `
 
-    // Create email_tokens table
+    // Create email_tokens table if it doesn't exist
     await sql`
       CREATE TABLE IF NOT EXISTS email_tokens (
         id SERIAL PRIMARY KEY,
@@ -783,11 +609,10 @@ export async function initializeDatabase() {
     // Initialize owner account
     await initializeOwnerAccount()
 
-    console.log("✅ Database tables created successfully")
-    return true
+    console.log("✅ Database initialized successfully")
   } catch (error) {
     console.error("❌ Database initialization failed:", error)
-    return false
+    throw error
   }
 }
 

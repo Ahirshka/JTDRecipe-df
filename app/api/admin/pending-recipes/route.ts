@@ -5,22 +5,22 @@ import { hasPermission } from "@/lib/auth"
 
 export async function GET() {
   try {
-    console.log("🔍 Fetching pending recipes for admin review...")
+    console.log("🔍 Admin: Fetching pending recipes...")
     await initializeDatabase()
 
     // Check if user is authenticated and has admin permissions
     const user = await getCurrentUser()
     if (!user) {
-      console.log("❌ No authenticated user found")
+      console.log("❌ Admin: No authenticated user found")
       return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
     }
 
     if (!hasPermission(user.role, "moderator")) {
-      console.log(`❌ User ${user.username} lacks moderation permissions`)
+      console.log(`❌ Admin: User ${user.username} lacks moderation permissions`)
       return NextResponse.json({ success: false, error: "Insufficient permissions" }, { status: 403 })
     }
 
-    console.log(`✅ Admin user ${user.username} fetching pending recipes`)
+    console.log(`✅ Admin: User ${user.username} fetching pending recipes`)
 
     // Fetch pending recipes with all details
     const pendingRecipes = await sql`
@@ -62,7 +62,7 @@ export async function GET() {
       ORDER BY r.created_at DESC
     `
 
-    console.log(`✅ Found ${pendingRecipes.length} pending recipes`)
+    console.log(`✅ Admin: Found ${pendingRecipes.length} pending recipes`)
 
     return NextResponse.json({
       success: true,
@@ -70,7 +70,7 @@ export async function GET() {
       count: pendingRecipes.length,
     })
   } catch (error) {
-    console.error("❌ Error fetching pending recipes:", error)
+    console.error("❌ Admin: Error fetching pending recipes:", error)
     return NextResponse.json(
       {
         success: false,
