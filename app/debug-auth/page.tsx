@@ -1,333 +1,338 @@
 "use client"
-import { useState } from "react"
+
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Bug, RefreshCw, CheckCircle, AlertCircle, Database, Key, User, LogIn, Users } from "lucide-react"
-import { toast } from "@/hooks/use-toast"
+import { Shield, User, Database, Key, CheckCircle, XCircle, RefreshCw, LogIn, Crown } from "lucide-react"
 
-interface DebugTest {
-  name: string
-  status: string
-  details?: any
-  error?: string
-}
-
-interface DebugResult {
-  success: boolean
-  debug: {
-    timestamp: string
-    tests: DebugTest[]
-  }
-  error?: string
-  details?: string
+interface AuthDebugInfo {
+  currentUser: any
+  sessionValid: boolean
+  databaseConnected: boolean
+  ownerExists: boolean
+  testResults: any
 }
 
 export default function DebugAuthPage() {
-  const [debugResult, setDebugResult] = useState<DebugResult | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
+  const [debugInfo, setDebugInfo] = useState<AuthDebugInfo | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [testCredentials, setTestCredentials] = useState({
+    email: "aaronhirshka@gmail.com",
+    password: "Morton2121",
+  })
+  const [loginResult, setLoginResult] = useState<any>(null)
 
-  const runDebugTests = async () => {
-    setIsLoading(true)
-    setDebugResult(null)
+  useEffect(() => {
+    loadDebugInfo()
+  }, [])
 
+  const loadDebugInfo = async () => {
+    setLoading(true)
     try {
-      console.log("🔍 [DEBUG-AUTH] Running authentication debug tests...")
-
-      const response = await fetch("/api/debug/auth")
-      const result: DebugResult = await response.json()
-      setDebugResult(result)
-
-      if (result.success) {
-        const passedTests = result.debug.tests.filter((test) => test.status.includes("PASS")).length
-        const totalTests = result.debug.tests.length
-
-        toast({
-          title: "Debug Tests Completed",
-          description: `${passedTests}/${totalTests} tests passed`,
-          variant: passedTests === totalTests ? "default" : "destructive",
-        })
-        console.log("✅ [DEBUG-AUTH] Debug tests completed")
-      } else {
-        toast({
-          title: "Debug Failed",
-          description: result.error || "Unknown error",
-          variant: "destructive",
-        })
-        console.error("❌ [DEBUG-AUTH] Debug failed:", result.error)
-      }
+      const response = await fetch("/api/debug/auth", {
+        credentials: "include",
+      })
+      const data = await response.json()
+      setDebugInfo(data)
     } catch (error) {
-      console.error("❌ [DEBUG-AUTH] Network error:", error)
-      const errorMessage = error instanceof Error ? error.message : "Unknown network error"
-
-      setDebugResult({
-        success: false,
-        error: "Network Error",
-        details: errorMessage,
-        debug: {
-          timestamp: new Date().toISOString(),
-          tests: [],
-        },
-      })
-
-      toast({
-        title: "Network Error",
-        description: errorMessage,
-        variant: "destructive",
-      })
+      console.error("Error loading debug info:", error)
     } finally {
-      setIsLoading(false)
+      setLoading(false)
     }
   }
 
-  const getTestIcon = (status: string) => {
-    if (status.includes("PASS")) return <CheckCircle className="w-4 h-4 text-green-600" />
-    if (status.includes("FAIL")) return <AlertCircle className="w-4 h-4 text-red-600" />
-    if (status.includes("NO USER")) return <User className="w-4 h-4 text-yellow-600" />
-    return <AlertCircle className="w-4 h-4 text-gray-600" />
+  const testLogin = async () => {
+    setLoading(true)
+    setLoginResult(null)
+
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify(testCredentials),
+      })
+
+      const data = await response.json()
+      setLoginResult(data)
+
+      // Reload debug info after login attempt
+      await loadDebugInfo()
+    } catch (error) {
+      console.error("Login test error:", error)
+      setLoginResult({ success: false, error: "Network error" })
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const getTestColor = (status: string) => {
-    if (status.includes("PASS")) return "text-green-600"
-    if (status.includes("FAIL")) return "text-red-600"
-    if (status.includes("NO USER")) return "text-yellow-600"
-    return "text-gray-600"
+  const logout = async () => {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include",
+      })
+      await loadDebugInfo()
+      setLoginResult(null)
+    } catch (error) {
+      console.error("Logout error:", error)
+    }
+  }
+
+  const getStatusIcon = (condition: boolean) => {
+    return condition ? <CheckCircle className="w-4 h-4 text-green-600" /> : <XCircle className="w-4 h-4 text-red-600" />
+  }
+
+  const getStatusBadge = (condition: boolean) => {
+    return <Badge variant={condition ? "default" : "destructive"}>{condition ? "OK" : "FAIL"}</Badge>
   }
 
   return (
-    <div className="container mx-auto p-6 max-w-6xl">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold mb-2 flex items-center gap-2">
-          <Bug className="w-8 h-8 text-blue-600" />
-          Debug Authentication
-        </h1>
-        <p className="text-gray-600">Test and debug the authentication system step by step</p>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Debug Controls */}
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Bug className="w-5 h-5" />
-                Authentication Debug Tests
-              </CardTitle>
-              <CardDescription>Run comprehensive tests to identify authentication issues</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <h4 className="font-medium">Tests Include:</h4>
-                <ul className="space-y-1 text-sm text-gray-600">
-                  <li className="flex items-center gap-2">
-                    <Database className="w-3 h-3" />
-                    Database Connection Test
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <Key className="w-3 h-3" />
-                    Password Hashing Test
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <User className="w-3 h-3" />
-                    User Lookup Test
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <LogIn className="w-3 h-3" />
-                    Full Login Process Test
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <Users className="w-3 h-3" />
-                    Users Table Status
-                  </li>
-                </ul>
-              </div>
-
-              <Button onClick={runDebugTests} disabled={isLoading} className="w-full">
-                {isLoading ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                    Running Tests...
-                  </>
-                ) : (
-                  <>
-                    <Bug className="w-4 h-4 mr-2" />
-                    Run Debug Tests
-                  </>
-                )}
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Test Credentials */}
-          <Card className="border-green-300">
-            <CardHeader className="bg-green-50">
-              <CardTitle className="text-green-700 flex items-center gap-2">
-                <User className="w-5 h-5" />
-                Test Credentials
-              </CardTitle>
-              <CardDescription>These credentials are used for testing</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <p>
-                <strong>Email:</strong>{" "}
-                <code className="bg-gray-100 px-2 py-1 rounded text-sm">aaronhirshka@gmail.com</code>
-              </p>
-              <p>
-                <strong>Password:</strong> <code className="bg-gray-100 px-2 py-1 rounded text-sm">Morton2121</code>
-              </p>
-              <p>
-                <strong>Expected Role:</strong> <Badge variant="default">admin</Badge>
-              </p>
-            </CardContent>
-          </Card>
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="container mx-auto px-4 max-w-6xl">
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex items-center space-x-3 mb-2">
+            <Shield className="h-8 w-8 text-blue-500" />
+            <h1 className="text-3xl font-bold text-gray-900">Authentication Debug</h1>
+          </div>
+          <p className="text-gray-600">Debug authentication system and test login functionality</p>
         </div>
 
-        {/* Debug Results */}
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Debug Results</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {!debugResult ? (
-                <div className="text-center py-8 text-gray-500">
-                  <Bug className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>Click "Run Debug Tests" to start testing</p>
-                </div>
-              ) : (
-                <Tabs defaultValue="summary" className="w-full">
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="summary">Summary</TabsTrigger>
-                    <TabsTrigger value="details">Details</TabsTrigger>
-                  </TabsList>
+        <Tabs defaultValue="status" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="status">System Status</TabsTrigger>
+            <TabsTrigger value="login">Login Test</TabsTrigger>
+            <TabsTrigger value="details">Debug Details</TabsTrigger>
+          </TabsList>
 
-                  <TabsContent value="summary" className="mt-4">
-                    <div className="space-y-4">
-                      <div className="flex items-center gap-2">
-                        {debugResult.success ? (
-                          <CheckCircle className="w-5 h-5 text-green-600" />
-                        ) : (
-                          <AlertCircle className="w-5 h-5 text-red-600" />
-                        )}
-                        <span className={`font-medium ${debugResult.success ? "text-green-600" : "text-red-600"}`}>
-                          {debugResult.success ? "Debug Completed" : "Debug Failed"}
-                        </span>
-                      </div>
-
-                      <div className="text-sm text-gray-600">
-                        <strong>Timestamp:</strong> {new Date(debugResult.debug.timestamp).toLocaleString()}
-                      </div>
-
-                      {debugResult.error && (
-                        <Alert variant="destructive">
-                          <AlertCircle className="h-4 w-4" />
-                          <AlertDescription>
-                            <strong>Error:</strong> {debugResult.error}
-                            {debugResult.details && (
-                              <>
-                                <br />
-                                <strong>Details:</strong> {debugResult.details}
-                              </>
-                            )}
-                          </AlertDescription>
-                        </Alert>
-                      )}
-
-                      <div className="space-y-2">
-                        <h4 className="font-medium">Test Results:</h4>
-                        {debugResult.debug.tests.map((test, index) => (
-                          <div key={index} className="flex items-center justify-between p-2 border rounded">
-                            <div className="flex items-center gap-2">
-                              {getTestIcon(test.status)}
-                              <span className="font-medium">{test.name}</span>
-                            </div>
-                            <Badge
-                              variant={
-                                test.status.includes("PASS")
-                                  ? "default"
-                                  : test.status.includes("NO USER")
-                                    ? "secondary"
-                                    : "destructive"
-                              }
-                            >
-                              {test.status}
-                            </Badge>
-                          </div>
-                        ))}
-                      </div>
+          {/* System Status Tab */}
+          <TabsContent value="status">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <Database className="w-5 h-5 mr-2" />
+                    Database Status
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      {getStatusIcon(debugInfo?.databaseConnected || false)}
+                      <span className="ml-2">Connection</span>
                     </div>
-                  </TabsContent>
-
-                  <TabsContent value="details" className="mt-4">
-                    <div className="space-y-4">
-                      {debugResult.debug.tests.map((test, index) => (
-                        <Card key={index}>
-                          <CardHeader className="pb-2">
-                            <CardTitle className={`text-sm flex items-center gap-2 ${getTestColor(test.status)}`}>
-                              {getTestIcon(test.status)}
-                              {test.name}
-                            </CardTitle>
-                          </CardHeader>
-                          <CardContent className="pt-0">
-                            {test.error ? (
-                              <Alert variant="destructive">
-                                <AlertDescription>
-                                  <strong>Error:</strong> {test.error}
-                                </AlertDescription>
-                              </Alert>
-                            ) : (
-                              <div className="space-y-2">
-                                {typeof test.details === "string" ? (
-                                  <p className="text-sm">{test.details}</p>
-                                ) : (
-                                  <pre className="bg-gray-100 p-2 rounded text-xs overflow-auto">
-                                    {JSON.stringify(test.details, null, 2)}
-                                  </pre>
-                                )}
-                              </div>
-                            )}
-                          </CardContent>
-                        </Card>
-                      ))}
+                    {getStatusBadge(debugInfo?.databaseConnected || false)}
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      {getStatusIcon(debugInfo?.ownerExists || false)}
+                      <span className="ml-2">Owner Account</span>
                     </div>
-                  </TabsContent>
-                </Tabs>
-              )}
-            </CardContent>
-          </Card>
+                    {getStatusBadge(debugInfo?.ownerExists || false)}
+                  </div>
+                </CardContent>
+              </Card>
 
-          {/* Quick Actions */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Quick Actions</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => (window.location.href = "/database-setup")}
-                className="w-full"
-              >
-                Database Setup
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => (window.location.href = "/login")} className="w-full">
-                Go to Login
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={runDebugTests}
-                disabled={isLoading}
-                className="w-full bg-transparent"
-              >
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <User className="w-5 h-5 mr-2" />
+                    Session Status
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      {getStatusIcon(debugInfo?.sessionValid || false)}
+                      <span className="ml-2">Session Valid</span>
+                    </div>
+                    {getStatusBadge(debugInfo?.sessionValid || false)}
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      {getStatusIcon(!!debugInfo?.currentUser)}
+                      <span className="ml-2">User Logged In</span>
+                    </div>
+                    {getStatusBadge(!!debugInfo?.currentUser)}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {debugInfo?.currentUser && (
+              <Card className="mt-6">
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <Crown className="w-5 h-5 mr-2 text-yellow-600" />
+                    Current User
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <Label>Username</Label>
+                      <p className="font-medium">{debugInfo.currentUser.username}</p>
+                    </div>
+                    <div>
+                      <Label>Email</Label>
+                      <p className="font-medium">{debugInfo.currentUser.email}</p>
+                    </div>
+                    <div>
+                      <Label>Role</Label>
+                      <Badge variant={debugInfo.currentUser.role === "owner" ? "default" : "secondary"}>
+                        {debugInfo.currentUser.role}
+                      </Badge>
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <Button onClick={logout} variant="outline">
+                      Logout
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            <div className="flex justify-center mt-6">
+              <Button onClick={loadDebugInfo} disabled={loading}>
                 <RefreshCw className="w-4 h-4 mr-2" />
-                Re-run Tests
+                Refresh Status
               </Button>
-            </CardContent>
-          </Card>
-        </div>
+            </div>
+          </TabsContent>
+
+          {/* Login Test Tab */}
+          <TabsContent value="login">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <Key className="w-5 h-5 mr-2" />
+                    Test Login
+                  </CardTitle>
+                  <CardDescription>Test authentication with owner credentials</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <Label htmlFor="test-email">Email</Label>
+                    <Input
+                      id="test-email"
+                      type="email"
+                      value={testCredentials.email}
+                      onChange={(e) => setTestCredentials({ ...testCredentials, email: e.target.value })}
+                      disabled={loading}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="test-password">Password</Label>
+                    <Input
+                      id="test-password"
+                      type="password"
+                      value={testCredentials.password}
+                      onChange={(e) => setTestCredentials({ ...testCredentials, password: e.target.value })}
+                      disabled={loading}
+                    />
+                  </div>
+                  <Button onClick={testLogin} disabled={loading} className="w-full">
+                    <LogIn className="w-4 h-4 mr-2" />
+                    Test Login
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Owner Credentials</CardTitle>
+                  <CardDescription>Default owner account information</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div>
+                    <Label>Email</Label>
+                    <p className="font-mono text-sm bg-gray-100 p-2 rounded">aaronhirshka@gmail.com</p>
+                  </div>
+                  <div>
+                    <Label>Password</Label>
+                    <p className="font-mono text-sm bg-gray-100 p-2 rounded">Morton2121</p>
+                  </div>
+                  <div>
+                    <Label>Role</Label>
+                    <Badge>owner</Badge>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      setTestCredentials({
+                        email: "aaronhirshka@gmail.com",
+                        password: "Morton2121",
+                      })
+                    }
+                    className="w-full"
+                  >
+                    Fill Credentials
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+
+            {loginResult && (
+              <Card className="mt-6">
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    {loginResult.success ? (
+                      <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
+                    ) : (
+                      <XCircle className="w-5 h-5 text-red-600 mr-2" />
+                    )}
+                    Login Test Result
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Alert variant={loginResult.success ? "default" : "destructive"}>
+                    <AlertDescription>
+                      {loginResult.success ? (
+                        <div>
+                          <p className="font-medium text-green-800">✅ Login successful!</p>
+                          {loginResult.user && (
+                            <div className="mt-2 text-sm">
+                              <p>User: {loginResult.user.username}</p>
+                              <p>Role: {loginResult.user.role}</p>
+                              <p>Email: {loginResult.user.email}</p>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="font-medium text-red-800">❌ {loginResult.error || "Login failed"}</p>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+
+          {/* Debug Details Tab */}
+          <TabsContent value="details">
+            <Card>
+              <CardHeader>
+                <CardTitle>Raw Debug Information</CardTitle>
+                <CardDescription>Complete system debug data</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <pre className="bg-gray-100 p-4 rounded-lg overflow-auto text-sm">
+                  {JSON.stringify(debugInfo, null, 2)}
+                </pre>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   )

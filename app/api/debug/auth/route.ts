@@ -1,162 +1,101 @@
-import { type NextRequest, NextResponse } from "next/server"
-import { sql } from "@/lib/neon"
-import { hashPassword, verifyPassword, findUserByEmail, loginUser } from "@/lib/auth-system"
+import { NextResponse } from "next/server"
+import { getCurrentUser } from "@/lib/server-auth"
+import { testConnection, findUserByEmail } from "@/lib/neon"
 
-export async function GET(request: NextRequest) {
-  console.log("🔍 [API-DEBUG-AUTH] Authentication debug request")
-
-  const debugResults = {
-    timestamp: new Date().toISOString(),
-    tests: [] as any[],
-  }
-
+export async function GET() {
   try {
-    // Test 1: Database Connection
-    console.log("🔍 [DEBUG] Testing database connection...")
+    console.log("🔍 [DEBUG-AUTH] Starting authentication debug check...")
+
+    // Test database connection
+    const databaseConnected = await testConnection()
+    console.log("🔍 [DEBUG-AUTH] Database connection:", databaseConnected ? "OK" : "FAILED")
+
+    // Check if owner exists
+    let ownerExists = false
     try {
-      const result = await sql`SELECT NOW() as current_time`
-      debugResults.tests.push({
-        name: "Database Connection",
-        status: "✅ PASS",
-        details: `Connected successfully. Current time: ${result[0].current_time}`,
-      })
+      const owner = await findUserByEmail("aaronhirshka@gmail.com")
+      ownerExists = !!owner
+      console.log("🔍 [DEBUG-AUTH] Owner account exists:", ownerExists)
+      if (owner) {
+        console.log("🔍 [DEBUG-AUTH] Owner details:", {
+          id: owner.id,
+          username: owner.username,
+          email: owner.email,
+          role: owner.role,
+          status: owner.status,
+          is_verified: owner.is_verified,
+        })
+      }
     } catch (error) {
-      debugResults.tests.push({
-        name: "Database Connection",
-        status: "❌ FAIL",
-        error: error instanceof Error ? error.message : "Unknown error",
-      })
+      console.error("🔍 [DEBUG-AUTH] Error checking owner:", error)
+      ownerExists = false
     }
 
-    // Test 2: Password Hashing
-    console.log("🔍 [DEBUG] Testing password hashing...")
+    // Get current user session
+    let currentUser = null
+    let sessionValid = false
     try {
-      const testPassword = "Morton2121"
-      const hash = await hashPassword(testPassword)
-      const isValid = await verifyPassword(testPassword, hash)
-
-      debugResults.tests.push({
-        name: "Password Hashing",
-        status: isValid ? "✅ PASS" : "❌ FAIL",
-        details: {
-          testPassword,
-          hashGenerated: !!hash,
-          hashLength: hash.length,
-          verificationResult: isValid,
-        },
-      })
+      currentUser = await getCurrentUser()
+      sessionValid = !!currentUser
+      console.log("🔍 [DEBUG-AUTH] Current user session:", sessionValid ? "VALID" : "INVALID")
+      if (currentUser) {
+        console.log("🔍 [DEBUG-AUTH] Current user:", {
+          id: currentUser.id,
+          username: currentUser.username,
+          email: currentUser.email,
+          role: currentUser.role,
+        })
+      }
     } catch (error) {
-      debugResults.tests.push({
-        name: "Password Hashing",
-        status: "❌ FAIL",
-        error: error instanceof Error ? error.message : "Unknown error",
-      })
+      console.error("🔍 [DEBUG-AUTH] Error getting current user:", error)
+      currentUser = null
+      sessionValid = false
     }
 
-    // Test 3: User Lookup
-    console.log("🔍 [DEBUG] Testing user lookup...")
-    try {
-      const testEmail = "aaronhirshka@gmail.com"
-      const user = await findUserByEmail(testEmail)
-
-      debugResults.tests.push({
-        name: "User Lookup",
-        status: user ? "✅ PASS" : "⚠️ NO USER",
-        details: user
-          ? {
-              userId: user.id,
-              username: user.username,
-              email: user.email,
-              role: user.role,
-              status: user.status,
-              isVerified: user.is_verified,
-            }
-          : `No user found with email: ${testEmail}`,
-      })
-    } catch (error) {
-      debugResults.tests.push({
-        name: "User Lookup",
-        status: "❌ FAIL",
-        error: error instanceof Error ? error.message : "Unknown error",
-      })
+    // Test results summary
+    const testResults = {
+      databaseConnection: databaseConnected,
+      ownerAccountExists: ownerExists,
+      sessionAuthentication: sessionValid,
+      userLoggedIn: !!currentUser,
+      timestamp: new Date().toISOString(),
     }
 
-    // Test 4: Full Login Process
-    console.log("🔍 [DEBUG] Testing full login process...")
-    try {
-      const testEmail = "aaronhirshka@gmail.com"
-      const testPassword = "Morton2121"
-      const loginResult = await loginUser(testEmail, testPassword)
-
-      debugResults.tests.push({
-        name: "Full Login Process",
-        status: loginResult.success ? "✅ PASS" : "❌ FAIL",
-        details: loginResult.success
-          ? {
-              userId: loginResult.user?.id,
-              username: loginResult.user?.username,
-              sessionTokenGenerated: !!loginResult.sessionToken,
-            }
-          : {
-              error: loginResult.error,
-              details: loginResult.details,
-            },
-      })
-    } catch (error) {
-      debugResults.tests.push({
-        name: "Full Login Process",
-        status: "❌ FAIL",
-        error: error instanceof Error ? error.message : "Unknown error",
-      })
-    }
-
-    // Test 5: Users Table Status
-    console.log("🔍 [DEBUG] Checking users table...")
-    try {
-      const users = await sql`
-        SELECT id, username, email, role, status, is_verified, created_at
-        FROM users 
-        ORDER BY created_at DESC
-        LIMIT 10
-      `
-
-      debugResults.tests.push({
-        name: "Users Table Status",
-        status: "✅ PASS",
-        details: {
-          totalUsers: users.length,
-          users: users.map((u) => ({
-            id: u.id,
-            username: u.username,
-            email: u.email,
-            role: u.role,
-            status: u.status,
-            isVerified: u.is_verified,
-          })),
-        },
-      })
-    } catch (error) {
-      debugResults.tests.push({
-        name: "Users Table Status",
-        status: "❌ FAIL",
-        error: error instanceof Error ? error.message : "Unknown error",
-      })
-    }
-
-    console.log("✅ [API-DEBUG-AUTH] Debug completed")
+    console.log("🔍 [DEBUG-AUTH] Test results:", testResults)
 
     return NextResponse.json({
       success: true,
-      debug: debugResults,
+      currentUser: currentUser
+        ? {
+            id: currentUser.id,
+            username: currentUser.username,
+            email: currentUser.email,
+            role: currentUser.role,
+            status: currentUser.status,
+            is_verified: currentUser.is_verified,
+          }
+        : null,
+      sessionValid,
+      databaseConnected,
+      ownerExists,
+      testResults,
+      debugInfo: {
+        environment: process.env.NODE_ENV,
+        databaseUrl: process.env.DATABASE_URL ? "SET" : "NOT SET",
+        jwtSecret: process.env.JWT_SECRET ? "SET" : "NOT SET",
+      },
     })
   } catch (error) {
-    console.error("❌ [API-DEBUG-AUTH] Server error:", error)
+    console.error("❌ [DEBUG-AUTH] Debug check failed:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Internal server error",
-        details: error instanceof Error ? error.message : "Unknown error",
-        debug: debugResults,
+        error: error instanceof Error ? error.message : "Unknown error",
+        currentUser: null,
+        sessionValid: false,
+        databaseConnected: false,
+        ownerExists: false,
+        testResults: null,
       },
       { status: 500 },
     )

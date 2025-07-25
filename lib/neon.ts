@@ -70,11 +70,11 @@ export interface StackAuthConfig {
   serverUrl: string
 }
 
-// Owner configuration - can be updated
+// Owner configuration - Updated with new credentials
 export const OWNER_CONFIG = {
-  username: "admin",
-  email: "admin@recipesite.com",
-  password: "admin123",
+  username: "aaronhirshka",
+  email: "aaronhirshka@gmail.com",
+  password: "Morton2121",
   role: "owner",
 }
 
