@@ -9,38 +9,51 @@ import {
   type User,
 } from "./neon"
 
+// JWT secret from environment
+const JWT_SECRET = process.env.JWT_SECRET || "fallback-secret-key"
+
 // Role hierarchy with numeric levels (higher number = more permissions)
 export const ROLE_HIERARCHY = {
   user: 1,
-  moderator: 2,
-  admin: 3,
-  owner: 4,
+  verified: 2,
+  moderator: 3,
+  admin: 4,
+  owner: 5,
 } as const
 
 export type Role = keyof typeof ROLE_HIERARCHY
 
+// Token payload interface
+export interface TokenPayload {
+  userId: number
+  email: string
+  role: string
+  iat?: number
+  exp?: number
+}
+
 // Check if user can moderate another user
-export function canModerateUser(moderatorRole: string, targetRole: string): boolean {
-  const moderatorLevel = ROLE_HIERARCHY[moderatorRole as Role] || 0
-  const targetLevel = ROLE_HIERARCHY[targetRole as Role] || 0
-  return moderatorLevel > targetLevel
+export function canModerateUser(moderator: User, target: User): boolean {
+  if (moderator.id === target.id) return false // Can't moderate yourself
+
+  const moderatorLevel = ROLE_HIERARCHY[moderator.role as keyof typeof ROLE_HIERARCHY] || 0
+  const targetLevel = ROLE_HIERARCHY[target.role as keyof typeof ROLE_HIERARCHY] || 0
+
+  return moderatorLevel > targetLevel && moderatorLevel >= ROLE_HIERARCHY.moderator
 }
 
 // Check if user has permission based on role
 export function hasPermission(userRole: string, requiredRole: string): boolean {
-  const userLevel = ROLE_HIERARCHY[userRole as Role] || 0
-  const requiredLevel = ROLE_HIERARCHY[requiredRole as Role] || 0
+  const userLevel = ROLE_HIERARCHY[userRole as keyof typeof ROLE_HIERARCHY] || 0
+  const requiredLevel = ROLE_HIERARCHY[requiredRole as keyof typeof ROLE_HIERARCHY] || 0
   return userLevel >= requiredLevel
 }
 
 // Verify JWT token
-export function verifyToken(token: string): any | null {
+export function verifyToken(token: string): TokenPayload | null {
   try {
-    const secret = process.env.JWT_SECRET
-    if (!secret) {
-      throw new Error("JWT_SECRET is not configured")
-    }
-    return jwt.verify(token, secret)
+    const decoded = jwt.verify(token, JWT_SECRET) as TokenPayload
+    return decoded
   } catch (error) {
     console.error("Token verification failed:", error)
     return null
@@ -48,17 +61,23 @@ export function verifyToken(token: string): any | null {
 }
 
 // Generate JWT token
-export function generateToken(payload: any, expiresIn = "7d"): string {
-  const secret = process.env.JWT_SECRET
-  if (!secret) {
-    throw new Error("JWT_SECRET is not configured")
+export function generateToken(user: User): string {
+  const payload: TokenPayload = {
+    userId: user.id,
+    email: user.email,
+    role: user.role,
   }
-  return jwt.sign(payload, secret, { expiresIn })
+
+  return jwt.sign(payload, JWT_SECRET, {
+    expiresIn: "7d",
+    issuer: "jtd-recipe",
+  })
 }
 
 // Hash password
 export async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(password, 12)
+  const saltRounds = 12
+  return bcrypt.hash(password, saltRounds)
 }
 
 // Verify password
@@ -74,12 +93,16 @@ export function isValidEmail(email: string): boolean {
 
 // Validate password strength
 export function isValidPassword(password: string): boolean {
-  return password.length >= 8
+  // At least 8 characters, 1 uppercase, 1 lowercase, 1 number
+  const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d@$!%*?&]{8,}$/
+  return passwordRegex.test(password)
 }
 
 // Validate username
 export function isValidUsername(username: string): boolean {
-  return username.length >= 3 && username.length <= 50 && /^[a-zA-Z0-9_]+$/.test(username)
+  // 3-30 characters, alphanumeric and underscores only
+  const usernameRegex = /^[a-zA-Z0-9_]{3,30}$/
+  return usernameRegex.test(username)
 }
 
 // Get all users for moderation
@@ -96,20 +119,19 @@ export async function getAllUsersForModeration(): Promise<User[]> {
 export async function suspendUser(
   userId: number,
   reason: string,
-  duration: number, // hours
-  moderatorId: number,
+  duration: number, // days
 ): Promise<boolean> {
   try {
-    const suspensionExpiresAt = new Date()
-    suspensionExpiresAt.setHours(suspensionExpiresAt.getHours() + duration)
+    const suspensionExpires = new Date()
+    suspensionExpires.setDate(suspensionExpires.getDate() + duration)
 
     const updated = await updateUser(userId, {
       status: "suspended",
       suspension_reason: reason,
-      suspension_expires_at: suspensionExpiresAt.toISOString(),
+      suspension_expires_at: suspensionExpires.toISOString(),
     })
 
-    return !!updated
+    return updated !== null
   } catch (error) {
     console.error("Error suspending user:", error)
     return false
@@ -117,7 +139,7 @@ export async function suspendUser(
 }
 
 // Unsuspend user
-export async function unsuspendUser(userId: number, moderatorId: number): Promise<boolean> {
+export async function unsuspendUser(userId: number): Promise<boolean> {
   try {
     const updated = await updateUser(userId, {
       status: "active",
@@ -125,7 +147,7 @@ export async function unsuspendUser(userId: number, moderatorId: number): Promis
       suspension_expires_at: null,
     })
 
-    return !!updated
+    return updated !== null
   } catch (error) {
     console.error("Error unsuspending user:", error)
     return false
@@ -133,14 +155,14 @@ export async function unsuspendUser(userId: number, moderatorId: number): Promis
 }
 
 // Ban user permanently
-export async function banUser(userId: number, reason: string, moderatorId: number): Promise<boolean> {
+export async function banUser(userId: number, reason: string): Promise<boolean> {
   try {
     const updated = await updateUser(userId, {
       status: "banned",
       suspension_reason: reason,
     })
 
-    return !!updated
+    return updated !== null
   } catch (error) {
     console.error("Error banning user:", error)
     return false
@@ -148,13 +170,13 @@ export async function banUser(userId: number, reason: string, moderatorId: numbe
 }
 
 // Change user role
-export async function changeUserRole(userId: number, newRole: string, moderatorId: number): Promise<boolean> {
+export async function changeUserRole(userId: number, newRole: string): Promise<boolean> {
   try {
     const updated = await updateUser(userId, {
       role: newRole,
     })
 
-    return !!updated
+    return updated !== null
   } catch (error) {
     console.error("Error changing user role:", error)
     return false
@@ -166,9 +188,10 @@ export async function verifyUser(userId: number): Promise<boolean> {
   try {
     const updated = await updateUser(userId, {
       is_verified: true,
+      is_profile_verified: true,
     })
 
-    return !!updated
+    return updated !== null
   } catch (error) {
     console.error("Error verifying user:", error)
     return false
@@ -176,7 +199,7 @@ export async function verifyUser(userId: number): Promise<boolean> {
 }
 
 // Warn user
-export async function warnUser(userId: number, reason: string, moderatorId: number): Promise<boolean> {
+export async function warnUser(userId: number, reason: string): Promise<boolean> {
   try {
     const user = await findUserById(userId)
     if (!user) return false
@@ -185,7 +208,7 @@ export async function warnUser(userId: number, reason: string, moderatorId: numb
       warning_count: (user.warning_count || 0) + 1,
     })
 
-    return !!updated
+    return updated !== null
   } catch (error) {
     console.error("Error warning user:", error)
     return false
@@ -204,31 +227,33 @@ export async function saveUser(userData: {
     if (!isValidEmail(userData.email)) {
       throw new Error("Invalid email format")
     }
+
     if (!isValidPassword(userData.password)) {
-      throw new Error("Password must be at least 8 characters long")
+      throw new Error("Password does not meet requirements")
     }
+
     if (!isValidUsername(userData.username)) {
-      throw new Error("Username must be 3-50 characters and contain only letters, numbers, and underscores")
+      throw new Error("Invalid username")
     }
 
     // Check if user already exists
     const existingUser = await dbFindUserByEmail(userData.email)
     if (existingUser) {
-      throw new Error("User with this email already exists")
+      throw new Error("User already exists")
     }
 
     // Hash password
     const passwordHash = await hashPassword(userData.password)
 
     // Create user
-    const user = await createUser({
+    const newUser = await createUser({
       username: userData.username,
       email: userData.email,
       password_hash: passwordHash,
       role: userData.role || "user",
     })
 
-    return user
+    return newUser
   } catch (error) {
     console.error("Error saving user:", error)
     return null
@@ -241,85 +266,109 @@ export async function findUserByEmail(email: string): Promise<User | null> {
 }
 
 // Login user
-export async function loginUser(
-  email: string,
-  password: string,
-): Promise<{
-  success: boolean
-  user?: User
-  token?: string
-  error?: string
-}> {
+export async function loginUser(email: string, password: string): Promise<{ user: User; token: string } | null> {
   try {
-    // Find user
     const user = await dbFindUserByEmail(email)
     if (!user) {
-      return { success: false, error: "Invalid email or password" }
+      return null
     }
 
-    // Check if user is banned or suspended
-    if (user.status === "banned") {
-      return { success: false, error: "Account is banned" }
-    }
-    if (user.status === "suspended") {
-      const now = new Date()
-      const suspensionExpires = user.suspension_expires_at ? new Date(user.suspension_expires_at) : null
-      if (!suspensionExpires || now < suspensionExpires) {
-        return { success: false, error: "Account is suspended" }
-      } else {
-        // Suspension expired, reactivate account
-        await updateUser(user.id, {
-          status: "active",
-          suspension_reason: null,
-          suspension_expires_at: null,
-        })
-      }
-    }
-
-    // Verify password
-    if (!user.password_hash) {
-      return { success: false, error: "Invalid account configuration" }
-    }
-
-    const isValidPassword = await verifyPassword(password, user.password_hash)
+    const isValidPassword = await verifyPassword(password, user.password_hash || "")
     if (!isValidPassword) {
-      return { success: false, error: "Invalid email or password" }
+      return null
     }
+
+    if (user.status !== "active") {
+      throw new Error("Account is not active")
+    }
+
+    const token = generateToken(user)
 
     // Update last login
     await updateUser(user.id, {
       last_login_at: new Date().toISOString(),
     })
 
-    // Generate token
-    const token = generateToken({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-    })
-
-    return {
-      success: true,
-      user: {
-        ...user,
-        password_hash: undefined, // Don't return password hash
-      },
-      token,
-    }
+    return { user, token }
   } catch (error) {
     console.error("Error logging in user:", error)
-    return { success: false, error: "Login failed" }
+    return null
   }
 }
 
 // Logout user
 export async function logoutUser(token: string): Promise<boolean> {
   try {
-    // In a real implementation, you might want to blacklist the token
-    // For now, we'll just return true since JWT tokens are stateless
+    // In a production app, you would add the token to a blacklist
+    // For now, we'll just return true as the client will remove the token
+    console.log("User logged out, token should be removed from client")
     return true
   } catch (error) {
     console.error("Error logging out user:", error)
     return false
+  }
+}
+
+// Refresh token
+export function refreshToken(oldToken: string): string | null {
+  try {
+    const decoded = verifyToken(oldToken)
+    if (!decoded) return null
+
+    // Create new token with fresh expiration
+    const newPayload: TokenPayload = {
+      userId: decoded.userId,
+      email: decoded.email,
+      role: decoded.role,
+    }
+
+    return jwt.sign(newPayload, JWT_SECRET, {
+      expiresIn: "7d",
+      issuer: "jtd-recipe",
+    })
+  } catch (error) {
+    console.error("Error refreshing token:", error)
+    return null
+  }
+}
+
+// Rate limiting (simple in-memory implementation)
+const rateLimitMap = new Map<string, { count: number; resetTime: number }>()
+
+export function checkRateLimit(identifier: string, maxRequests = 5, windowMs: number = 15 * 60 * 1000): boolean {
+  const now = Date.now()
+  const record = rateLimitMap.get(identifier)
+
+  if (!record || now > record.resetTime) {
+    rateLimitMap.set(identifier, { count: 1, resetTime: now + windowMs })
+    return true
+  }
+
+  if (record.count >= maxRequests) {
+    return false
+  }
+
+  record.count++
+  return true
+}
+
+// Generate secure random token
+export function generateSecureToken(length = 32): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+  let result = ""
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length))
+  }
+  return result
+}
+
+// Cookie utilities
+export function createSecureCookieOptions(maxAge: number = 7 * 24 * 60 * 60) {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax" as const,
+    maxAge,
+    path: "/",
   }
 }
