@@ -1,165 +1,124 @@
 import { NextResponse } from "next/server"
-import { initializeDatabase, createOwnerAccount } from "@/lib/neon"
+import { initializeDatabase, createOwnerAccount, findUserByEmail } from "@/lib/neon"
+import { sql } from "@/lib/neon"
 
-export async function POST() {
-  console.log("🔄 [INIT-DB-API] Database initialization request received")
+// GET - Check database status
+export async function GET() {
+  console.log("🔍 [INIT-DB] Checking database status...")
 
   try {
-    // Initialize database tables
-    console.log("🔄 [INIT-DB-API] Initializing database tables...")
-    const dbInitialized = await initializeDatabase()
+    // Check if tables exist
+    const tablesCheck = await Promise.all([
+      sql`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'users');`,
+      sql`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sessions');`,
+      sql`SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'recipes');`,
+    ])
 
-    if (!dbInitialized) {
-      console.error("❌ [INIT-DB-API] Database initialization failed")
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Database initialization failed",
-          details: "Failed to create database tables",
-        },
-        { status: 500 },
-      )
+    const tables = {
+      users: tablesCheck[0][0].exists,
+      sessions: tablesCheck[1][0].exists,
+      recipes: tablesCheck[2][0].exists,
     }
 
-    console.log("✅ [INIT-DB-API] Database tables initialized successfully")
+    // Check if owner account exists
+    const ownerUser = await findUserByEmail("aaronhirshka@gmail.com")
 
-    // Create owner account
-    console.log("🔄 [INIT-DB-API] Creating owner account...")
-    const ownerResult = await createOwnerAccount()
-
-    if (!ownerResult.success) {
-      console.error("❌ [INIT-DB-API] Owner account creation failed:", ownerResult.error)
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Owner account creation failed",
-          details: ownerResult.error,
-        },
-        { status: 500 },
-      )
+    // Get counts
+    const counts = { users: 0, recipes: 0 }
+    try {
+      if (tables.users) {
+        const userCount = await sql`SELECT COUNT(*) as count FROM users;`
+        counts.users = Number.parseInt(userCount[0].count)
+      }
+      if (tables.recipes) {
+        const recipeCount = await sql`SELECT COUNT(*) as count FROM recipes;`
+        counts.recipes = Number.parseInt(recipeCount[0].count)
+      }
+    } catch (countError) {
+      console.log("ℹ️ [INIT-DB] Could not get counts:", countError)
     }
 
-    console.log("✅ [INIT-DB-API] Owner account created successfully:", ownerResult.user)
+    const status = {
+      tables,
+      owner: {
+        exists: !!ownerUser,
+        info: ownerUser
+          ? {
+              id: ownerUser.id,
+              username: ownerUser.username,
+              email: ownerUser.email,
+              role: ownerUser.role,
+              status: ownerUser.status,
+              is_verified: ownerUser.is_verified,
+              created_at: ownerUser.created_at,
+            }
+          : null,
+      },
+      counts,
+      database_ready: tables.users && tables.sessions && tables.recipes && !!ownerUser,
+    }
+
+    console.log("✅ [INIT-DB] Database status check complete:", status)
 
     return NextResponse.json({
       success: true,
-      message: "Database initialized successfully",
-      data: {
-        database: "initialized",
-        owner: ownerResult.user,
-      },
+      data: status,
     })
   } catch (error) {
-    console.error("❌ [INIT-DB-API] Database initialization error:", error)
+    console.error("❌ [INIT-DB] Status check error:", error)
 
     return NextResponse.json(
       {
         success: false,
-        error: "Database initialization failed",
-        details: error instanceof Error ? error.message : "Unknown error occurred",
+        error: "Failed to check database status",
+        details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )
   }
 }
 
-export async function GET() {
-  console.log("🔍 [INIT-DB-API] Database status check request received")
+// POST - Initialize database
+export async function POST() {
+  console.log("🔄 [INIT-DB] Starting database initialization...")
 
   try {
-    // Import sql directly to check database status
-    const { sql } = await import("@/lib/neon")
+    // Initialize database tables
+    console.log("📋 [INIT-DB] Creating database tables...")
+    const dbInitialized = await initializeDatabase()
 
-    // Check if users table exists
-    const usersTableCheck = await sql`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public'
-        AND table_name = 'users'
-      );
-    `
-    const usersTableExists = usersTableCheck[0].exists
-
-    // Check if sessions table exists
-    const sessionsTableCheck = await sql`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public'
-        AND table_name = 'sessions'
-      );
-    `
-    const sessionsTableExists = sessionsTableCheck[0].exists
-
-    // Check if recipes table exists
-    const recipesTableCheck = await sql`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public'
-        AND table_name = 'recipes'
-      );
-    `
-    const recipesTableExists = recipesTableCheck[0].exists
-
-    // Check if owner account exists
-    let ownerExists = false
-    let ownerInfo = null
-
-    if (usersTableExists) {
-      const ownerCheck = await sql`
-        SELECT id, username, email, role, status, is_verified, created_at 
-        FROM users 
-        WHERE email = 'aaronhirshka@gmail.com'
-        LIMIT 1;
-      `
-      ownerExists = ownerCheck.length > 0
-      if (ownerExists) {
-        ownerInfo = ownerCheck[0]
-      }
+    if (!dbInitialized) {
+      throw new Error("Database initialization failed")
     }
 
-    // Get user count
-    let userCount = 0
-    if (usersTableExists) {
-      const userCountResult = await sql`SELECT COUNT(*) as count FROM users;`
-      userCount = Number.parseInt(userCountResult[0].count)
+    console.log("✅ [INIT-DB] Database tables created successfully")
+
+    // Create owner account
+    console.log("👤 [INIT-DB] Creating owner account...")
+    const ownerResult = await createOwnerAccount()
+
+    if (!ownerResult.success) {
+      throw new Error(ownerResult.error || "Owner account creation failed")
     }
 
-    // Get recipe count
-    let recipeCount = 0
-    if (recipesTableExists) {
-      const recipeCountResult = await sql`SELECT COUNT(*) as count FROM recipes;`
-      recipeCount = Number.parseInt(recipeCountResult[0].count)
-    }
-
-    console.log("✅ [INIT-DB-API] Database status check completed")
+    console.log("✅ [INIT-DB] Owner account created successfully")
 
     return NextResponse.json({
       success: true,
+      message: "Database initialized successfully",
       data: {
-        tables: {
-          users: usersTableExists,
-          sessions: sessionsTableExists,
-          recipes: recipesTableExists,
-        },
-        owner: {
-          exists: ownerExists,
-          info: ownerInfo,
-        },
-        counts: {
-          users: userCount,
-          recipes: recipeCount,
-        },
-        database_ready: usersTableExists && sessionsTableExists && recipesTableExists && ownerExists,
+        database: "Neon PostgreSQL",
+        owner: ownerResult.user,
       },
     })
   } catch (error) {
-    console.error("❌ [INIT-DB-API] Database status check error:", error)
+    console.error("❌ [INIT-DB] Initialization error:", error)
 
     return NextResponse.json(
       {
         success: false,
-        error: "Database status check failed",
-        details: error instanceof Error ? error.message : "Unknown error occurred",
+        error: "Database initialization failed",
+        details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )
