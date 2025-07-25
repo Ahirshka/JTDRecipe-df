@@ -1,48 +1,37 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import { deleteUserSession } from "@/lib/neon"
-
-export const dynamic = "force-dynamic"
-export const runtime = "nodejs"
 
 export async function POST(request: NextRequest) {
   try {
-    console.log("🔍 [LOGOUT] Starting logout process")
+    console.log("🔄 [AUTH-LOGOUT] Starting logout process")
 
-    // Get token from cookie
-    const token = request.cookies.get("auth-token")?.value
+    const cookieStore = cookies()
+    const token = cookieStore.get("auth-token")?.value
 
     if (token) {
-      console.log("🔍 [LOGOUT] Deleting session")
       // Delete session from database
       await deleteUserSession(token)
+      console.log("✅ [AUTH-LOGOUT] Session deleted from database")
     }
 
-    // Create response
-    const response = NextResponse.json({
-      success: true,
-      message: "Logged out successfully",
-    })
-
-    // Clear the auth cookie
-    response.cookies.set("auth-token", "", {
+    // Clear cookie
+    cookieStore.set("auth-token", "", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
-      maxAge: 0, // Expire immediately
+      maxAge: 0,
       path: "/",
     })
 
-    console.log("✅ [LOGOUT] Logout completed successfully")
-    return response
+    console.log("✅ [AUTH-LOGOUT] Logout successful")
+
+    return NextResponse.json({
+      success: true,
+      message: "Logout successful",
+    })
   } catch (error) {
-    console.error("❌ [LOGOUT] Logout error:", error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: "Internal server error",
-        details: process.env.NODE_ENV === "development" ? (error as Error).message : undefined,
-      },
-      { status: 500 },
-    )
+    console.error("❌ [AUTH-LOGOUT] Logout error:", error)
+    return NextResponse.json({ success: false, error: "Logout failed" }, { status: 500 })
   }
 }

@@ -1,120 +1,56 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { findUserByEmail, verifyUserPassword, createSession, initializeDatabase } from "@/lib/neon"
+import { findUserByEmail, verifyUserPassword, createSession } from "@/lib/neon"
+import { cookies } from "next/headers"
 import jwt from "jsonwebtoken"
 
-export const dynamic = "force-dynamic"
-export const runtime = "nodejs"
+const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
 
 export async function POST(request: NextRequest) {
   try {
-    console.log("🔍 [LOGIN] Starting login process")
+    console.log("🔄 [AUTH-LOGIN] Starting login process")
 
-    // Initialize database if needed
-    try {
-      await initializeDatabase()
-    } catch (dbError) {
-      console.error("❌ [LOGIN] Database initialization failed:", dbError)
-    }
-
-    // Parse request body
-    let body
-    try {
-      body = await request.json()
-    } catch (error) {
-      console.error("❌ [LOGIN] Invalid JSON in request body:", error)
-      return NextResponse.json({ success: false, error: "Invalid request format" }, { status: 400 })
-    }
-
+    const body = await request.json()
     const { email, password } = body
 
-    console.log("🔍 [LOGIN] Login attempt for email:", email)
-
-    // Validate required fields
+    // Validation
     if (!email || !password) {
-      console.log("❌ [LOGIN] Missing required fields")
+      console.log("❌ [AUTH-LOGIN] Missing email or password")
       return NextResponse.json({ success: false, error: "Email and password are required" }, { status: 400 })
     }
 
-    // Validate field formats
-    if (typeof email !== "string" || !email.includes("@")) {
-      return NextResponse.json({ success: false, error: "Please provide a valid email address" }, { status: 400 })
-    }
-
-    if (typeof password !== "string") {
-      return NextResponse.json({ success: false, error: "Invalid password format" }, { status: 400 })
-    }
-
-    console.log("🔍 [LOGIN] Finding user by email:", email)
-
-    // Find user by email
-    const user = await findUserByEmail(email.toLowerCase().trim())
+    // Find user
+    const user = await findUserByEmail(email)
     if (!user) {
-      console.log("❌ [LOGIN] User not found with email:", email)
+      console.log("❌ [AUTH-LOGIN] User not found:", email)
       return NextResponse.json({ success: false, error: "Invalid email or password" }, { status: 401 })
     }
-
-    console.log("🔍 [LOGIN] User found:", { id: user.id, username: user.username, status: user.status })
-
-    // Check if user account is active
-    if (user.status !== "active") {
-      console.log("❌ [LOGIN] User account is not active:", user.status)
-      return NextResponse.json(
-        { success: false, error: "Account is not active. Please contact support." },
-        { status: 403 },
-      )
-    }
-
-    console.log("🔍 [LOGIN] Verifying password for user:", user.username)
 
     // Verify password
     const isValidPassword = await verifyUserPassword(user, password)
     if (!isValidPassword) {
-      console.log("❌ [LOGIN] Invalid password for user:", user.username)
+      console.log("❌ [AUTH-LOGIN] Invalid password for user:", email)
       return NextResponse.json({ success: false, error: "Invalid email or password" }, { status: 401 })
     }
 
-    console.log("✅ [LOGIN] Password verified successfully")
-
-    // Create JWT token
-    const jwtSecret = process.env.JWT_SECRET || "fallback-secret-key-for-development"
-    const token = jwt.sign(
-      {
-        userId: user.id,
-        email: user.email,
-        role: user.role,
-      },
-      jwtSecret,
-      { expiresIn: "7d" },
-    )
-
-    console.log("🔍 [LOGIN] Creating session")
-
-    // Create session
-    await createSession(user.id, token)
-
-    console.log("✅ [LOGIN] Session created successfully")
-
-    // Remove sensitive data from response
-    const userResponse = {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      role: user.role,
-      status: user.status,
-      is_verified: user.is_verified,
-      avatar_url: user.avatar_url,
-      created_at: user.created_at,
+    // Check if user is active
+    if (user.status !== "active") {
+      console.log("❌ [AUTH-LOGIN] User account not active:", email)
+      return NextResponse.json({ success: false, error: "Account is not active" }, { status: 401 })
     }
 
-    // Create response
-    const response = NextResponse.json({
-      success: true,
-      message: "Login successful",
-      user: userResponse,
+    console.log("✅ [AUTH-LOGIN] User authenticated:", user.username)
+
+    // Create session token
+    const token = jwt.sign({ userId: user.id, username: user.username, role: user.role }, JWT_SECRET, {
+      expiresIn: "7d",
     })
 
-    // Set HTTP-only cookie
-    response.cookies.set("auth-token", token, {
+    // Create session in database
+    await createSession(user.id, token)
+
+    // Set cookie
+    const cookieStore = cookies()
+    cookieStore.set("auth-token", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
@@ -122,18 +58,20 @@ export async function POST(request: NextRequest) {
       path: "/",
     })
 
-    console.log("✅ [LOGIN] Login completed successfully")
-    return response
-  } catch (error) {
-    console.error("❌ [LOGIN] Login error:", error)
+    console.log("✅ [AUTH-LOGIN] Login successful")
 
-    return NextResponse.json(
-      {
-        success: false,
-        error: "Internal server error. Please try again later.",
-        details: process.env.NODE_ENV === "development" ? (error as Error).message : undefined,
+    return NextResponse.json({
+      success: true,
+      message: "Login successful",
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
       },
-      { status: 500 },
-    )
+    })
+  } catch (error) {
+    console.error("❌ [AUTH-LOGIN] Login error:", error)
+    return NextResponse.json({ success: false, error: "Login failed" }, { status: 500 })
   }
 }

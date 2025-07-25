@@ -112,20 +112,20 @@ export async function initializeDatabase(): Promise<boolean> {
       )
     `
 
-    // Create recipes table
+    // Create recipes table with TEXT fields for ingredients and instructions
     await sql_client`
       CREATE TABLE IF NOT EXISTS recipes (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         title VARCHAR(255) NOT NULL,
         description TEXT,
-        ingredients JSONB NOT NULL,
-        instructions JSONB NOT NULL,
+        ingredients TEXT NOT NULL,
+        instructions TEXT NOT NULL,
         prep_time INTEGER NOT NULL,
         cook_time INTEGER NOT NULL,
         servings INTEGER NOT NULL,
         difficulty VARCHAR(50) NOT NULL,
         category VARCHAR(100) NOT NULL,
-        tags JSONB DEFAULT '[]'::jsonb,
+        tags TEXT DEFAULT '',
         image_url VARCHAR(255),
         author_id UUID NOT NULL REFERENCES users(id),
         author_name VARCHAR(255) NOT NULL,
@@ -143,7 +143,7 @@ export async function initializeDatabase(): Promise<boolean> {
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         moderator_id UUID NOT NULL REFERENCES users(id),
         action VARCHAR(100) NOT NULL,
-        details JSONB,
+        details TEXT,
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `
@@ -195,6 +195,27 @@ export async function findUserByEmail(email: string): Promise<User | null> {
     return null
   } catch (error) {
     console.error("❌ [NEON] Error finding user by email:", error)
+    throw error
+  }
+}
+
+export async function findUserByUsername(username: string): Promise<User | null> {
+  try {
+    console.log("🔍 [NEON] Finding user by username:", username)
+
+    const result = await sql_client`
+      SELECT * FROM users WHERE username = ${username} LIMIT 1
+    `
+
+    if (result && result.length > 0) {
+      console.log("✅ [NEON] User found by username")
+      return result[0] as User
+    }
+
+    console.log("❌ [NEON] User not found with username:", username)
+    return null
+  } catch (error) {
+    console.error("❌ [NEON] Error finding user by username:", error)
     throw error
   }
 }
@@ -322,7 +343,7 @@ export async function deleteUserSession(token: string): Promise<boolean> {
   }
 }
 
-// Recipe functions
+// Recipe functions - Updated to handle string inputs properly
 export async function createRecipe(recipeData: {
   title: string
   description: string
@@ -346,6 +367,20 @@ export async function createRecipe(recipeData: {
       throw new Error("Author not found")
     }
 
+    // Convert arrays to strings for database storage
+    const ingredientsString = recipeData.ingredients.join("\n")
+    const instructionsString = recipeData.instructions.join("\n")
+    const tagsString = recipeData.tags.join(",")
+
+    console.log("📝 [NEON] Recipe data for database:", {
+      title: recipeData.title,
+      ingredients_count: recipeData.ingredients.length,
+      instructions_count: recipeData.instructions.length,
+      tags_count: recipeData.tags.length,
+      author_id: recipeData.author_id,
+      author_name: author.username,
+    })
+
     const result = await sql_client`
       INSERT INTO recipes (
         title, description, ingredients, instructions, 
@@ -354,14 +389,14 @@ export async function createRecipe(recipeData: {
       ) VALUES (
         ${recipeData.title}, 
         ${recipeData.description}, 
-        ${JSON.stringify(recipeData.ingredients)}, 
-        ${JSON.stringify(recipeData.instructions)}, 
+        ${ingredientsString}, 
+        ${instructionsString}, 
         ${recipeData.prep_time}, 
         ${recipeData.cook_time}, 
         ${recipeData.servings}, 
         ${recipeData.difficulty}, 
         ${recipeData.category}, 
-        ${JSON.stringify(recipeData.tags)}, 
+        ${tagsString}, 
         ${recipeData.image_url || null}, 
         ${recipeData.author_id}, 
         ${author.username}, 
@@ -374,11 +409,13 @@ export async function createRecipe(recipeData: {
       throw new Error("Failed to create recipe - no result returned")
     }
 
-    // Parse JSON strings back to arrays
+    // Convert strings back to arrays for return
     const recipe = result[0] as any
-    recipe.ingredients = JSON.parse(recipe.ingredients)
-    recipe.instructions = JSON.parse(recipe.instructions)
-    recipe.tags = JSON.parse(recipe.tags)
+    recipe.ingredients = recipe.ingredients ? recipe.ingredients.split("\n").filter((item: string) => item.trim()) : []
+    recipe.instructions = recipe.instructions
+      ? recipe.instructions.split("\n").filter((item: string) => item.trim())
+      : []
+    recipe.tags = recipe.tags ? recipe.tags.split(",").filter((item: string) => item.trim()) : []
 
     console.log("✅ [NEON] Recipe created successfully:", recipe.id)
     return recipe as Recipe
@@ -398,12 +435,16 @@ export async function getAllRecipes(): Promise<Recipe[]> {
       ORDER BY created_at DESC
     `
 
-    // Parse JSON strings to arrays
+    // Convert strings back to arrays
     const recipes = result.map((recipe) => {
       const parsedRecipe = { ...recipe }
-      parsedRecipe.ingredients = JSON.parse(recipe.ingredients)
-      parsedRecipe.instructions = JSON.parse(recipe.instructions)
-      parsedRecipe.tags = JSON.parse(recipe.tags)
+      parsedRecipe.ingredients = recipe.ingredients
+        ? recipe.ingredients.split("\n").filter((item: string) => item.trim())
+        : []
+      parsedRecipe.instructions = recipe.instructions
+        ? recipe.instructions.split("\n").filter((item: string) => item.trim())
+        : []
+      parsedRecipe.tags = recipe.tags ? recipe.tags.split(",").filter((item: string) => item.trim()) : []
       return parsedRecipe as Recipe
     })
 
@@ -425,12 +466,16 @@ export async function getPendingRecipes(): Promise<Recipe[]> {
       ORDER BY created_at DESC
     `
 
-    // Parse JSON strings to arrays
+    // Convert strings back to arrays
     const recipes = result.map((recipe) => {
       const parsedRecipe = { ...recipe }
-      parsedRecipe.ingredients = JSON.parse(recipe.ingredients)
-      parsedRecipe.instructions = JSON.parse(recipe.instructions)
-      parsedRecipe.tags = JSON.parse(recipe.tags)
+      parsedRecipe.ingredients = recipe.ingredients
+        ? recipe.ingredients.split("\n").filter((item: string) => item.trim())
+        : []
+      parsedRecipe.instructions = recipe.instructions
+        ? recipe.instructions.split("\n").filter((item: string) => item.trim())
+        : []
+      parsedRecipe.tags = recipe.tags ? recipe.tags.split(",").filter((item: string) => item.trim()) : []
       return parsedRecipe as Recipe
     })
 
