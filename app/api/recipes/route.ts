@@ -6,31 +6,62 @@ export async function POST(request: NextRequest) {
   console.log("🔄 [RECIPE-API] POST request received")
 
   try {
-    // Get current user
-    const user = await getCurrentUserFromRequest(request)
+    // Get current user with detailed logging
+    console.log("🔄 [RECIPE-API] Attempting to get current user...")
+
+    let user
+    try {
+      user = await getCurrentUserFromRequest(request)
+      console.log("✅ [RECIPE-API] User lookup completed:", user ? "User found" : "No user")
+    } catch (authError) {
+      console.error("❌ [RECIPE-API] Authentication error:", authError)
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Authentication error",
+          details: authError instanceof Error ? authError.message : "Failed to authenticate user",
+        },
+        { status: 500 },
+      )
+    }
+
     if (!user) {
-      console.log("❌ [RECIPE-API] User not authenticated")
+      console.log("❌ [RECIPE-API] User not authenticated - no user object returned")
       return NextResponse.json(
         {
           success: false,
           error: "Authentication required",
-          details: "User must be logged in to submit recipes",
+          details: "User must be logged in to submit recipes. Please log in and try again.",
         },
         { status: 401 },
       )
     }
 
-    console.log("✅ [RECIPE-API] User authenticated:", {
+    console.log("✅ [RECIPE-API] User authenticated successfully:", {
       id: user.id,
       username: user.username,
       role: user.role,
+      status: user.status,
     })
+
+    // Check if user account is active
+    if (user.status !== "active") {
+      console.log("❌ [RECIPE-API] User account not active:", user.status)
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Account not active",
+          details: `Your account status is: ${user.status}. Please contact support if you believe this is an error.`,
+        },
+        { status: 403 },
+      )
+    }
 
     // Parse request body
     let body
     try {
       body = await request.json()
-      console.log("✅ [RECIPE-API] Request body parsed:", body)
+      console.log("✅ [RECIPE-API] Request body parsed successfully")
     } catch (parseError) {
       console.error("❌ [RECIPE-API] Failed to parse request body:", parseError)
       return NextResponse.json(
@@ -142,6 +173,7 @@ export async function POST(request: NextRequest) {
       ingredients_count: recipeData.ingredients.length,
       instructions_count: recipeData.instructions.length,
       tags_count: recipeData.tags.length,
+      author_id: recipeData.author_id,
     })
 
     // Validate processed data
@@ -178,6 +210,7 @@ export async function POST(request: NextRequest) {
         id: createdRecipe.id,
         title: createdRecipe.title,
         status: createdRecipe.status,
+        author_id: createdRecipe.author_id,
       })
     } catch (dbError) {
       console.error("❌ [RECIPE-API] Database error creating recipe:", dbError)

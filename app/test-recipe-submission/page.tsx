@@ -1,734 +1,582 @@
 "use client"
 
-import type React from "react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Plus, Minus, ChefHat, AlertCircle, CheckCircle, Info } from "lucide-react"
-import { toast } from "@/hooks/use-toast"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-
-interface Ingredient {
-  ingredient: string
-  amount: string
-  unit: string
-}
-
-interface Instruction {
-  instruction: string
-  step_number: number
-}
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ChefHat, Plus, Minus, AlertCircle, CheckCircle, RefreshCw, Send, Eye, EyeOff } from "lucide-react"
 
 interface ApiResponse {
   success: boolean
-  message?: string
   error?: string
   details?: string
   data?: any
-  missingFields?: string[]
-  stack?: string
+  message?: string
   timestamp?: string
+  stack?: string
 }
 
 export default function TestRecipeSubmission() {
-  const [title, setTitle] = useState("")
-  const [description, setDescription] = useState("")
-  const [category, setCategory] = useState("")
-  const [difficulty, setDifficulty] = useState("")
-  const [prepTime, setPrepTime] = useState("")
-  const [cookTime, setCookTime] = useState("")
-  const [servings, setServings] = useState("")
+  // Form state
+  const [title, setTitle] = useState("Test Recipe")
+  const [description, setDescription] = useState("A delicious test recipe for debugging")
+  const [category, setCategory] = useState("main-course")
+  const [difficulty, setDifficulty] = useState("easy")
+  const [prepTime, setPrepTime] = useState("15")
+  const [cookTime, setCookTime] = useState("30")
+  const [servings, setServings] = useState("4")
   const [imageUrl, setImageUrl] = useState("")
-  const [ingredients, setIngredients] = useState<Ingredient[]>([{ ingredient: "", amount: "", unit: "" }])
-  const [instructions, setInstructions] = useState<Instruction[]>([{ instruction: "", step_number: 1 }])
-  const [tags, setTags] = useState<string[]>([])
-  const [newTag, setNewTag] = useState("")
-  const [submitting, setSubmitting] = useState(false)
-  const [lastResponse, setLastResponse] = useState<ApiResponse | null>(null)
-  const [debugInfo, setDebugInfo] = useState<any>(null)
+  const [ingredients, setIngredients] = useState(["2 cups flour", "1 cup sugar", "3 eggs"])
+  const [instructions, setInstructions] = useState([
+    "Mix dry ingredients",
+    "Add wet ingredients",
+    "Bake for 30 minutes",
+  ])
 
-  const categories = [
-    "Appetizers",
-    "Main Dishes",
-    "Side Dishes",
-    "Desserts",
-    "Beverages",
-    "Breakfast",
-    "Lunch",
-    "Dinner",
-    "Snacks",
-    "Salads",
-    "Soups",
-    "Pasta",
-  ]
+  // UI state
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [currentUser, setCurrentUser] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [showDebugInfo, setShowDebugInfo] = useState(true)
 
-  const difficulties = ["Easy", "Medium", "Hard"]
-  const units = ["cup", "tbsp", "tsp", "oz", "lb", "g", "kg", "ml", "l", "piece", "clove", "pinch", "whole"]
+  // Debug state
+  const [lastRequest, setLastRequest] = useState(null)
+  const [lastResponse, setLastResponse] = useState(null)
+  const [rawResponse, setRawResponse] = useState("")
+  const [requestTimestamp, setRequestTimestamp] = useState("")
 
-  const addIngredient = () => {
-    setIngredients([...ingredients, { ingredient: "", amount: "", unit: "" }])
+  // Check authentication on component mount
+  useEffect(() => {
+    checkAuthStatus()
+  }, [])
+
+  const checkAuthStatus = async () => {
+    setAuthLoading(true)
+    try {
+      console.log("🔄 [TEST-FORM] Checking authentication status...")
+
+      const response = await fetch("/api/auth/me", {
+        method: "GET",
+        credentials: "include",
+      })
+
+      const data = await response.json()
+      console.log("✅ [TEST-FORM] Auth check response:", data)
+
+      if (data.success && data.user) {
+        setCurrentUser(data.user)
+        console.log("✅ [TEST-FORM] User authenticated:", data.user.username)
+      } else {
+        setCurrentUser(null)
+        console.log("❌ [TEST-FORM] User not authenticated")
+      }
+    } catch (error) {
+      console.error("❌ [TEST-FORM] Auth check failed:", error)
+      setCurrentUser(null)
+    } finally {
+      setAuthLoading(false)
+    }
   }
 
-  const removeIngredient = (index: number) => {
+  const addIngredient = () => {
+    setIngredients([...ingredients, ""])
+  }
+
+  const removeIngredient = (index) => {
     setIngredients(ingredients.filter((_, i) => i !== index))
   }
 
-  const updateIngredient = (index: number, field: keyof Ingredient, value: string) => {
-    const updated = ingredients.map((ing, i) => (i === index ? { ...ing, [field]: value } : ing))
+  const updateIngredient = (index, value) => {
+    const updated = [...ingredients]
+    updated[index] = value
     setIngredients(updated)
   }
 
   const addInstruction = () => {
-    setInstructions([...instructions, { instruction: "", step_number: instructions.length + 1 }])
+    setInstructions([...instructions, ""])
   }
 
-  const removeInstruction = (index: number) => {
-    const updated = instructions.filter((_, i) => i !== index)
-    const renumbered = updated.map((inst, i) => ({ ...inst, step_number: i + 1 }))
-    setInstructions(renumbered)
+  const removeInstruction = (index) => {
+    setInstructions(instructions.filter((_, i) => i !== index))
   }
 
-  const updateInstruction = (index: number, value: string) => {
-    const updated = instructions.map((inst, i) => (i === index ? { ...inst, instruction: value } : inst))
+  const updateInstruction = (index, value) => {
+    const updated = [...instructions]
+    updated[index] = value
     setInstructions(updated)
   }
 
-  const addTag = () => {
-    if (newTag.trim() && !tags.includes(newTag.trim())) {
-      setTags([...tags, newTag.trim()])
-      setNewTag("")
+  const submitRecipe = async () => {
+    if (!currentUser) {
+      alert("Please log in first!")
+      return
     }
-  }
 
-  const removeTag = (tagToRemove: string) => {
-    setTags(tags.filter((tag) => tag !== tagToRemove))
-  }
+    setIsSubmitting(true)
+    setRequestTimestamp(new Date().toISOString())
 
-  const fillSampleData = () => {
-    setTitle("Test Recipe - Classic Chocolate Chip Cookies")
-    setDescription(
-      "Perfectly chewy chocolate chip cookies that everyone will love. These cookies have crispy edges and soft centers with plenty of chocolate chips in every bite. This is a test recipe to verify the submission system works correctly.",
-    )
-    setCategory("Desserts")
-    setDifficulty("Easy")
-    setPrepTime("15")
-    setCookTime("12")
-    setServings("24")
-    setImageUrl("/placeholder.svg?height=300&width=400&text=Test+Chocolate+Chip+Cookies")
+    const requestData = {
+      title,
+      description,
+      category,
+      difficulty,
+      prep_time_minutes: prepTime,
+      cook_time_minutes: cookTime,
+      servings,
+      image_url: imageUrl || undefined,
+      ingredients: ingredients.filter((ing) => ing.trim()),
+      instructions: instructions.filter((inst) => inst.trim()),
+      tags: [],
+    }
 
-    setIngredients([
-      { ingredient: "All-purpose flour", amount: "2.25", unit: "cup" },
-      { ingredient: "Baking soda", amount: "1", unit: "tsp" },
-      { ingredient: "Salt", amount: "1", unit: "tsp" },
-      { ingredient: "Butter, softened", amount: "1", unit: "cup" },
-      { ingredient: "Granulated sugar", amount: "0.75", unit: "cup" },
-      { ingredient: "Brown sugar, packed", amount: "0.75", unit: "cup" },
-      { ingredient: "Large eggs", amount: "2", unit: "piece" },
-      { ingredient: "Vanilla extract", amount: "2", unit: "tsp" },
-      { ingredient: "Chocolate chips", amount: "2", unit: "cup" },
-    ])
-
-    setInstructions([
-      { instruction: "Preheat oven to 375°F (190°C). Line baking sheets with parchment paper.", step_number: 1 },
-      { instruction: "In a medium bowl, whisk together flour, baking soda, and salt. Set aside.", step_number: 2 },
-      {
-        instruction:
-          "In a large bowl, cream together softened butter and both sugars until light and fluffy, about 3-4 minutes.",
-        step_number: 3,
-      },
-      { instruction: "Beat in eggs one at a time, then add vanilla extract.", step_number: 4 },
-      { instruction: "Gradually mix in the flour mixture until just combined. Don't overmix.", step_number: 5 },
-      { instruction: "Fold in chocolate chips until evenly distributed.", step_number: 6 },
-      {
-        instruction: "Drop rounded tablespoons of dough onto prepared baking sheets, spacing them 2 inches apart.",
-        step_number: 7,
-      },
-      {
-        instruction:
-          "Bake for 9-12 minutes or until edges are golden brown but centers still look slightly underbaked.",
-        step_number: 8,
-      },
-      {
-        instruction: "Cool on baking sheet for 5 minutes, then transfer to a wire rack to cool completely.",
-        step_number: 9,
-      },
-    ])
-
-    setTags(["test", "cookies", "dessert", "chocolate", "baking", "easy", "family-friendly"])
-  }
-
-  const clearForm = () => {
-    setTitle("")
-    setDescription("")
-    setCategory("")
-    setDifficulty("")
-    setPrepTime("")
-    setCookTime("")
-    setServings("")
-    setImageUrl("")
-    setIngredients([{ ingredient: "", amount: "", unit: "" }])
-    setInstructions([{ instruction: "", step_number: 1 }])
-    setTags([])
-    setNewTag("")
-    setLastResponse(null)
-    setDebugInfo(null)
-  }
-
-  const validateForm = () => {
-    const errors: string[] = []
-
-    if (!title.trim()) errors.push("Title is required")
-    if (!category) errors.push("Category is required")
-    if (!difficulty) errors.push("Difficulty is required")
-    if (!prepTime || Number.parseInt(prepTime) <= 0) errors.push("Valid prep time is required")
-    if (!cookTime || Number.parseInt(cookTime) <= 0) errors.push("Valid cook time is required")
-    if (!servings || Number.parseInt(servings) <= 0) errors.push("Valid servings count is required")
-
-    const validIngredients = ingredients.filter((ing) => ing.ingredient.trim() && ing.amount.trim())
-    if (validIngredients.length === 0) errors.push("At least one complete ingredient is required")
-
-    const validInstructions = instructions.filter((inst) => inst.instruction.trim())
-    if (validInstructions.length === 0) errors.push("At least one instruction is required")
-
-    return errors
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setSubmitting(true)
-    setLastResponse(null)
-    setDebugInfo(null)
+    console.log("🔄 [TEST-FORM] Submitting recipe:", requestData)
+    setLastRequest(requestData)
 
     try {
-      console.log("🔄 [TEST-FORM] Starting form submission...")
-
-      // Client-side validation
-      const validationErrors = validateForm()
-      if (validationErrors.length > 0) {
-        const errorMsg = `Validation failed: ${validationErrors.join(", ")}`
-        console.log("❌ [TEST-FORM] Client validation failed:", validationErrors)
-
-        setLastResponse({
-          success: false,
-          error: "Client-side validation failed",
-          details: errorMsg,
-          missingFields: validationErrors,
-        })
-
-        toast({
-          title: "Validation Error",
-          description: errorMsg,
-          variant: "destructive",
-        })
-        return
-      }
-
-      // Filter valid data
-      const validIngredients = ingredients.filter(
-        (ing) => ing.ingredient.trim() && ing.amount.trim() && ing.unit.trim(),
-      )
-      const validInstructions = instructions.filter((inst) => inst.instruction.trim())
-
-      // Prepare request data
-      const requestData = {
-        title: title.trim(),
-        description: description.trim(),
-        category,
-        difficulty,
-        prep_time_minutes: Number.parseInt(prepTime),
-        cook_time_minutes: Number.parseInt(cookTime),
-        servings: Number.parseInt(servings),
-        image_url: imageUrl.trim() || undefined,
-        ingredients: validIngredients,
-        instructions: validInstructions,
-        tags: tags.filter((tag) => tag.trim()),
-      }
-
-      console.log("📤 [TEST-FORM] Sending request data:", {
-        ...requestData,
-        ingredients_count: requestData.ingredients.length,
-        instructions_count: requestData.instructions.length,
-        tags_count: requestData.tags.length,
-      })
-
-      setDebugInfo({
-        requestData,
-        timestamp: new Date().toISOString(),
-        validationPassed: true,
-      })
-
-      // Make API request
       const response = await fetch("/api/recipes", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
+        credentials: "include",
         body: JSON.stringify(requestData),
       })
 
-      console.log("📥 [TEST-FORM] Response received:", {
-        status: response.status,
-        statusText: response.statusText,
-        headers: Object.fromEntries(response.headers.entries()),
-      })
-
-      // Handle response
-      let result: ApiResponse
+      // Get raw response text first
       const responseText = await response.text()
+      setRawResponse(responseText)
+      console.log("📥 [TEST-FORM] Raw response:", responseText)
 
-      console.log("📄 [TEST-FORM] Raw response text:", responseText)
-
-      if (!responseText) {
-        result = {
+      // Try to parse as JSON
+      let responseData
+      try {
+        responseData = JSON.parse(responseText)
+        console.log("✅ [TEST-FORM] Parsed response:", responseData)
+      } catch (parseError) {
+        console.error("❌ [TEST-FORM] JSON parse error:", parseError)
+        responseData = {
           success: false,
-          error: "Empty response from server",
-          details: "The server returned an empty response",
-        }
-      } else {
-        try {
-          result = JSON.parse(responseText)
-          console.log("✅ [TEST-FORM] Parsed response:", result)
-        } catch (parseError) {
-          console.error("❌ [TEST-FORM] Failed to parse response JSON:", parseError)
-          result = {
-            success: false,
-            error: "Invalid JSON response",
-            details: `Failed to parse server response: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
-            stack: responseText.substring(0, 500), // First 500 chars of response
-          }
+          error: "JSON Parse Error",
+          details: `Failed to parse response as JSON: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
+          timestamp: new Date().toISOString(),
         }
       }
 
-      setLastResponse(result)
+      setLastResponse(responseData)
 
-      if (result.success) {
-        console.log("✅ [TEST-FORM] Recipe submitted successfully")
-        toast({
-          title: "Success!",
-          description: result.message || "Recipe submitted successfully for moderation",
-        })
-
-        // Clear form on success
-        clearForm()
+      if (responseData.success) {
+        alert("Recipe submitted successfully!")
+        console.log("✅ [TEST-FORM] Recipe submission successful")
       } else {
-        console.log("❌ [TEST-FORM] Recipe submission failed:", result)
-        toast({
-          title: "Submission Failed",
-          description: result.error || "Failed to submit recipe",
-          variant: "destructive",
-        })
+        console.error("❌ [TEST-FORM] Recipe submission failed:", responseData.error)
       }
     } catch (error) {
-      console.error("❌ [TEST-FORM] Network or unexpected error:", error)
-
-      const errorResponse: ApiResponse = {
+      console.error("❌ [TEST-FORM] Network error:", error)
+      const errorResponse = {
         success: false,
-        error: "Network or client error",
-        details: error instanceof Error ? error.message : "An unexpected error occurred",
+        error: "Network Error",
+        details: error instanceof Error ? error.message : "Unknown network error",
         timestamp: new Date().toISOString(),
       }
-
       setLastResponse(errorResponse)
-
-      toast({
-        title: "Network Error",
-        description: "Failed to connect to server. Please check your connection and try again.",
-        variant: "destructive",
-      })
+      setRawResponse(`Network Error: ${error instanceof Error ? error.message : "Unknown error"}`)
     } finally {
-      setSubmitting(false)
+      setIsSubmitting(false)
     }
   }
 
+  const isFormDisabled = !currentUser || authLoading || isSubmitting
+
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-6xl mx-auto px-4 grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Form Column */}
-        <div className="lg:col-span-2">
+    <div className="container mx-auto p-6 max-w-6xl">
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold mb-2 flex items-center gap-2">
+          <ChefHat className="w-8 h-8 text-orange-600" />
+          Test Recipe Submission
+        </h1>
+        <p className="text-gray-600">Debug and test the recipe submission API with detailed logging</p>
+      </div>
+
+      {/* Authentication Status */}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">Authentication Status</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {authLoading ? (
+            <div className="flex items-center gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin" />
+              <span>Checking authentication...</span>
+            </div>
+          ) : currentUser ? (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="w-5 h-5 text-green-600" />
+                <span className="font-medium">Authenticated as: {currentUser.username}</span>
+              </div>
+              <div className="flex gap-2">
+                <Badge variant="outline">{currentUser.role}</Badge>
+                <Badge variant={currentUser.status === "active" ? "default" : "destructive"}>
+                  {currentUser.status}
+                </Badge>
+                {currentUser.is_verified && <Badge variant="secondary">Verified</Badge>}
+              </div>
+              <p className="text-sm text-gray-600">Email: {currentUser.email}</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-red-600" />
+                <span className="font-medium text-red-600">Not authenticated</span>
+              </div>
+              <p className="text-sm text-gray-600">Please log in to submit recipes</p>
+            </div>
+          )}
+
+          <div className="flex gap-2 mt-4">
+            <Button onClick={checkAuthStatus} variant="outline" size="sm" disabled={authLoading}>
+              <RefreshCw className={`w-4 h-4 mr-2 ${authLoading ? "animate-spin" : ""}`} />
+              Refresh Auth
+            </Button>
+            {!currentUser && (
+              <Button onClick={() => (window.location.href = "/login")} size="sm">
+                Go to Login
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Recipe Form */}
+        <div className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ChefHat className="w-6 h-6" />
-                Test Recipe Submission
-              </CardTitle>
+              <CardTitle>Recipe Form</CardTitle>
               <CardDescription>
-                Submit a test recipe to verify the submission system and admin moderation workflow
+                {isFormDisabled ? "Form disabled - authentication required" : "Fill out the recipe details"}
               </CardDescription>
-              <div className="flex gap-2">
-                <Button onClick={fillSampleData} variant="outline" size="sm">
-                  Fill Sample Data
-                </Button>
-                <Button onClick={clearForm} variant="outline" size="sm">
-                  Clear Form
-                </Button>
-              </div>
             </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-6">
-                {/* Basic Info */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="title">Recipe Title *</Label>
-                    <Input
-                      id="title"
-                      value={title}
-                      onChange={(e) => setTitle(e.target.value)}
-                      placeholder="Enter recipe title"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="category">Category *</Label>
-                    <Select value={category} onValueChange={setCategory}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select category" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {categories.map((cat) => (
-                          <SelectItem key={cat} value={cat}>
-                            {cat}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="description">Description</Label>
-                  <Textarea
-                    id="description"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder="Describe your recipe..."
-                    rows={3}
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div>
-                    <Label htmlFor="difficulty">Difficulty *</Label>
-                    <Select value={difficulty} onValueChange={setDifficulty}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {difficulties.map((diff) => (
-                          <SelectItem key={diff} value={diff}>
-                            {diff}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="prepTime">Prep Time (min) *</Label>
-                    <Input
-                      id="prepTime"
-                      type="number"
-                      value={prepTime}
-                      onChange={(e) => setPrepTime(e.target.value)}
-                      placeholder="15"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="cookTime">Cook Time (min) *</Label>
-                    <Input
-                      id="cookTime"
-                      type="number"
-                      value={cookTime}
-                      onChange={(e) => setCookTime(e.target.value)}
-                      placeholder="30"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="servings">Servings *</Label>
-                    <Input
-                      id="servings"
-                      type="number"
-                      value={servings}
-                      onChange={(e) => setServings(e.target.value)}
-                      placeholder="4"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <Label htmlFor="imageUrl">Image URL</Label>
+                  <Label htmlFor="title">Title *</Label>
                   <Input
-                    id="imageUrl"
-                    value={imageUrl}
-                    onChange={(e) => setImageUrl(e.target.value)}
-                    placeholder="https://example.com/image.jpg"
+                    id="title"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    disabled={isFormDisabled}
+                    placeholder="Recipe title"
                   />
                 </div>
-
-                {/* Ingredients */}
                 <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <Label>Ingredients *</Label>
-                    <Button type="button" onClick={addIngredient} size="sm">
-                      <Plus className="w-4 h-4 mr-1" />
-                      Add Ingredient
-                    </Button>
-                  </div>
-                  <div className="space-y-2">
-                    {ingredients.map((ingredient, index) => (
-                      <div key={index} className="flex gap-2 items-end">
-                        <div className="flex-1">
-                          <Input
-                            placeholder="Ingredient name"
-                            value={ingredient.ingredient}
-                            onChange={(e) => updateIngredient(index, "ingredient", e.target.value)}
-                          />
-                        </div>
-                        <div className="w-20">
-                          <Input
-                            placeholder="Amount"
-                            value={ingredient.amount}
-                            onChange={(e) => updateIngredient(index, "amount", e.target.value)}
-                          />
-                        </div>
-                        <div className="w-24">
-                          <Select
-                            value={ingredient.unit}
-                            onValueChange={(value) => updateIngredient(index, "unit", value)}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Unit" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {units.map((unit) => (
-                                <SelectItem key={unit} value={unit}>
-                                  {unit}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => removeIngredient(index)}
-                          disabled={ingredients.length === 1}
-                        >
-                          <Minus className="w-4 h-4" />
-                        </Button>
+                  <Label htmlFor="category">Category *</Label>
+                  <Select value={category} onValueChange={setCategory} disabled={isFormDisabled}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="appetizer">Appetizer</SelectItem>
+                      <SelectItem value="main-course">Main Course</SelectItem>
+                      <SelectItem value="dessert">Dessert</SelectItem>
+                      <SelectItem value="beverage">Beverage</SelectItem>
+                      <SelectItem value="snack">Snack</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="description">Description</Label>
+                <Textarea
+                  id="description"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  disabled={isFormDisabled}
+                  placeholder="Brief description of the recipe"
+                  rows={3}
+                />
+              </div>
+
+              <div className="grid grid-cols-4 gap-4">
+                <div>
+                  <Label htmlFor="difficulty">Difficulty *</Label>
+                  <Select value={difficulty} onValueChange={setDifficulty} disabled={isFormDisabled}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="easy">Easy</SelectItem>
+                      <SelectItem value="medium">Medium</SelectItem>
+                      <SelectItem value="hard">Hard</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="prep-time">Prep Time *</Label>
+                  <Input
+                    id="prep-time"
+                    type="number"
+                    value={prepTime}
+                    onChange={(e) => setPrepTime(e.target.value)}
+                    disabled={isFormDisabled}
+                    placeholder="Minutes"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="cook-time">Cook Time *</Label>
+                  <Input
+                    id="cook-time"
+                    type="number"
+                    value={cookTime}
+                    onChange={(e) => setCookTime(e.target.value)}
+                    disabled={isFormDisabled}
+                    placeholder="Minutes"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="servings">Servings *</Label>
+                  <Input
+                    id="servings"
+                    type="number"
+                    value={servings}
+                    onChange={(e) => setServings(e.target.value)}
+                    disabled={isFormDisabled}
+                    placeholder="Number"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="image-url">Image URL (optional)</Label>
+                <Input
+                  id="image-url"
+                  value={imageUrl}
+                  onChange={(e) => setImageUrl(e.target.value)}
+                  disabled={isFormDisabled}
+                  placeholder="https://example.com/image.jpg"
+                />
+              </div>
+
+              {/* Ingredients */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <Label>Ingredients *</Label>
+                  <Button type="button" variant="outline" size="sm" onClick={addIngredient} disabled={isFormDisabled}>
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </div>
+                <div className="space-y-2">
+                  {ingredients.map((ingredient, index) => (
+                    <div key={index} className="flex gap-2">
+                      <Input
+                        value={ingredient}
+                        onChange={(e) => updateIngredient(index, e.target.value)}
+                        disabled={isFormDisabled}
+                        placeholder={`Ingredient ${index + 1}`}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => removeIngredient(index)}
+                        disabled={isFormDisabled || ingredients.length <= 1}
+                      >
+                        <Minus className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Instructions */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <Label>Instructions *</Label>
+                  <Button type="button" variant="outline" size="sm" onClick={addInstruction} disabled={isFormDisabled}>
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </div>
+                <div className="space-y-2">
+                  {instructions.map((instruction, index) => (
+                    <div key={index} className="flex gap-2">
+                      <div className="flex-shrink-0 w-8 h-10 bg-gray-100 rounded flex items-center justify-center text-sm font-medium">
+                        {index + 1}
                       </div>
-                    ))}
-                  </div>
+                      <Textarea
+                        value={instruction}
+                        onChange={(e) => updateInstruction(index, e.target.value)}
+                        disabled={isFormDisabled}
+                        placeholder={`Step ${index + 1}`}
+                        rows={2}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => removeInstruction(index)}
+                        disabled={isFormDisabled || instructions.length <= 1}
+                      >
+                        <Minus className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ))}
                 </div>
+              </div>
 
-                {/* Instructions */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <Label>Instructions *</Label>
-                    <Button type="button" onClick={addInstruction} size="sm">
-                      <Plus className="w-4 h-4 mr-1" />
-                      Add Step
-                    </Button>
-                  </div>
-                  <div className="space-y-3">
-                    {instructions.map((instruction, index) => (
-                      <div key={index} className="flex gap-3 items-start">
-                        <div className="w-8 h-8 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 mt-1">
-                          {instruction.step_number}
-                        </div>
-                        <Textarea
-                          placeholder={`Step ${instruction.step_number} instructions...`}
-                          value={instruction.instruction}
-                          onChange={(e) => updateInstruction(index, e.target.value)}
-                          rows={2}
-                          className="flex-1"
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => removeInstruction(index)}
-                          disabled={instructions.length === 1}
-                          className="mt-1"
-                        >
-                          <Minus className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+              <Button onClick={submitRecipe} disabled={isFormDisabled} className="w-full" size="lg">
+                {isSubmitting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    Submitting...
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4 mr-2" />
+                    Submit Recipe
+                  </>
+                )}
+              </Button>
 
-                {/* Tags */}
-                <div>
-                  <Label>Tags</Label>
-                  <div className="flex gap-2 mb-2">
-                    <Input
-                      placeholder="Add a tag"
-                      value={newTag}
-                      onChange={(e) => setNewTag(e.target.value)}
-                      onKeyPress={(e) => e.key === "Enter" && (e.preventDefault(), addTag())}
-                    />
-                    <Button type="button" onClick={addTag} size="sm">
-                      Add
-                    </Button>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {tags.map((tag) => (
-                      <Badge key={tag} variant="secondary" className="cursor-pointer" onClick={() => removeTag(tag)}>
-                        {tag} ×
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-
-                <Button type="submit" disabled={submitting} className="w-full">
-                  {submitting ? "Submitting..." : "Submit Test Recipe"}
-                </Button>
-              </form>
+              {isFormDisabled && !authLoading && (
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    {!currentUser ? "Please log in to submit recipes" : "Form is currently disabled"}
+                  </AlertDescription>
+                </Alert>
+              )}
             </CardContent>
           </Card>
         </div>
 
-        {/* Debug Info Column */}
-        <div className="space-y-4">
-          {/* Last Response */}
-          {lastResponse && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  {lastResponse.success ? (
-                    <CheckCircle className="w-4 h-4 text-green-500" />
-                  ) : (
-                    <AlertCircle className="w-4 h-4 text-red-500" />
-                  )}
-                  API Response
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Alert variant={lastResponse.success ? "default" : "destructive"}>
-                  <AlertDescription>
-                    <strong>Status:</strong> {lastResponse.success ? "Success" : "Failed"}
-                  </AlertDescription>
-                </Alert>
-
-                {lastResponse.message && (
-                  <div>
-                    <Label className="text-xs text-green-600">Message</Label>
-                    <p className="text-sm bg-green-50 p-2 rounded border">{lastResponse.message}</p>
-                  </div>
-                )}
-
-                {lastResponse.error && (
-                  <div>
-                    <Label className="text-xs text-red-600">Error</Label>
-                    <p className="text-sm bg-red-50 p-2 rounded border">{lastResponse.error}</p>
-                  </div>
-                )}
-
-                {lastResponse.details && (
-                  <div>
-                    <Label className="text-xs text-orange-600">Details</Label>
-                    <p className="text-sm bg-orange-50 p-2 rounded border">{lastResponse.details}</p>
-                  </div>
-                )}
-
-                {lastResponse.missingFields && lastResponse.missingFields.length > 0 && (
-                  <div>
-                    <Label className="text-xs text-red-600">Missing Fields</Label>
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {lastResponse.missingFields.map((field) => (
-                        <Badge key={field} variant="destructive" className="text-xs">
-                          {field}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {lastResponse.data && (
-                  <div>
-                    <Label className="text-xs text-blue-600">Response Data</Label>
-                    <pre className="text-xs bg-blue-50 p-2 rounded border overflow-auto max-h-32">
-                      {JSON.stringify(lastResponse.data, null, 2)}
-                    </pre>
-                  </div>
-                )}
-
-                {lastResponse.stack && (
-                  <div>
-                    <Label className="text-xs text-gray-600">Stack/Raw Response</Label>
-                    <pre className="text-xs bg-gray-50 p-2 rounded border overflow-auto max-h-32">
-                      {lastResponse.stack}
-                    </pre>
-                  </div>
-                )}
-
-                {lastResponse.timestamp && (
-                  <div>
-                    <Label className="text-xs text-gray-500">Timestamp</Label>
-                    <p className="text-xs text-gray-600">{lastResponse.timestamp}</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Debug Info */}
-          {debugInfo && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <Info className="w-4 h-4 text-blue-500" />
-                  Debug Information
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  <div>
-                    <Label className="text-xs text-blue-600">Request Data</Label>
-                    <pre className="text-xs bg-blue-50 p-2 rounded border overflow-auto max-h-40">
-                      {JSON.stringify(debugInfo.requestData, null, 2)}
-                    </pre>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <Label className="text-xs">Ingredients</Label>
-                      <p className="bg-gray-50 p-1 rounded">{debugInfo.requestData?.ingredients?.length || 0}</p>
-                    </div>
-                    <div>
-                      <Label className="text-xs">Instructions</Label>
-                      <p className="bg-gray-50 p-1 rounded">{debugInfo.requestData?.instructions?.length || 0}</p>
-                    </div>
-                  </div>
-
-                  <div>
-                    <Label className="text-xs text-gray-500">Submitted At</Label>
-                    <p className="text-xs text-gray-600">{debugInfo.timestamp}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Instructions */}
+        {/* Debug Panel */}
+        <div className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm">Testing Instructions</CardTitle>
+              <CardTitle className="flex items-center justify-between">
+                Debug Information
+                <Button variant="ghost" size="sm" onClick={() => setShowDebugInfo(!showDebugInfo)}>
+                  {showDebugInfo ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </Button>
+              </CardTitle>
             </CardHeader>
-            <CardContent className="text-sm space-y-2">
-              <p>1. Click "Fill Sample Data" to populate the form</p>
-              <p>2. Click "Submit Test Recipe" to test the API</p>
-              <p>3. Check the API Response panel for detailed results</p>
-              <p>4. Look for any JSON parsing errors or validation issues</p>
-              <p>5. Check browser console for additional debugging info</p>
+            {showDebugInfo && (
+              <CardContent>
+                <Tabs defaultValue="current-user" className="w-full">
+                  <TabsList className="grid w-full grid-cols-4">
+                    <TabsTrigger value="current-user">User</TabsTrigger>
+                    <TabsTrigger value="request">Request</TabsTrigger>
+                    <TabsTrigger value="response">Response</TabsTrigger>
+                    <TabsTrigger value="raw">Raw</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="current-user" className="mt-4">
+                    <div className="space-y-2">
+                      <h4 className="font-medium">Current User Data</h4>
+                      <pre className="bg-gray-100 p-3 rounded text-xs overflow-auto max-h-64">
+                        {JSON.stringify(currentUser, null, 2)}
+                      </pre>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="request" className="mt-4">
+                    <div className="space-y-2">
+                      <h4 className="font-medium">Last Request Data</h4>
+                      {requestTimestamp && <p className="text-xs text-gray-500">Sent: {requestTimestamp}</p>}
+                      <pre className="bg-gray-100 p-3 rounded text-xs overflow-auto max-h-64">
+                        {lastRequest ? JSON.stringify(lastRequest, null, 2) : "No request sent yet"}
+                      </pre>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="response" className="mt-4">
+                    <div className="space-y-2">
+                      <h4 className="font-medium">API Response</h4>
+                      {lastResponse && (
+                        <div className="flex items-center gap-2 mb-2">
+                          {lastResponse.success ? (
+                            <CheckCircle className="w-4 h-4 text-green-600" />
+                          ) : (
+                            <AlertCircle className="w-4 h-4 text-red-600" />
+                          )}
+                          <span
+                            className={`text-sm font-medium ${
+                              lastResponse.success ? "text-green-600" : "text-red-600"
+                            }`}
+                          >
+                            {lastResponse.success ? "Success" : "Error"}
+                          </span>
+                          {lastResponse.timestamp && (
+                            <span className="text-xs text-gray-500">
+                              {new Date(lastResponse.timestamp).toLocaleTimeString()}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      <pre className="bg-gray-100 p-3 rounded text-xs overflow-auto max-h-64">
+                        {lastResponse ? JSON.stringify(lastResponse, null, 2) : "No response yet"}
+                      </pre>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="raw" className="mt-4">
+                    <div className="space-y-2">
+                      <h4 className="font-medium">Raw Response Text</h4>
+                      <pre className="bg-gray-100 p-3 rounded text-xs overflow-auto max-h-64">
+                        {rawResponse || "No raw response yet"}
+                      </pre>
+                    </div>
+                  </TabsContent>
+                </Tabs>
+              </CardContent>
+            )}
+          </Card>
+
+          {/* Quick Actions */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Quick Actions</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setTitle("Quick Test Recipe")
+                  setDescription("Auto-generated test recipe")
+                  setIngredients(["1 cup test ingredient", "2 tbsp test spice"])
+                  setInstructions(["Mix ingredients", "Test the result"])
+                }}
+                disabled={isFormDisabled}
+                className="w-full"
+              >
+                Fill Test Data
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setLastRequest(null)
+                  setLastResponse(null)
+                  setRawResponse("")
+                  setRequestTimestamp("")
+                }}
+                className="w-full"
+              >
+                Clear Debug Data
+              </Button>
+
+              <Button variant="outline" size="sm" onClick={() => window.open("/admin", "_blank")} className="w-full">
+                Open Admin Panel
+              </Button>
             </CardContent>
           </Card>
         </div>
