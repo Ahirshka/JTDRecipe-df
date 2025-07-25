@@ -6,8 +6,12 @@ import bcrypt from "bcryptjs"
 // Configure neon to use fetch polyfill
 neonConfig.fetchConnectionCache = true
 
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL environment variable is required")
+}
+
 // Initialize database connection
-const sql_client = neon(process.env.DATABASE_URL!)
+const sql_client = neon(process.env.DATABASE_URL)
 // Export sql as required by other modules
 export const sql = sql_client
 const db = drizzle(sql_client)
@@ -144,7 +148,7 @@ export async function createUser(userData: {
     console.log("🔍 [NEON] Creating new user:", userData.username)
 
     // Hash password
-    const salt = await bcrypt.genSalt(10)
+    const salt = await bcrypt.genSalt(12)
     const password_hash = await bcrypt.hash(userData.password, salt)
 
     // Generate verification token
@@ -166,11 +170,15 @@ export async function createUser(userData: {
         ${userData.status || "active"}, 
         ${now}, 
         ${now}, 
-        ${false}, 
+        ${true}, 
         ${verification_token}
       )
       RETURNING *
     `
+
+    if (!result || result.length === 0) {
+      throw new Error("Failed to create user - no result returned")
+    }
 
     console.log("✅ [NEON] User created successfully:", result[0].id)
     return result[0] as User
@@ -193,20 +201,16 @@ export async function updateUser(id: string, updates: Partial<User>): Promise<Us
 
     const now = new Date()
 
-    // Create SET parts for the query
-    const setParts = updateFields.map((field) => `${field} = ?`).join(", ")
-    const setValues = updateFields.map((field) => updates[field as keyof typeof updates])
+    // Build the query dynamically
+    const setClause = updateFields.map((field, index) => `${field} = $${index + 2}`).join(", ")
+    const values = [id, ...updateFields.map((field) => updates[field as keyof typeof updates]), now]
 
-    // Add updated_at to the SET clause
     const query = `
       UPDATE users 
-      SET ${setParts}, updated_at = ? 
-      WHERE id = ? 
+      SET ${setClause}, updated_at = $${values.length}
+      WHERE id = $1 
       RETURNING *
     `
-
-    // Add all values to the query parameters
-    const values = [...setValues, now, id]
 
     const result = await sql_client.unsafe(query, values)
 
@@ -273,6 +277,10 @@ export async function createUserSession(userId: string, token: string, expiresAt
       )
       RETURNING *
     `
+
+    if (!result || result.length === 0) {
+      throw new Error("Failed to create session - no result returned")
+    }
 
     console.log("✅ [NEON] Session created successfully:", result[0].id)
     return result[0] as Session
@@ -389,6 +397,10 @@ export async function createRecipe(recipeData: {
       )
       RETURNING *
     `
+
+    if (!result || result.length === 0) {
+      throw new Error("Failed to create recipe - no result returned")
+    }
 
     // Parse JSON strings back to arrays
     const recipe = result[0] as any
