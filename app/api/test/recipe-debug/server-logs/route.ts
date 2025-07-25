@@ -1,78 +1,94 @@
 import { type NextRequest, NextResponse } from "next/server"
 
+// In-memory log storage (in production, you'd use a proper logging service)
 interface LogEntry {
   id: string
   timestamp: string
   level: "info" | "warn" | "error" | "debug"
   message: string
-  context?: any
+  metadata?: Record<string, any>
 }
 
-// In-memory log storage (in production, you'd use a proper logging service)
-let logs: LogEntry[] = []
+const logs: LogEntry[] = []
+const MAX_LOGS = 1000 // Keep only the last 1000 logs
 
-export function addLog(level: LogEntry["level"], message: string, context?: any): void {
+// Add log entry function - REQUIRED EXPORT
+export function addLog(
+  level: "info" | "warn" | "error" | "debug",
+  message: string,
+  metadata?: Record<string, any>,
+): void {
   const logEntry: LogEntry = {
-    id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+    id: Math.random().toString(36).substring(2, 15),
     timestamp: new Date().toISOString(),
     level,
     message,
-    context,
+    metadata,
   }
 
-  logs.push(logEntry)
+  logs.unshift(logEntry) // Add to beginning of array
 
-  // Keep only the last 1000 logs to prevent memory issues
-  if (logs.length > 1000) {
-    logs = logs.slice(-1000)
+  // Keep only the most recent logs
+  if (logs.length > MAX_LOGS) {
+    logs.splice(MAX_LOGS)
   }
 
   // Also log to console for development
-  const contextStr = context ? ` | Context: ${JSON.stringify(context)}` : ""
-  const logMessage = `[${level.toUpperCase()}] ${message}${contextStr}`
+  const consoleMessage = `[${logEntry.timestamp}] ${level.toUpperCase()}: ${message}`
 
   switch (level) {
     case "error":
-      console.error(logMessage)
+      console.error(consoleMessage, metadata || "")
       break
     case "warn":
-      console.warn(logMessage)
+      console.warn(consoleMessage, metadata || "")
       break
     case "debug":
-      console.debug(logMessage)
+      console.debug(consoleMessage, metadata || "")
       break
     default:
-      console.log(logMessage)
+      console.log(consoleMessage, metadata || "")
   }
 }
 
+// GET endpoint - Retrieve logs
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const level = searchParams.get("level")
     const limit = Number.parseInt(searchParams.get("limit") || "100")
-    const offset = Number.parseInt(searchParams.get("offset") || "0")
+    const search = searchParams.get("search")
 
-    let filteredLogs = logs
+    let filteredLogs = [...logs]
 
-    // Filter by level if specified
+    // Filter by level
     if (level && ["info", "warn", "error", "debug"].includes(level)) {
-      filteredLogs = logs.filter((log) => log.level === level)
+      filteredLogs = filteredLogs.filter((log) => log.level === level)
     }
 
-    // Sort by timestamp (newest first)
-    filteredLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    // Filter by search term
+    if (search) {
+      const searchLower = search.toLowerCase()
+      filteredLogs = filteredLogs.filter(
+        (log) =>
+          log.message.toLowerCase().includes(searchLower) ||
+          JSON.stringify(log.metadata || {})
+            .toLowerCase()
+            .includes(searchLower),
+      )
+    }
 
-    // Apply pagination
-    const paginatedLogs = filteredLogs.slice(offset, offset + limit)
+    // Limit results
+    filteredLogs = filteredLogs.slice(0, limit)
 
     return NextResponse.json({
       success: true,
-      data: {
-        logs: paginatedLogs,
-        total: filteredLogs.length,
-        offset,
+      logs: filteredLogs,
+      total: filteredLogs.length,
+      filters: {
+        level: level || "all",
         limit,
+        search: search || "",
       },
     })
   } catch (error) {
@@ -88,16 +104,17 @@ export async function GET(request: NextRequest) {
   }
 }
 
+// POST endpoint - Add new log entry
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { level, message, context } = body
+    const { level, message, metadata } = body
 
     if (!level || !message) {
       return NextResponse.json(
         {
           success: false,
-          error: "Missing required fields: level and message",
+          error: "Level and message are required",
         },
         { status: 400 },
       )
@@ -113,11 +130,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    addLog(level, message, context)
+    addLog(level, message, metadata)
 
     return NextResponse.json({
       success: true,
       message: "Log entry added successfully",
+      entry: {
+        level,
+        message,
+        metadata,
+        timestamp: new Date().toISOString(),
+      },
     })
   } catch (error) {
     console.error("Error adding log entry:", error)
@@ -132,14 +155,18 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// DELETE endpoint - Clear all logs
 export async function DELETE() {
   try {
-    logs = []
-    console.log("🗑️ All logs cleared")
+    const clearedCount = logs.length
+    logs.length = 0 // Clear the array
+
+    addLog("info", `Cleared ${clearedCount} log entries`, { clearedCount })
 
     return NextResponse.json({
       success: true,
-      message: "All logs cleared successfully",
+      message: `Cleared ${clearedCount} log entries`,
+      clearedCount,
     })
   } catch (error) {
     console.error("Error clearing logs:", error)
@@ -153,3 +180,9 @@ export async function DELETE() {
     )
   }
 }
+
+// Initialize with a welcome log
+addLog("info", "Server logs system initialized", {
+  maxLogs: MAX_LOGS,
+  timestamp: new Date().toISOString(),
+})
