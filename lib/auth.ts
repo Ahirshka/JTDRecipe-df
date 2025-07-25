@@ -1,419 +1,325 @@
 import bcrypt from "bcryptjs"
 import jwt from "jsonwebtoken"
-import { neon } from "@neondatabase/serverless"
+import {
+  findUserById,
+  findUserByEmail as dbFindUserByEmail,
+  createUser,
+  updateUser,
+  getAllUsers,
+  type User,
+} from "./neon"
 
-const sql = neon(process.env.DATABASE_URL!)
-
-// Role hierarchy for permission checking
+// Role hierarchy with numeric levels (higher number = more permissions)
 export const ROLE_HIERARCHY = {
   user: 1,
-  verified: 2,
-  moderator: 3,
-  admin: 4,
-  owner: 5,
+  moderator: 2,
+  admin: 3,
+  owner: 4,
 } as const
 
-export type UserRole = keyof typeof ROLE_HIERARCHY
+export type Role = keyof typeof ROLE_HIERARCHY
 
-export interface User {
-  id: string
-  email: string
-  username: string
-  password_hash: string
-  role: UserRole
-  is_verified: boolean
-  is_suspended: boolean
-  is_banned: boolean
-  suspension_reason?: string
-  suspension_until?: Date
-  created_at: Date
-  updated_at: Date
+// Check if user can moderate another user
+export function canModerateUser(moderatorRole: string, targetRole: string): boolean {
+  const moderatorLevel = ROLE_HIERARCHY[moderatorRole as Role] || 0
+  const targetLevel = ROLE_HIERARCHY[targetRole as Role] || 0
+  return moderatorLevel > targetLevel
 }
 
-export interface AuthResult {
-  success: boolean
-  user?: User
-  token?: string
-  message?: string
-}
-
-// Check if a user has permission based on role hierarchy
-export function hasPermission(userRole: UserRole, requiredRole: UserRole): boolean {
-  const userLevel = ROLE_HIERARCHY[userRole] || 0
-  const requiredLevel = ROLE_HIERARCHY[requiredRole] || 0
-
+// Check if user has permission based on role
+export function hasPermission(userRole: string, requiredRole: string): boolean {
+  const userLevel = ROLE_HIERARCHY[userRole as Role] || 0
+  const requiredLevel = ROLE_HIERARCHY[requiredRole as Role] || 0
   return userLevel >= requiredLevel
 }
 
 // Verify JWT token
-export function verifyToken(token: string): any {
+export function verifyToken(token: string): any | null {
   try {
-    if (!process.env.JWT_SECRET) {
-      throw new Error("JWT_SECRET environment variable is required")
+    const secret = process.env.JWT_SECRET
+    if (!secret) {
+      throw new Error("JWT_SECRET is not configured")
     }
-
-    return jwt.verify(token, process.env.JWT_SECRET)
+    return jwt.verify(token, secret)
   } catch (error) {
-    console.error("Error verifying token:", error)
+    console.error("Token verification failed:", error)
     return null
   }
 }
 
-// Check if a user can moderate another user
-export function canModerateUser(moderatorRole: UserRole, targetRole: UserRole): boolean {
-  const moderatorLevel = ROLE_HIERARCHY[moderatorRole]
-  const targetLevel = ROLE_HIERARCHY[targetRole]
-  return moderatorLevel > targetLevel
-}
-
-// Get all users for moderation panel
-export async function getAllUsersForModeration(): Promise<User[]> {
-  try {
-    const result = await sql`
-      SELECT id, email, username, role, is_verified, is_suspended, is_banned,
-             suspension_reason, suspension_until, created_at, updated_at
-      FROM users
-      ORDER BY created_at DESC
-    `
-    return result as User[]
-  } catch (error) {
-    console.error("Error fetching users for moderation:", error)
-    return []
+// Generate JWT token
+export function generateToken(payload: any, expiresIn = "7d"): string {
+  const secret = process.env.JWT_SECRET
+  if (!secret) {
+    throw new Error("JWT_SECRET is not configured")
   }
+  return jwt.sign(payload, secret, { expiresIn })
 }
 
-// Suspend a user
-export async function suspendUser(
-  userId: string,
-  reason: string,
-  duration?: number,
-): Promise<{ success: boolean; message: string }> {
-  try {
-    const suspensionUntil = duration ? new Date(Date.now() + duration * 24 * 60 * 60 * 1000) : null
-
-    await sql`
-      UPDATE users 
-      SET is_suspended = true, 
-          suspension_reason = ${reason},
-          suspension_until = ${suspensionUntil?.toISOString() || null},
-          updated_at = NOW()
-      WHERE id = ${userId}
-    `
-
-    // Log the moderation action
-    await sql`
-      INSERT INTO moderation_log (user_id, action, reason, moderator_id, created_at)
-      VALUES (${userId}, 'suspend', ${reason}, 'system', NOW())
-    `
-
-    return { success: true, message: "User suspended successfully" }
-  } catch (error) {
-    console.error("Error suspending user:", error)
-    return { success: false, message: "Failed to suspend user" }
-  }
+// Hash password
+export async function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, 12)
 }
 
-// Unsuspend a user
-export async function unsuspendUser(userId: string): Promise<{ success: boolean; message: string }> {
-  try {
-    await sql`
-      UPDATE users 
-      SET is_suspended = false, 
-          suspension_reason = NULL,
-          suspension_until = NULL,
-          updated_at = NOW()
-      WHERE id = ${userId}
-    `
-
-    // Log the moderation action
-    await sql`
-      INSERT INTO moderation_log (user_id, action, reason, moderator_id, created_at)
-      VALUES (${userId}, 'unsuspend', 'Suspension lifted', 'system', NOW())
-    `
-
-    return { success: true, message: "User unsuspended successfully" }
-  } catch (error) {
-    console.error("Error unsuspending user:", error)
-    return { success: false, message: "Failed to unsuspend user" }
-  }
+// Verify password
+export async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  return bcrypt.compare(password, hash)
 }
 
-// Ban a user permanently
-export async function banUser(userId: string, reason: string): Promise<{ success: boolean; message: string }> {
-  try {
-    await sql`
-      UPDATE users 
-      SET is_banned = true, 
-          suspension_reason = ${reason},
-          updated_at = NOW()
-      WHERE id = ${userId}
-    `
-
-    // Log the moderation action
-    await sql`
-      INSERT INTO moderation_log (user_id, action, reason, moderator_id, created_at)
-      VALUES (${userId}, 'ban', ${reason}, 'system', NOW())
-    `
-
-    return { success: true, message: "User banned successfully" }
-  } catch (error) {
-    console.error("Error banning user:", error)
-    return { success: false, message: "Failed to ban user" }
-  }
-}
-
-// Change user role
-export async function changeUserRole(
-  userId: string,
-  newRole: UserRole,
-): Promise<{ success: boolean; message: string }> {
-  try {
-    await sql`
-      UPDATE users 
-      SET role = ${newRole}, 
-          updated_at = NOW()
-      WHERE id = ${userId}
-    `
-
-    // Log the moderation action
-    await sql`
-      INSERT INTO moderation_log (user_id, action, reason, moderator_id, created_at)
-      VALUES (${userId}, 'role_change', ${"Role changed to " + newRole}, 'system', NOW())
-    `
-
-    return { success: true, message: "User role updated successfully" }
-  } catch (error) {
-    console.error("Error changing user role:", error)
-    return { success: false, message: "Failed to change user role" }
-  }
-}
-
-// Verify a user
-export async function verifyUser(userId: string): Promise<{ success: boolean; message: string }> {
-  try {
-    await sql`
-      UPDATE users 
-      SET is_verified = true, 
-          updated_at = NOW()
-      WHERE id = ${userId}
-    `
-
-    return { success: true, message: "User verified successfully" }
-  } catch (error) {
-    console.error("Error verifying user:", error)
-    return { success: false, message: "Failed to verify user" }
-  }
-}
-
-// Warn a user
-export async function warnUser(userId: string, reason: string): Promise<{ success: boolean; message: string }> {
-  try {
-    // Log the warning
-    await sql`
-      INSERT INTO moderation_log (user_id, action, reason, moderator_id, created_at)
-      VALUES (${userId}, 'warn', ${reason}, 'system', NOW())
-    `
-
-    return { success: true, message: "User warned successfully" }
-  } catch (error) {
-    console.error("Error warning user:", error)
-    return { success: false, message: "Failed to warn user" }
-  }
-}
-
-// Save/create a new user
-export async function saveUser(userData: {
-  email: string
-  username: string
-  password: string
-  role?: UserRole
-}): Promise<AuthResult> {
-  try {
-    // Validate input
-    if (!isValidEmail(userData.email)) {
-      return { success: false, message: "Invalid email format" }
-    }
-
-    if (!isValidPassword(userData.password)) {
-      return { success: false, message: "Password must be at least 8 characters long" }
-    }
-
-    if (!isValidUsername(userData.username)) {
-      return { success: false, message: "Username must be 3-30 characters, alphanumeric and underscores only" }
-    }
-
-    // Check if user already exists
-    const existingUser = await findUserByEmail(userData.email)
-    if (existingUser) {
-      return { success: false, message: "User with this email already exists" }
-    }
-
-    // Hash password
-    const passwordHash = await bcrypt.hash(userData.password, 12)
-    const userId = generateId()
-
-    // Create user
-    await sql`
-      INSERT INTO users (id, email, username, password_hash, role, is_verified, created_at, updated_at)
-      VALUES (${userId}, ${userData.email}, ${userData.username}, ${passwordHash}, 
-              ${userData.role || "user"}, false, NOW(), NOW())
-    `
-
-    const user = await findUserByEmail(userData.email)
-    if (!user) {
-      return { success: false, message: "Failed to create user" }
-    }
-
-    return { success: true, user, message: "User created successfully" }
-  } catch (error) {
-    console.error("Error saving user:", error)
-    return { success: false, message: "Failed to create user" }
-  }
-}
-
-// Find user by email
-export async function findUserByEmail(email: string): Promise<User | null> {
-  try {
-    const result = await sql`
-      SELECT id, email, username, password_hash, role, is_verified, is_suspended, is_banned,
-             suspension_reason, suspension_until, created_at, updated_at
-      FROM users 
-      WHERE email = ${email}
-      LIMIT 1
-    `
-
-    if (result.length === 0) return null
-
-    const user = result[0] as any
-    return {
-      ...user,
-      suspension_until: user.suspension_until ? new Date(user.suspension_until) : undefined,
-      created_at: new Date(user.created_at),
-      updated_at: new Date(user.updated_at),
-    }
-  } catch (error) {
-    console.error("Error finding user by email:", error)
-    return null
-  }
-}
-
-// Login user
-export async function loginUser(email: string, password: string): Promise<AuthResult> {
-  try {
-    const user = await findUserByEmail(email)
-    if (!user) {
-      return { success: false, message: "Invalid email or password" }
-    }
-
-    // Check if user is banned
-    if (user.is_banned) {
-      return { success: false, message: "Account is banned" }
-    }
-
-    // Check if user is suspended
-    if (user.is_suspended) {
-      if (user.suspension_until && user.suspension_until > new Date()) {
-        return { success: false, message: "Account is suspended" }
-      } else if (user.suspension_until && user.suspension_until <= new Date()) {
-        // Auto-unsuspend if suspension period has ended
-        await unsuspendUser(user.id)
-        user.is_suspended = false
-      }
-    }
-
-    // Verify password
-    const isValidPassword = await bcrypt.compare(password, user.password_hash)
-    if (!isValidPassword) {
-      return { success: false, message: "Invalid email or password" }
-    }
-
-    // Generate JWT token
-    const token = generateJWT(user)
-
-    // Create session
-    await createSession(user.id, token)
-
-    return { success: true, user, token, message: "Login successful" }
-  } catch (error) {
-    console.error("Error logging in user:", error)
-    return { success: false, message: "Login failed" }
-  }
-}
-
-// Logout user
-export async function logoutUser(userId: string): Promise<{ success: boolean; message: string }> {
-  try {
-    // Delete all sessions for the user
-    await sql`
-      DELETE FROM user_sessions 
-      WHERE user_id = ${userId}
-    `
-
-    return { success: true, message: "Logout successful" }
-  } catch (error) {
-    console.error("Error logging out user:", error)
-    return { success: false, message: "Logout failed" }
-  }
-}
-
-// Helper functions
-function isValidEmail(email: string): boolean {
+// Validate email format
+export function isValidEmail(email: string): boolean {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
   return emailRegex.test(email)
 }
 
-function isValidPassword(password: string): boolean {
+// Validate password strength
+export function isValidPassword(password: string): boolean {
   return password.length >= 8
 }
 
-function isValidUsername(username: string): boolean {
-  const usernameRegex = /^[a-zA-Z0-9_]{3,30}$/
-  return usernameRegex.test(username)
+// Validate username
+export function isValidUsername(username: string): boolean {
+  return username.length >= 3 && username.length <= 50 && /^[a-zA-Z0-9_]+$/.test(username)
 }
 
-function generateId(): string {
-  return Math.random().toString(36).substring(2) + Date.now().toString(36)
-}
-
-function generateJWT(user: User): string {
-  if (!process.env.JWT_SECRET) {
-    throw new Error("JWT_SECRET environment variable is required")
-  }
-
-  const payload = {
-    userId: user.id,
-    email: user.email,
-    role: user.role,
-    iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + 24 * 60 * 60, // 24 hours
-  }
-
-  return jwt.sign(payload, process.env.JWT_SECRET)
-}
-
-async function createSession(userId: string, token: string): Promise<void> {
-  const sessionId = generateId()
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
-
-  await sql`
-    INSERT INTO user_sessions (id, user_id, token, expires_at, created_at)
-    VALUES (${sessionId}, ${userId}, ${token}, ${expiresAt.toISOString()}, NOW())
-    ON CONFLICT (user_id) DO UPDATE SET
-      token = ${token},
-      expires_at = ${expiresAt.toISOString()},
-      created_at = NOW()
-  `
-}
-
-// Get current user from token
-export async function getCurrentUserFromToken(token: string): Promise<User | null> {
+// Get all users for moderation
+export async function getAllUsersForModeration(): Promise<User[]> {
   try {
-    const payload = verifyToken(token)
-    if (!payload) return null
-
-    return await findUserByEmail(payload.email)
+    return await getAllUsers()
   } catch (error) {
-    console.error("Error getting current user from token:", error)
+    console.error("Error getting users for moderation:", error)
+    return []
+  }
+}
+
+// Suspend user
+export async function suspendUser(
+  userId: number,
+  reason: string,
+  duration: number, // hours
+  moderatorId: number,
+): Promise<boolean> {
+  try {
+    const suspensionExpiresAt = new Date()
+    suspensionExpiresAt.setHours(suspensionExpiresAt.getHours() + duration)
+
+    const updated = await updateUser(userId, {
+      status: "suspended",
+      suspension_reason: reason,
+      suspension_expires_at: suspensionExpiresAt.toISOString(),
+    })
+
+    return !!updated
+  } catch (error) {
+    console.error("Error suspending user:", error)
+    return false
+  }
+}
+
+// Unsuspend user
+export async function unsuspendUser(userId: number, moderatorId: number): Promise<boolean> {
+  try {
+    const updated = await updateUser(userId, {
+      status: "active",
+      suspension_reason: null,
+      suspension_expires_at: null,
+    })
+
+    return !!updated
+  } catch (error) {
+    console.error("Error unsuspending user:", error)
+    return false
+  }
+}
+
+// Ban user permanently
+export async function banUser(userId: number, reason: string, moderatorId: number): Promise<boolean> {
+  try {
+    const updated = await updateUser(userId, {
+      status: "banned",
+      suspension_reason: reason,
+    })
+
+    return !!updated
+  } catch (error) {
+    console.error("Error banning user:", error)
+    return false
+  }
+}
+
+// Change user role
+export async function changeUserRole(userId: number, newRole: string, moderatorId: number): Promise<boolean> {
+  try {
+    const updated = await updateUser(userId, {
+      role: newRole,
+    })
+
+    return !!updated
+  } catch (error) {
+    console.error("Error changing user role:", error)
+    return false
+  }
+}
+
+// Verify user
+export async function verifyUser(userId: number): Promise<boolean> {
+  try {
+    const updated = await updateUser(userId, {
+      is_verified: true,
+    })
+
+    return !!updated
+  } catch (error) {
+    console.error("Error verifying user:", error)
+    return false
+  }
+}
+
+// Warn user
+export async function warnUser(userId: number, reason: string, moderatorId: number): Promise<boolean> {
+  try {
+    const user = await findUserById(userId)
+    if (!user) return false
+
+    const updated = await updateUser(userId, {
+      warning_count: (user.warning_count || 0) + 1,
+    })
+
+    return !!updated
+  } catch (error) {
+    console.error("Error warning user:", error)
+    return false
+  }
+}
+
+// Save user (create new user)
+export async function saveUser(userData: {
+  username: string
+  email: string
+  password: string
+  role?: string
+}): Promise<User | null> {
+  try {
+    // Validate input
+    if (!isValidEmail(userData.email)) {
+      throw new Error("Invalid email format")
+    }
+    if (!isValidPassword(userData.password)) {
+      throw new Error("Password must be at least 8 characters long")
+    }
+    if (!isValidUsername(userData.username)) {
+      throw new Error("Username must be 3-50 characters and contain only letters, numbers, and underscores")
+    }
+
+    // Check if user already exists
+    const existingUser = await dbFindUserByEmail(userData.email)
+    if (existingUser) {
+      throw new Error("User with this email already exists")
+    }
+
+    // Hash password
+    const passwordHash = await hashPassword(userData.password)
+
+    // Create user
+    const user = await createUser({
+      username: userData.username,
+      email: userData.email,
+      password_hash: passwordHash,
+      role: userData.role || "user",
+    })
+
+    return user
+  } catch (error) {
+    console.error("Error saving user:", error)
     return null
+  }
+}
+
+// Find user by email (wrapper)
+export async function findUserByEmail(email: string): Promise<User | null> {
+  return dbFindUserByEmail(email)
+}
+
+// Login user
+export async function loginUser(
+  email: string,
+  password: string,
+): Promise<{
+  success: boolean
+  user?: User
+  token?: string
+  error?: string
+}> {
+  try {
+    // Find user
+    const user = await dbFindUserByEmail(email)
+    if (!user) {
+      return { success: false, error: "Invalid email or password" }
+    }
+
+    // Check if user is banned or suspended
+    if (user.status === "banned") {
+      return { success: false, error: "Account is banned" }
+    }
+    if (user.status === "suspended") {
+      const now = new Date()
+      const suspensionExpires = user.suspension_expires_at ? new Date(user.suspension_expires_at) : null
+      if (!suspensionExpires || now < suspensionExpires) {
+        return { success: false, error: "Account is suspended" }
+      } else {
+        // Suspension expired, reactivate account
+        await updateUser(user.id, {
+          status: "active",
+          suspension_reason: null,
+          suspension_expires_at: null,
+        })
+      }
+    }
+
+    // Verify password
+    if (!user.password_hash) {
+      return { success: false, error: "Invalid account configuration" }
+    }
+
+    const isValidPassword = await verifyPassword(password, user.password_hash)
+    if (!isValidPassword) {
+      return { success: false, error: "Invalid email or password" }
+    }
+
+    // Update last login
+    await updateUser(user.id, {
+      last_login_at: new Date().toISOString(),
+    })
+
+    // Generate token
+    const token = generateToken({
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+    })
+
+    return {
+      success: true,
+      user: {
+        ...user,
+        password_hash: undefined, // Don't return password hash
+      },
+      token,
+    }
+  } catch (error) {
+    console.error("Error logging in user:", error)
+    return { success: false, error: "Login failed" }
+  }
+}
+
+// Logout user
+export async function logoutUser(token: string): Promise<boolean> {
+  try {
+    // In a real implementation, you might want to blacklist the token
+    // For now, we'll just return true since JWT tokens are stateless
+    return true
+  } catch (error) {
+    console.error("Error logging out user:", error)
+    return false
   }
 }

@@ -1,15 +1,14 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { getCurrentUserFromRequest } from "@/lib/server-auth"
 import { createRecipe, getAllRecipes } from "@/lib/neon"
-import { addLog } from "../test/server-logs/route"
 
 export async function GET() {
   try {
-    addLog("info", "[RECIPES] Fetching all recipes")
+    console.log("🔄 [RECIPES] Fetching all recipes")
 
     const recipes = await getAllRecipes()
 
-    addLog("info", "[RECIPES] Recipes retrieved", { count: recipes.length })
+    console.log("✅ [RECIPES] Recipes retrieved", { count: recipes.length })
 
     return NextResponse.json({
       success: true,
@@ -17,10 +16,10 @@ export async function GET() {
       count: recipes.length,
     })
   } catch (error) {
-    addLog("error", "[RECIPES] Error fetching recipes", { error })
-    console.error("❌ [RECIPES] Error:", error)
+    console.error("❌ [RECIPES] Error fetching recipes:", error)
     return NextResponse.json(
       {
+        success: false,
         error: "Failed to fetch recipes",
         details: error instanceof Error ? error.message : "Unknown error",
       },
@@ -31,56 +30,77 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    addLog("info", "[RECIPES] Processing new recipe submission")
+    console.log("🔄 [RECIPES] Processing new recipe submission")
 
     // Get authenticated user
     const user = await getCurrentUserFromRequest(request)
     if (!user) {
-      addLog("error", "[RECIPES] Unauthorized recipe submission attempt")
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 })
+      console.log("❌ [RECIPES] Unauthorized recipe submission attempt")
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Authentication required",
+        },
+        { status: 401 },
+      )
     }
 
-    addLog("info", "[RECIPES] User authenticated for recipe submission", {
+    console.log("✅ [RECIPES] User authenticated for recipe submission", {
       userId: user.id,
       username: user.username,
     })
 
     const body = await request.json()
+    console.log("📝 [RECIPES] Request body:", body)
+
     const {
       title,
       description,
       category,
       difficulty,
-      prepTime,
-      cookTime,
+      prep_time_minutes,
+      cook_time_minutes,
       servings,
       ingredients,
       instructions,
-      imageUrl,
+      image_url,
     } = body
 
     // Validate required fields
     if (!title || !category || !difficulty || !ingredients || !instructions) {
-      addLog("error", "[RECIPES] Missing required fields", {
+      console.log("❌ [RECIPES] Missing required fields", {
         hasTitle: !!title,
         hasCategory: !!category,
         hasDifficulty: !!difficulty,
         hasIngredients: !!ingredients,
         hasInstructions: !!instructions,
       })
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Missing required fields",
+        },
+        { status: 400 },
+      )
     }
 
     // Process ingredients and instructions
-    const ingredientsList = Array.isArray(ingredients)
-      ? ingredients
-      : ingredients.split("\n").filter((item: string) => item.trim())
+    let ingredientsList: string[] = []
+    let instructionsList: string[] = []
 
-    const instructionsList = Array.isArray(instructions)
-      ? instructions
-      : instructions.split("\n").filter((item: string) => item.trim())
+    if (Array.isArray(ingredients)) {
+      ingredientsList = ingredients.filter((item: string) => item.trim())
+    } else if (typeof ingredients === "string") {
+      ingredientsList = ingredients.split("\n").filter((item: string) => item.trim())
+    }
 
-    addLog("info", "[RECIPES] Processing recipe data", {
+    if (Array.isArray(instructions)) {
+      instructionsList = instructions.filter((item: string) => item.trim())
+    } else if (typeof instructions === "string") {
+      instructionsList = instructions.split("\n").filter((item: string) => item.trim())
+    }
+
+    console.log("📋 [RECIPES] Processing recipe data", {
       title,
       category,
       difficulty,
@@ -88,34 +108,33 @@ export async function POST(request: NextRequest) {
       instructionsCount: instructionsList.length,
     })
 
-    // Create recipe with automatic author assignment
+    // Create recipe data
     const recipeData = {
       title: title.trim(),
       description: description?.trim() || "",
-      author_id: user.id,
-      author_username: user.username, // Automatically filled from authenticated user
-      category: category.trim(),
-      difficulty: difficulty.trim(),
-      prep_time_minutes: Number.parseInt(prepTime) || 0,
-      cook_time_minutes: Number.parseInt(cookTime) || 0,
-      servings: Number.parseInt(servings) || 1,
       ingredients: ingredientsList,
       instructions: instructionsList,
-      image_url: imageUrl || null,
+      prep_time: Number.parseInt(prep_time_minutes) || 0,
+      cook_time: Number.parseInt(cook_time_minutes) || 0,
+      servings: Number.parseInt(servings) || 1,
+      difficulty: difficulty.trim(),
+      category: category.trim(),
+      tags: [], // Default empty tags
+      image_url: image_url || null,
+      author_id: user.id,
     }
 
-    addLog("info", "[RECIPES] Creating recipe in database", {
+    console.log("💾 [RECIPES] Creating recipe in database", {
       authorId: recipeData.author_id,
-      authorUsername: recipeData.author_username,
       title: recipeData.title,
     })
 
     const recipe = await createRecipe(recipeData)
 
-    addLog("info", "[RECIPES] Recipe created successfully", {
+    console.log("✅ [RECIPES] Recipe created successfully", {
       recipeId: recipe.id,
       title: recipe.title,
-      author: recipe.author_username,
+      author: recipe.author_name,
     })
 
     return NextResponse.json({
@@ -124,16 +143,16 @@ export async function POST(request: NextRequest) {
       recipe: {
         id: recipe.id,
         title: recipe.title,
-        author: recipe.author_username,
-        status: recipe.moderation_status,
+        author: recipe.author_name,
+        status: recipe.status,
         created_at: recipe.created_at,
       },
     })
   } catch (error) {
-    addLog("error", "[RECIPES] Error creating recipe", { error })
-    console.error("❌ [RECIPES] Error:", error)
+    console.error("❌ [RECIPES] Error creating recipe:", error)
     return NextResponse.json(
       {
+        success: false,
         error: "Failed to create recipe",
         details: error instanceof Error ? error.message : "Unknown error",
       },

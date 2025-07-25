@@ -105,9 +105,9 @@ export async function initializeDatabase(): Promise<void> {
         description TEXT,
         ingredients JSONB NOT NULL,
         instructions JSONB NOT NULL,
-        prep_time INTEGER,
-        cook_time INTEGER,
-        servings INTEGER,
+        prep_time INTEGER DEFAULT 0,
+        cook_time INTEGER DEFAULT 0,
+        servings INTEGER DEFAULT 1,
         difficulty VARCHAR(50),
         category VARCHAR(100),
         tags JSONB DEFAULT '[]',
@@ -201,19 +201,23 @@ export async function createUser(userData: {
 
 export async function updateUser(id: number, updates: Partial<User>): Promise<User | null> {
   try {
-    const setClause = Object.keys(updates)
-      .map((key, index) => `${key} = $${index + 2}`)
-      .join(", ")
+    // Build the SET clause dynamically
+    const updateFields = Object.keys(updates).filter((key) => updates[key as keyof User] !== undefined)
+    if (updateFields.length === 0) {
+      return await findUserById(id)
+    }
 
-    const values = [id, ...Object.values(updates)]
+    const setClause = updateFields.map((key, index) => `${key} = $${index + 2}`).join(", ")
+    const values = [id, ...updateFields.map((key) => updates[key as keyof User])]
 
-    const result = await sql`
+    const queryText = `
       UPDATE users 
-      SET ${sql.unsafe(setClause)}, updated_at = NOW()
+      SET ${setClause}, updated_at = NOW()
       WHERE id = $1
       RETURNING *
-    `.apply(null, values)
+    `
 
+    const result = await sql.unsafe(queryText, values)
     return result.length > 0 ? (result[0] as User) : null
   } catch (error) {
     console.error("Error updating user:", error)
@@ -291,7 +295,13 @@ export async function getAllRecipes(): Promise<Recipe[]> {
       WHERE r.status = 'approved'
       ORDER BY r.created_at DESC
     `
-    return result as Recipe[]
+
+    return result.map((row: any) => ({
+      ...row,
+      ingredients: Array.isArray(row.ingredients) ? row.ingredients : JSON.parse(row.ingredients || "[]"),
+      instructions: Array.isArray(row.instructions) ? row.instructions : JSON.parse(row.instructions || "[]"),
+      tags: Array.isArray(row.tags) ? row.tags : JSON.parse(row.tags || "[]"),
+    })) as Recipe[]
   } catch (error) {
     console.error("Error getting all recipes:", error)
     return []
@@ -313,20 +323,46 @@ export async function createRecipe(recipeData: {
   author_id: number
 }): Promise<Recipe> {
   try {
+    console.log("💾 Creating recipe in database:", recipeData)
+
     const result = await sql`
       INSERT INTO recipes (
         title, description, ingredients, instructions, prep_time, cook_time,
-        servings, difficulty, category, tags, image_url, author_id
+        servings, difficulty, category, tags, image_url, author_id, status
       )
       VALUES (
-        ${recipeData.title}, ${recipeData.description}, ${JSON.stringify(recipeData.ingredients)},
-        ${JSON.stringify(recipeData.instructions)}, ${recipeData.prep_time}, ${recipeData.cook_time},
-        ${recipeData.servings}, ${recipeData.difficulty}, ${recipeData.category},
-        ${JSON.stringify(recipeData.tags)}, ${recipeData.image_url}, ${recipeData.author_id}
+        ${recipeData.title}, 
+        ${recipeData.description}, 
+        ${JSON.stringify(recipeData.ingredients)},
+        ${JSON.stringify(recipeData.instructions)}, 
+        ${recipeData.prep_time}, 
+        ${recipeData.cook_time},
+        ${recipeData.servings}, 
+        ${recipeData.difficulty}, 
+        ${recipeData.category},
+        ${JSON.stringify(recipeData.tags)}, 
+        ${recipeData.image_url || null}, 
+        ${recipeData.author_id},
+        'pending'
       )
       RETURNING *
     `
-    return result[0] as Recipe
+
+    if (result.length === 0) {
+      throw new Error("Failed to create recipe - no result returned")
+    }
+
+    // Get the author name
+    const user = await findUserById(recipeData.author_id)
+    const recipe = result[0] as any
+
+    return {
+      ...recipe,
+      author_name: user?.username || "Unknown",
+      ingredients: Array.isArray(recipe.ingredients) ? recipe.ingredients : JSON.parse(recipe.ingredients || "[]"),
+      instructions: Array.isArray(recipe.instructions) ? recipe.instructions : JSON.parse(recipe.instructions || "[]"),
+      tags: Array.isArray(recipe.tags) ? recipe.tags : JSON.parse(recipe.tags || "[]"),
+    } as Recipe
   } catch (error) {
     console.error("Error creating recipe:", error)
     throw error
@@ -344,7 +380,13 @@ export async function getPendingRecipes(): Promise<Recipe[]> {
       WHERE r.status = 'pending'
       ORDER BY r.created_at ASC
     `
-    return result as Recipe[]
+
+    return result.map((row: any) => ({
+      ...row,
+      ingredients: Array.isArray(row.ingredients) ? row.ingredients : JSON.parse(row.ingredients || "[]"),
+      instructions: Array.isArray(row.instructions) ? row.instructions : JSON.parse(row.instructions || "[]"),
+      tags: Array.isArray(row.tags) ? row.tags : JSON.parse(row.tags || "[]"),
+    })) as Recipe[]
   } catch (error) {
     console.error("Error getting pending recipes:", error)
     return []
@@ -369,16 +411,6 @@ export async function moderateRecipe(recipeId: number, status: string, moderator
   } catch (error) {
     console.error("Error moderating recipe:", error)
     return false
-  }
-}
-
-// Stack Auth configuration
-export function getStackAuthConfig() {
-  return {
-    baseUrl: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
-    projectId: process.env.STACK_PROJECT_ID || "",
-    clientKey: process.env.STACK_CLIENT_KEY || "",
-    serverKey: process.env.STACK_SERVER_KEY || "",
   }
 }
 
@@ -415,17 +447,24 @@ export async function searchRecipes(
       params.push(filters.maxPrepTime)
     }
 
-    const result = await sql`
+    const queryText = `
       SELECT 
         r.*,
         u.username as author_name
       FROM recipes r
       JOIN users u ON r.author_id = u.id
-      WHERE ${sql.unsafe(whereClause)}
+      WHERE ${whereClause}
       ORDER BY r.created_at DESC
-    `.apply(null, params)
+    `
 
-    return result as Recipe[]
+    const result = await sql.unsafe(queryText, params)
+
+    return result.map((row: any) => ({
+      ...row,
+      ingredients: Array.isArray(row.ingredients) ? row.ingredients : JSON.parse(row.ingredients || "[]"),
+      instructions: Array.isArray(row.instructions) ? row.instructions : JSON.parse(row.instructions || "[]"),
+      tags: Array.isArray(row.tags) ? row.tags : JSON.parse(row.tags || "[]"),
+    })) as Recipe[]
   } catch (error) {
     console.error("Error searching recipes:", error)
     return []
@@ -471,5 +510,15 @@ export async function verifyEmailToken(token: string, tokenType: string): Promis
   } catch (error) {
     console.error("Error verifying email token:", error)
     return null
+  }
+}
+
+// Stack Auth configuration
+export function getStackAuthConfig() {
+  return {
+    baseUrl: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+    projectId: process.env.STACK_PROJECT_ID || "",
+    clientKey: process.env.STACK_CLIENT_KEY || "",
+    serverKey: process.env.STACK_SERVER_KEY || "",
   }
 }
