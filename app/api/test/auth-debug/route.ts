@@ -1,47 +1,66 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { getCurrentUserFromRequest } from "@/lib/server-auth"
-import { findUserById, findUserByEmail } from "@/lib/neon"
+import { getCurrentUser, isAdmin } from "@/lib/server-auth"
+import { findUserById } from "@/lib/neon"
 import { verifyToken } from "@/lib/auth"
 import { addLog } from "../server-logs/route"
+import { sql } from "@/lib/neon"
+import { cookies } from "next/headers"
 
 export async function GET(request: NextRequest) {
   try {
     addLog("info", "[AUTH-DEBUG] Starting authentication debug")
 
+    const cookieStore = cookies()
+    const authToken = cookieStore.get("auth-token")?.value
+    const sessionToken = cookieStore.get("session-token")?.value
+
+    // Get current user
+    const currentUser = await getCurrentUser(request)
+
+    // Check admin status
+    const adminStatus = currentUser ? await isAdmin(currentUser.id) : false
+
+    // Get all users count
+    const usersResult = await sql`SELECT COUNT(*) as count FROM users`
+    const userCount = usersResult[0]?.count || 0
+
+    // Get sessions count
+    const sessionsResult = await sql`SELECT COUNT(*) as count FROM user_sessions WHERE expires_at > NOW()`
+    const activeSessionsCount = sessionsResult[0]?.count || 0
+
     const debugInfo: any = {
       timestamp: new Date().toISOString(),
-      cookies: {},
+      cookies: {
+        authToken: authToken ? "***PRESENT***" : null,
+        sessionToken: sessionToken ? "***PRESENT***" : null,
+      },
       headers: {},
       authentication: {
-        hasToken: false,
+        hasToken: !!authToken,
         tokenValid: false,
         userFound: false,
         userActive: false,
       },
-      user: null,
+      currentUser: currentUser
+        ? {
+            id: currentUser.id,
+            username: currentUser.username,
+            email: currentUser.email,
+            role: currentUser.role,
+            isVerified: currentUser.is_verified,
+          }
+        : null,
+      isAdmin: adminStatus,
+      database: {
+        totalUsers: Number.parseInt(userCount),
+        activeSessions: Number.parseInt(activeSessionsCount),
+      },
       environment: {
         nodeEnv: process.env.NODE_ENV,
         hasJwtSecret: !!process.env.JWT_SECRET,
         hasDatabaseUrl: !!process.env.DATABASE_URL,
       },
     }
-
-    // Check cookies
-    const cookieHeader = request.headers.get("cookie")
-    debugInfo.cookies.raw = cookieHeader
-
-    const authToken =
-      request.cookies.get("auth-token")?.value ||
-      request.cookies.get("auth_token")?.value ||
-      request.cookies.get("authToken")?.value
-
-    debugInfo.cookies.authToken = authToken ? "***PRESENT***" : null
-    debugInfo.authentication.hasToken = !!authToken
-
-    addLog("info", "[AUTH-DEBUG] Cookie analysis", {
-      hasAuthToken: !!authToken,
-      cookieNames: request.cookies.getAll().map((c) => c.name),
-    })
 
     // Check headers
     debugInfo.headers.authorization = request.headers.get("authorization") ? "***PRESENT***" : null
@@ -100,55 +119,6 @@ export async function GET(request: NextRequest) {
         debugInfo.authentication.tokenError = tokenError instanceof Error ? tokenError.message : "Unknown error"
         addLog("error", "[AUTH-DEBUG] Token verification failed", { error: tokenError })
       }
-    }
-
-    // Test getCurrentUserFromRequest function
-    try {
-      const currentUser = await getCurrentUserFromRequest(request)
-      debugInfo.authentication.getCurrentUserResult = currentUser
-        ? {
-            id: currentUser.id,
-            username: currentUser.username,
-            role: currentUser.role,
-          }
-        : null
-
-      addLog("info", "[AUTH-DEBUG] getCurrentUserFromRequest result", {
-        success: !!currentUser,
-        userId: currentUser?.id,
-      })
-    } catch (getCurrentUserError) {
-      debugInfo.authentication.getCurrentUserError =
-        getCurrentUserError instanceof Error ? getCurrentUserError.message : "Unknown error"
-      addLog("error", "[AUTH-DEBUG] getCurrentUserFromRequest failed", { error: getCurrentUserError })
-    }
-
-    // Test database connectivity
-    try {
-      const testUser = await findUserByEmail("owner@jtdrecipe.com")
-      debugInfo.database = {
-        connected: true,
-        ownerAccountExists: !!testUser,
-        ownerAccountDetails: testUser
-          ? {
-              id: testUser.id,
-              username: testUser.username,
-              role: testUser.role,
-              status: testUser.status,
-            }
-          : null,
-      }
-
-      addLog("info", "[AUTH-DEBUG] Database connectivity test", {
-        connected: true,
-        ownerExists: !!testUser,
-      })
-    } catch (dbError) {
-      debugInfo.database = {
-        connected: false,
-        error: dbError instanceof Error ? dbError.message : "Unknown error",
-      }
-      addLog("error", "[AUTH-DEBUG] Database connectivity failed", { error: dbError })
     }
 
     addLog("info", "[AUTH-DEBUG] Debug completed", {

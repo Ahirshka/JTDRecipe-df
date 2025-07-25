@@ -2,167 +2,200 @@ import { neon } from "@neondatabase/serverless"
 import bcrypt from "bcryptjs"
 
 if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL environment variable is not set")
+  throw new Error("DATABASE_URL environment variable is required")
 }
 
-// REQUIRED EXPORT - sql client
 export const sql = neon(process.env.DATABASE_URL)
 
 export interface User {
-  id: number
+  id: string
   username: string
   email: string
   password_hash: string
   role: string
   status: string
   is_verified: boolean
-  is_profile_verified: boolean
-  avatar_url?: string
-  bio?: string
-  location?: string
-  website?: string
+  verification_token?: string
+  reset_token?: string
+  reset_token_expires?: string
   created_at: string
   updated_at: string
   last_login_at?: string
-  warning_count?: number
-  suspension_reason?: string
-  suspension_expires_at?: string
+  profile_image?: string
+  bio?: string
 }
 
 export interface Recipe {
   id: string
   title: string
-  description?: string
-  author_id: number
-  author_username: string
-  category: string
-  difficulty: string
-  prep_time_minutes: number
-  cook_time_minutes: number
+  description: string
+  ingredients: string
+  instructions: string
+  prep_time: number
+  cook_time: number
   servings: number
-  ingredients?: string[]
-  instructions?: string[]
-  image_url?: string | null
-  rating?: number
-  review_count?: number
-  view_count?: number
-  is_published: boolean
-  moderation_status: "pending" | "approved" | "rejected"
-  moderation_notes?: string
-  moderated_by?: number
-  moderated_at?: string
+  difficulty: string
+  cuisine: string
+  tags: string
+  image_url?: string
+  user_id: string
+  status: string
   created_at: string
   updated_at: string
-}
-
-export interface Comment {
-  id: number
-  recipe_id: string
-  user_id: number
-  username: string
-  content: string
-  status: string
-  is_flagged: boolean
-  flagged_reason?: string
-  flagged_by?: number
-  flagged_at?: string
-  created_at: string
-}
-
-export interface Rating {
-  id: number
-  recipe_id: string
-  user_id: number
-  rating: number
-  created_at: string
+  rating?: number
+  rating_count?: number
+  author_username?: string
 }
 
 export interface Session {
-  id: number
-  user_id: number
+  id: string
+  user_id: string
   token: string
   expires_at: string
   created_at: string
 }
 
-// Mock data for fallback
-const mockUsers = new Map<number, User>()
-const mockRecipes = new Map<string, Recipe>()
-const mockSessions = new Map<number, Session>()
+// Initialize database tables
+export async function initializeDatabase(): Promise<void> {
+  try {
+    console.log("🔄 Initializing database tables...")
 
-// Initialize mock data
-const initializeMockData = async () => {
-  if (mockUsers.size > 0) return
+    // Create users table
+    await sql`
+      CREATE TABLE IF NOT EXISTS users (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        username VARCHAR(50) UNIQUE NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role VARCHAR(20) DEFAULT 'user',
+        status VARCHAR(20) DEFAULT 'active',
+        is_verified BOOLEAN DEFAULT false,
+        verification_token VARCHAR(255),
+        reset_token VARCHAR(255),
+        reset_token_expires TIMESTAMP,
+        profile_image TEXT,
+        bio TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        last_login_at TIMESTAMP
+      )
+    `
 
-  const ownerPasswordHash = await bcrypt.hash("Morton2121", 12)
-  const ownerUser: User = {
-    id: 1,
-    username: "Site Owner",
-    email: "owner@jtdrecipe.com",
-    password_hash: ownerPasswordHash,
-    role: "owner",
-    status: "active",
-    is_verified: true,
-    is_profile_verified: true,
-    bio: "",
-    location: "",
-    website: "",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    last_login_at: new Date().toISOString(),
+    // Create user_sessions table
+    await sql`
+      CREATE TABLE IF NOT EXISTS user_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        token VARCHAR(255) UNIQUE NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `
+
+    // Create recipes table
+    await sql`
+      CREATE TABLE IF NOT EXISTS recipes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        ingredients TEXT NOT NULL,
+        instructions TEXT NOT NULL,
+        prep_time INTEGER DEFAULT 0,
+        cook_time INTEGER DEFAULT 0,
+        servings INTEGER DEFAULT 1,
+        difficulty VARCHAR(20) NOT NULL,
+        cuisine VARCHAR(100) NOT NULL,
+        tags TEXT,
+        image_url TEXT,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        status VARCHAR(20) DEFAULT 'pending',
+        rating DECIMAL(3,2) DEFAULT 0,
+        rating_count INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `
+
+    // Create moderation_log table
+    await sql`
+      CREATE TABLE IF NOT EXISTS moderation_log (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        recipe_id UUID REFERENCES recipes(id) ON DELETE CASCADE,
+        moderator_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        action VARCHAR(20) NOT NULL,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `
+
+    // Create email_tokens table
+    await sql`
+      CREATE TABLE IF NOT EXISTS email_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        token VARCHAR(255) NOT NULL,
+        token_type VARCHAR(50) NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        used BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `
+
+    // Create owner account if it doesn't exist
+    const ownerEmail = "owner@jtdrecipe.com"
+    const existingOwner = await findUserByEmail(ownerEmail)
+
+    if (!existingOwner) {
+      const passwordHash = await bcrypt.hash("Morton2121", 12)
+      await sql`
+        INSERT INTO users (username, email, password_hash, role, status, is_verified)
+        VALUES ('Site Owner', ${ownerEmail}, ${passwordHash}, 'owner', 'active', true)
+      `
+      console.log("✅ Owner account created")
+    } else {
+      console.log("✅ Owner account already exists")
+    }
+
+    console.log("✅ Database initialized successfully")
+  } catch (error) {
+    console.error("❌ Database initialization failed:", error)
+    throw error
   }
-
-  mockUsers.set(ownerUser.id, ownerUser)
 }
-
-// Initialize mock data
-initializeMockData()
 
 // User functions
-export async function findUserById(id: number): Promise<User | null> {
+export async function findUserByEmail(email: string): Promise<User | null> {
   try {
-    console.log(`🔍 Finding user by ID: ${id}`)
-    const result = await sql`SELECT * FROM users WHERE id = ${id} LIMIT 1`
-
-    if (result.length === 0) {
-      console.log(`❌ User not found with ID: ${id}`)
-      return mockUsers.get(id) || null
-    }
-
-    console.log(`✅ Found user: ${result[0].username}`)
-    return result[0] as User
+    const result = await sql`
+      SELECT * FROM users WHERE email = ${email} LIMIT 1
+    `
+    return result[0] || null
   } catch (error) {
-    console.error(`❌ Error finding user by ID ${id}:`, error)
-    return mockUsers.get(id) || null
+    console.error("Error finding user by email:", error)
+    return null
   }
 }
 
-export async function findUserByEmail(email: string): Promise<User | null> {
+export async function findUserById(id: string): Promise<User | null> {
   try {
-    console.log(`🔍 Finding user by email: ${email}`)
-    const result = await sql`SELECT * FROM users WHERE email = ${email} LIMIT 1`
-
-    if (result.length === 0) {
-      console.log(`❌ User not found with email: ${email}`)
-      // Check mock data
-      for (const user of mockUsers.values()) {
-        if (user.email === email) {
-          return user
-        }
-      }
-      return null
-    }
-
-    console.log(`✅ Found user: ${result[0].username}`)
-    return result[0] as User
+    const result = await sql`
+      SELECT * FROM users WHERE id = ${id} LIMIT 1
+    `
+    return result[0] || null
   } catch (error) {
-    console.error(`❌ Error finding user by email ${email}:`, error)
-    // Check mock data as fallback
-    for (const user of mockUsers.values()) {
-      if (user.email === email) {
-        return user
-      }
-    }
+    console.error("Error finding user by ID:", error)
+    return null
+  }
+}
+
+export async function findUserByUsername(username: string): Promise<User | null> {
+  try {
+    const result = await sql`
+      SELECT * FROM users WHERE username = ${username} LIMIT 1
+    `
+    return result[0] || null
+  } catch (error) {
+    console.error("Error finding user by username:", error)
     return null
   }
 }
@@ -171,170 +204,139 @@ export async function createUser(userData: {
   username: string
   email: string
   password_hash: string
+  verification_token?: string
   role?: string
-  is_verified?: boolean
-  is_profile_verified?: boolean
-}): Promise<User> {
+}): Promise<User | null> {
   try {
-    console.log(`🔄 Creating new user: ${userData.username} (${userData.email})`)
-
     const result = await sql`
-      INSERT INTO users (
-        username, 
-        email, 
-        password_hash, 
-        role, 
-        status, 
-        is_verified, 
-        is_profile_verified, 
-        created_at, 
-        updated_at
-      )
+      INSERT INTO users (username, email, password_hash, verification_token, role, status, is_verified)
       VALUES (
-        ${userData.username},
-        ${userData.email},
-        ${userData.password_hash},
-        ${userData.role || "user"},
-        ${"active"},
-        ${userData.is_verified || false},
-        ${userData.is_profile_verified || false},
-        NOW(),
-        NOW()
+        ${userData.username}, 
+        ${userData.email}, 
+        ${userData.password_hash}, 
+        ${userData.verification_token || null}, 
+        ${userData.role || "user"}, 
+        'active', 
+        false
       )
       RETURNING *
     `
-
-    console.log(`✅ User created: ${result[0].id}`)
-    return result[0] as User
+    return result[0] || null
   } catch (error) {
-    console.error(`❌ Error creating user:`, error)
-    throw new Error("Failed to create user")
-  }
-}
-
-// REQUIRED EXPORT - Update user
-export async function updateUser(userId: number, updates: Partial<User>): Promise<User | null> {
-  try {
-    console.log(`🔄 Updating user ${userId} with:`, updates)
-
-    // Build the SET clause dynamically
-    const setClauses = []
-    const values = []
-
-    for (const [key, value] of Object.entries(updates)) {
-      if (value !== undefined && key !== "id") {
-        setClauses.push(`${key} = $${setClauses.length + 2}`)
-        values.push(value)
-      }
-    }
-
-    if (setClauses.length === 0) {
-      console.log(`⚠️ No valid updates provided for user ${userId}`)
-      return await findUserById(userId)
-    }
-
-    // Always update the updated_at timestamp
-    setClauses.push(`updated_at = NOW()`)
-
-    const query = `
-      UPDATE users 
-      SET ${setClauses.join(", ")} 
-      WHERE id = $1
-      RETURNING *
-    `
-
-    const result = await sql.unsafe(query, [userId, ...values])
-
-    if (result.length === 0) {
-      console.log(`❌ User not found for update: ${userId}`)
-      return null
-    }
-
-    console.log(`✅ User updated: ${userId}`)
-    return result[0] as User
-  } catch (error) {
-    console.error(`❌ Error updating user ${userId}:`, error)
-    // Update mock data as fallback
-    const user = mockUsers.get(userId)
-    if (user) {
-      const updatedUser = { ...user, ...updates, updated_at: new Date().toISOString() }
-      mockUsers.set(userId, updatedUser)
-      return updatedUser
-    }
+    console.error("Error creating user:", error)
     return null
   }
 }
 
-export async function updateUserById(userId: number, updates: Partial<User>): Promise<User | null> {
-  return updateUser(userId, updates)
+export async function updateUserById(id: string, updates: Partial<User>): Promise<User | null> {
+  try {
+    const setClause = Object.keys(updates)
+      .map((key, index) => `${key} = $${index + 2}`)
+      .join(", ")
+
+    const values = [id, ...Object.values(updates)]
+
+    const result = await sql.unsafe(
+      `
+      UPDATE users 
+      SET ${setClause}, updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `,
+      values,
+    )
+
+    return result[0] || null
+  } catch (error) {
+    console.error("Error updating user:", error)
+    return null
+  }
+}
+
+export async function verifyUser(email: string): Promise<boolean> {
+  try {
+    await sql`
+      UPDATE users 
+      SET is_verified = true, verification_token = NULL, updated_at = NOW()
+      WHERE email = ${email}
+    `
+    return true
+  } catch (error) {
+    console.error("Error verifying user:", error)
+    return false
+  }
 }
 
 export async function getAllUsers(): Promise<User[]> {
   try {
-    console.log(`🔍 Getting all users`)
-
     const result = await sql`
-      SELECT * FROM users
+      SELECT id, username, email, role, status, is_verified, created_at, last_login_at
+      FROM users
       ORDER BY created_at DESC
     `
-
-    console.log(`✅ Found ${result.length} users`)
-    return result as User[]
+    return result
   } catch (error) {
-    console.error(`❌ Error getting all users:`, error)
-    return Array.from(mockUsers.values())
+    console.error("Error getting all users:", error)
+    return []
   }
 }
 
-export async function updateUserLoginTime(userId: number): Promise<void> {
+export async function updateUserRole(userId: string, role: string): Promise<boolean> {
   try {
     await sql`
       UPDATE users 
-      SET last_login_at = NOW(), updated_at = NOW()
+      SET role = ${role}, updated_at = NOW()
       WHERE id = ${userId}
     `
-    console.log(`✅ Updated login time for user ${userId}`)
+    return true
   } catch (error) {
-    console.error(`❌ Error updating user login time for ${userId}:`, error)
+    console.error("Error updating user role:", error)
+    return false
   }
 }
 
-// Session management
-export async function createSession(userId: number, token: string): Promise<Session> {
+export async function deleteUser(userId: string): Promise<boolean> {
   try {
-    console.log(`🔄 Creating session for user ${userId}`)
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+    // Delete user's recipes first
+    await sql`DELETE FROM recipes WHERE user_id = ${userId}`
 
+    // Delete user's sessions
+    await sql`DELETE FROM user_sessions WHERE user_id = ${userId}`
+
+    // Delete the user
+    await sql`DELETE FROM users WHERE id = ${userId}`
+
+    return true
+  } catch (error) {
+    console.error("Error deleting user:", error)
+    return false
+  }
+}
+
+// Session functions
+export async function createSession(userId: string, token: string, expiresAt: Date): Promise<Session | null> {
+  try {
     const result = await sql`
-      INSERT INTO user_sessions (
-        user_id,
-        token,
-        expires_at,
-        created_at
-      )
-      VALUES (
-        ${userId},
-        ${token},
-        ${expiresAt.toISOString()},
-        NOW()
-      )
+      INSERT INTO user_sessions (user_id, token, expires_at)
+      VALUES (${userId}, ${token}, ${expiresAt.toISOString()})
       RETURNING *
     `
-
-    console.log(`✅ Session created for user ${userId}`)
-    return result[0] as Session
+    return result[0] || null
   } catch (error) {
-    console.error(`❌ Error creating session for user ${userId}:`, error)
-    // Create mock session as fallback
-    const session: Session = {
-      id: Date.now(),
-      user_id: userId,
-      token,
-      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-      created_at: new Date().toISOString(),
-    }
-    mockSessions.set(session.id, session)
-    return session
+    console.error("Error creating session:", error)
+    return null
+  }
+}
+
+export async function deleteSession(token: string): Promise<boolean> {
+  try {
+    await sql`
+      DELETE FROM user_sessions WHERE token = ${token}
+    `
+    return true
+  } catch (error) {
+    console.error("Error deleting session:", error)
+    return false
   }
 }
 
@@ -342,238 +344,234 @@ export async function findSessionByToken(token: string): Promise<Session | null>
   try {
     const result = await sql`
       SELECT * FROM user_sessions 
-      WHERE token = ${token} AND expires_at > NOW() 
+      WHERE token = ${token} AND expires_at > NOW()
       LIMIT 1
     `
-
-    if (result.length === 0) {
-      // Check mock sessions
-      for (const session of mockSessions.values()) {
-        if (session.token === token && new Date(session.expires_at) > new Date()) {
-          return session
-        }
-      }
-      return null
-    }
-
-    return result[0] as Session
+    return result[0] || null
   } catch (error) {
-    console.error(`❌ Error finding session:`, error)
-    // Check mock sessions as fallback
-    for (const session of mockSessions.values()) {
-      if (session.token === token && new Date(session.expires_at) > new Date()) {
-        return session
-      }
-    }
+    console.error("Error finding session:", error)
     return null
   }
 }
 
-export async function deleteSession(token: string): Promise<void> {
-  try {
-    console.log(`🔄 Deleting session`)
-
-    await sql`
-      DELETE FROM user_sessions
-      WHERE token = ${token}
-    `
-
-    console.log(`✅ Session deleted`)
-  } catch (error) {
-    console.error(`❌ Error deleting session:`, error)
-    // Delete from mock sessions as fallback
-    for (const [id, session] of mockSessions.entries()) {
-      if (session.token === token) {
-        mockSessions.delete(id)
-        break
-      }
-    }
-  }
-}
-
 // Recipe functions
-export async function getAllRecipes(): Promise<Recipe[]> {
+export async function createRecipe(recipeData: {
+  title: string
+  description: string
+  ingredients: string
+  instructions: string
+  prep_time: number
+  cook_time: number
+  servings: number
+  difficulty: string
+  cuisine: string
+  tags: string
+  user_id: string
+  image_url?: string
+}): Promise<Recipe | null> {
   try {
-    console.log(`🔍 Getting all approved recipes`)
-
     const result = await sql`
-      SELECT 
-        r.*,
-        u.username as author_username
-      FROM recipes r
-      JOIN users u ON r.author_id = u.id
-      WHERE r.moderation_status = 'approved' AND r.is_published = true
-      ORDER BY r.created_at DESC
+      INSERT INTO recipes (
+        title, description, ingredients, instructions, prep_time, cook_time,
+        servings, difficulty, cuisine, tags, user_id, image_url, status
+      )
+      VALUES (
+        ${recipeData.title}, ${recipeData.description}, ${recipeData.ingredients},
+        ${recipeData.instructions}, ${recipeData.prep_time}, ${recipeData.cook_time},
+        ${recipeData.servings}, ${recipeData.difficulty}, ${recipeData.cuisine},
+        ${recipeData.tags}, ${recipeData.user_id}, ${recipeData.image_url || null}, 'pending'
+      )
+      RETURNING *
     `
-
-    console.log(`✅ Found ${result.length} approved recipes`)
-    return result as Recipe[]
+    return result[0] || null
   } catch (error) {
-    console.error(`❌ Error getting all recipes:`, error)
-    return Array.from(mockRecipes.values()).filter((r) => r.moderation_status === "approved")
-  }
-}
-
-export async function getPendingRecipes(): Promise<Recipe[]> {
-  try {
-    console.log(`🔍 Getting pending recipes`)
-
-    const result = await sql`
-      SELECT 
-        r.*,
-        u.username as author_username
-      FROM recipes r
-      JOIN users u ON r.author_id = u.id
-      WHERE r.moderation_status = 'pending'
-      ORDER BY r.created_at DESC
-    `
-
-    console.log(`✅ Found ${result.length} pending recipes`)
-    return result as Recipe[]
-  } catch (error) {
-    console.error(`❌ Error getting pending recipes:`, error)
-    return Array.from(mockRecipes.values()).filter((r) => r.moderation_status === "pending")
+    console.error("Error creating recipe:", error)
+    return null
   }
 }
 
 export async function getRecipeById(id: string): Promise<Recipe | null> {
   try {
-    console.log(`🔍 Finding recipe by ID: ${id}`)
-
     const result = await sql`
-      SELECT 
-        r.*,
-        u.username as author_username
+      SELECT r.*, u.username as author_username
       FROM recipes r
-      JOIN users u ON r.author_id = u.id
+      JOIN users u ON r.user_id = u.id
       WHERE r.id = ${id}
       LIMIT 1
     `
-
-    if (result.length === 0) {
-      console.log(`❌ Recipe not found with ID: ${id}`)
-      return mockRecipes.get(id) || null
-    }
-
-    console.log(`✅ Found recipe: ${result[0].title}`)
-    return result[0] as Recipe
+    return result[0] || null
   } catch (error) {
-    console.error(`❌ Error finding recipe by ID ${id}:`, error)
-    return mockRecipes.get(id) || null
-  }
-}
-
-export async function createRecipe(recipeData: {
-  title: string
-  description?: string
-  author_id: number
-  author_username: string
-  category: string
-  difficulty: string
-  prep_time_minutes: number
-  cook_time_minutes: number
-  servings: number
-  ingredients: string[]
-  instructions: string[]
-  image_url?: string | null
-}): Promise<Recipe> {
-  try {
-    console.log(`🔄 Creating new recipe: ${recipeData.title}`)
-
-    // Generate a unique ID
-    const recipeId = `recipe_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
-
-    // Insert the main recipe record
-    const result = await sql`
-      INSERT INTO recipes (
-        id,
-        title,
-        description,
-        author_id,
-        category,
-        difficulty,
-        prep_time_minutes,
-        cook_time_minutes,
-        servings,
-        image_url,
-        moderation_status,
-        is_published,
-        created_at,
-        updated_at
-      )
-      VALUES (
-        ${recipeId},
-        ${recipeData.title},
-        ${recipeData.description || ""},
-        ${recipeData.author_id},
-        ${recipeData.category},
-        ${recipeData.difficulty},
-        ${recipeData.prep_time_minutes},
-        ${recipeData.cook_time_minutes},
-        ${recipeData.servings},
-        ${recipeData.image_url || null},
-        ${"pending"},
-        ${false},
-        NOW(),
-        NOW()
-      )
-      RETURNING *
-    `
-
-    const recipe = result[0] as Recipe
-
-    console.log(`✅ Recipe created: ${recipeId}`)
-    return {
-      ...recipe,
-      author_username: recipeData.author_username,
-      ingredients: recipeData.ingredients,
-      instructions: recipeData.instructions,
-    }
-  } catch (error) {
-    console.error(`❌ Error creating recipe:`, error)
-    throw new Error(`Failed to create recipe: ${error instanceof Error ? error.message : "Unknown error"}`)
-  }
-}
-
-export async function moderateRecipe(
-  recipeId: string,
-  status: "approved" | "rejected",
-  moderatorId: number,
-): Promise<Recipe | null> {
-  try {
-    console.log(`🔄 Moderating recipe ${recipeId} as ${status}`)
-
-    const result = await sql`
-      UPDATE recipes
-      SET 
-        moderation_status = ${status},
-        is_published = ${status === "approved"},
-        moderated_by = ${moderatorId},
-        moderated_at = NOW(),
-        updated_at = NOW()
-      WHERE id = ${recipeId}
-      RETURNING *
-    `
-
-    if (result.length === 0) {
-      console.log(`❌ Recipe not found for moderation: ${recipeId}`)
-      return null
-    }
-
-    console.log(`✅ Recipe moderated: ${recipeId} (${status})`)
-    return result[0] as Recipe
-  } catch (error) {
-    console.error(`❌ Error moderating recipe ${recipeId}:`, error)
+    console.error("Error getting recipe by ID:", error)
     return null
   }
 }
 
+export async function getAllRecipes(): Promise<Recipe[]> {
+  try {
+    const result = await sql`
+      SELECT r.*, u.username as author_username
+      FROM recipes r
+      JOIN users u ON r.user_id = u.id
+      WHERE r.status = 'approved'
+      ORDER BY r.created_at DESC
+    `
+    return result
+  } catch (error) {
+    console.error("Error getting all recipes:", error)
+    return []
+  }
+}
+
+export async function getPendingRecipes(): Promise<Recipe[]> {
+  try {
+    const result = await sql`
+      SELECT r.*, u.username as author_username
+      FROM recipes r
+      JOIN users u ON r.user_id = u.id
+      WHERE r.status = 'pending'
+      ORDER BY r.created_at DESC
+    `
+    return result
+  } catch (error) {
+    console.error("Error getting pending recipes:", error)
+    return []
+  }
+}
+
+export async function moderateRecipe(
+  id: string,
+  status: "approved" | "rejected",
+  moderatorId: string,
+  notes?: string,
+): Promise<boolean> {
+  try {
+    await sql`
+      UPDATE recipes 
+      SET status = ${status}, updated_at = NOW()
+      WHERE id = ${id}
+    `
+
+    // Log the moderation action
+    await sql`
+      INSERT INTO moderation_log (recipe_id, moderator_id, action, notes, created_at)
+      VALUES (${id}, ${moderatorId}, ${status}, ${notes || null}, NOW())
+    `
+
+    return true
+  } catch (error) {
+    console.error("Error moderating recipe:", error)
+    return false
+  }
+}
+
+export async function searchRecipes(
+  query: string,
+  filters?: {
+    cuisine?: string
+    difficulty?: string
+    maxPrepTime?: number
+  },
+): Promise<Recipe[]> {
+  try {
+    let whereClause = "WHERE r.status = 'approved'"
+    const params: any[] = []
+
+    if (query) {
+      whereClause += ` AND (r.title ILIKE $${params.length + 1} OR r.description ILIKE $${params.length + 1} OR r.tags ILIKE $${params.length + 1})`
+      params.push(`%${query}%`)
+    }
+
+    if (filters?.cuisine) {
+      whereClause += ` AND r.cuisine = $${params.length + 1}`
+      params.push(filters.cuisine)
+    }
+
+    if (filters?.difficulty) {
+      whereClause += ` AND r.difficulty = $${params.length + 1}`
+      params.push(filters.difficulty)
+    }
+
+    if (filters?.maxPrepTime) {
+      whereClause += ` AND r.prep_time <= $${params.length + 1}`
+      params.push(filters.maxPrepTime)
+    }
+
+    const query_sql = `
+      SELECT r.*, u.username as author_username
+      FROM recipes r
+      JOIN users u ON r.user_id = u.id
+      ${whereClause}
+      ORDER BY r.created_at DESC
+      LIMIT 50
+    `
+
+    const result = await sql.unsafe(query_sql, params)
+    return result
+  } catch (error) {
+    console.error("Error searching recipes:", error)
+    return []
+  }
+}
+
+// Email token functions
+export async function createEmailToken(data: {
+  user_id: string
+  token: string
+  token_type: string
+  expires_at: Date
+}): Promise<void> {
+  try {
+    await sql`
+      INSERT INTO email_tokens (user_id, token, token_type, expires_at)
+      VALUES (${data.user_id}, ${data.token}, ${data.token_type}, ${data.expires_at.toISOString()})
+    `
+  } catch (error) {
+    console.error("Error creating email token:", error)
+    throw error
+  }
+}
+
+export async function findEmailToken(token: string, tokenType: string): Promise<any> {
+  try {
+    const result = await sql`
+      SELECT * FROM email_tokens 
+      WHERE token = ${token} AND token_type = ${tokenType} AND used = false AND expires_at > NOW()
+      LIMIT 1
+    `
+    return result[0] || null
+  } catch (error) {
+    console.error("Error finding email token:", error)
+    return null
+  }
+}
+
+export async function markEmailTokenAsUsed(token: string): Promise<void> {
+  try {
+    await sql`
+      UPDATE email_tokens SET used = true WHERE token = ${token}
+    `
+  } catch (error) {
+    console.error("Error marking email token as used:", error)
+    throw error
+  }
+}
+
+// Stack Auth configuration (placeholder for compatibility)
+export function getStackAuthConfig() {
+  return {
+    projectId: process.env.STACK_PROJECT_ID || "default",
+    clientUrl: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+    serverUrl: process.env.STACK_API_URL || "http://localhost:3000/api",
+  }
+}
+
+// Admin stats
 export async function getAdminStats() {
   try {
     const [userCount, recipeCount, pendingCount] = await Promise.all([
       sql`SELECT COUNT(*) as count FROM users`,
-      sql`SELECT COUNT(*) as count FROM recipes WHERE is_published = true`,
-      sql`SELECT COUNT(*) as count FROM recipes WHERE moderation_status = 'pending'`,
+      sql`SELECT COUNT(*) as count FROM recipes WHERE status = 'approved'`,
+      sql`SELECT COUNT(*) as count FROM recipes WHERE status = 'pending'`,
     ])
 
     return {
@@ -583,125 +581,6 @@ export async function getAdminStats() {
     }
   } catch (error) {
     console.error("Error getting admin stats:", error)
-    return { users: mockUsers.size, recipes: 0, pending: 0 }
+    return { users: 0, recipes: 0, pending: 0 }
   }
-}
-
-export async function initializeOwnerAccount() {
-  try {
-    const ownerEmail = "owner@jtdrecipe.com"
-    const existingOwner = await findUserByEmail(ownerEmail)
-
-    if (!existingOwner) {
-      const passwordHash = await bcrypt.hash("Morton2121", 12)
-
-      await createUser({
-        username: "Site Owner",
-        email: ownerEmail,
-        password_hash: passwordHash,
-        role: "owner",
-        is_verified: true,
-        is_profile_verified: true,
-      })
-
-      console.log("✅ Owner account created successfully")
-    } else {
-      console.log("✅ Owner account already exists")
-    }
-  } catch (error) {
-    console.error("❌ Error initializing owner account:", error)
-  }
-}
-
-// Initialize database
-export async function initializeDatabase(): Promise<void> {
-  try {
-    console.log("🔄 Initializing database...")
-
-    // Create users table if it doesn't exist
-    await sql`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        username VARCHAR(50) UNIQUE NOT NULL,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        role VARCHAR(20) DEFAULT 'user',
-        status VARCHAR(20) DEFAULT 'active',
-        is_verified BOOLEAN DEFAULT false,
-        is_profile_verified BOOLEAN DEFAULT false,
-        avatar_url TEXT,
-        bio TEXT,
-        location VARCHAR(100),
-        website VARCHAR(255),
-        warning_count INTEGER DEFAULT 0,
-        suspension_reason TEXT,
-        suspension_expires_at TIMESTAMP,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW(),
-        last_login_at TIMESTAMP
-      )
-    `
-
-    // Create user_sessions table if it doesn't exist
-    await sql`
-      CREATE TABLE IF NOT EXISTS user_sessions (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        token VARCHAR(255) UNIQUE NOT NULL,
-        expires_at TIMESTAMP NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `
-
-    // Create recipes table if it doesn't exist
-    await sql`
-      CREATE TABLE IF NOT EXISTS recipes (
-        id VARCHAR(255) PRIMARY KEY,
-        title VARCHAR(255) NOT NULL,
-        description TEXT,
-        author_id INTEGER NOT NULL REFERENCES users(id),
-        category VARCHAR(100) NOT NULL,
-        difficulty VARCHAR(20) NOT NULL,
-        prep_time_minutes INTEGER DEFAULT 0,
-        cook_time_minutes INTEGER DEFAULT 0,
-        servings INTEGER DEFAULT 1,
-        image_url TEXT,
-        rating DECIMAL(3,2) DEFAULT 0,
-        review_count INTEGER DEFAULT 0,
-        view_count INTEGER DEFAULT 0,
-        moderation_status VARCHAR(20) DEFAULT 'pending',
-        moderation_notes TEXT,
-        moderated_by INTEGER REFERENCES users(id),
-        moderated_at TIMESTAMP,
-        is_published BOOLEAN DEFAULT false,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-      )
-    `
-
-    // Initialize owner account
-    await initializeOwnerAccount()
-
-    console.log("✅ Database initialized successfully")
-  } catch (error) {
-    console.error("❌ Database initialization failed:", error)
-    throw error
-  }
-}
-
-// Stack Auth Config - REQUIRED EXPORT
-export function getStackAuthConfig() {
-  return {
-    projectId: process.env.STACK_PROJECT_ID,
-    clientKey: process.env.STACK_CLIENT_KEY,
-    serverKey: process.env.STACK_SERVER_KEY,
-    baseUrl: process.env.STACK_BASE_URL || process.env.STACK_API_URL,
-    jwksUrl: process.env.STACK_JWKS_URL,
-  }
-}
-
-export const mockDatabase = {
-  users: mockUsers,
-  recipes: mockRecipes,
-  sessions: mockSessions,
 }

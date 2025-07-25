@@ -187,6 +187,20 @@ export async function requireRole(requiredRole: string): Promise<User> {
   return user
 }
 
+export async function requireAdmin(): Promise<User> {
+  const user = await getCurrentUser()
+
+  if (!user) {
+    throw new Error("Authentication required")
+  }
+
+  if (!isAdmin(user)) {
+    throw new Error("Admin access required")
+  }
+
+  return user
+}
+
 export async function isAuthenticated(): Promise<boolean> {
   const user = await getCurrentUser()
   return user !== null

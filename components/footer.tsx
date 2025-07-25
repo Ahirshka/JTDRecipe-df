@@ -1,42 +1,50 @@
 import Link from "next/link"
 
-export default function Footer() {
+export function Footer() {
   return (
-    <footer className="bg-gray-50 border-t">
-      <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
+    <footer className="bg-gray-50 border-t border-gray-200 mt-auto">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-          {/* Brand */}
+          {/* Brand Section */}
           <div className="col-span-1 md:col-span-2">
-            <div className="flex items-center">
-              <div className="text-2xl font-bold text-orange-600">JTDRecipe</div>
+            <div className="flex items-center space-x-2 mb-4">
+              <div className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center">
+                <span className="text-white font-bold text-sm">JTD</span>
+              </div>
+              <span className="text-xl font-bold text-gray-900">Recipe</span>
             </div>
-            <p className="mt-2 text-gray-600 max-w-md">
-              Discover, share, and enjoy delicious recipes from our community of food lovers. From quick weeknight
-              dinners to special occasion treats.
+            <p className="text-gray-600 text-sm max-w-md">
+              Discover, share, and create amazing recipes with our community of food lovers. From quick weeknight
+              dinners to elaborate weekend feasts, find your next favorite dish.
             </p>
+            <div className="mt-6">
+              <p className="text-xs text-gray-500">
+                © {new Date().getFullYear()} JTD Recipe Team. All rights reserved.
+              </p>
+            </div>
           </div>
 
           {/* Quick Links */}
           <div>
-            <h3 className="text-sm font-semibold text-gray-900 tracking-wider uppercase">Quick Links</h3>
-            <ul className="mt-4 space-y-4">
+            <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-4">Quick Links</h3>
+            <ul className="space-y-3">
               <li>
-                <Link href="/" className="text-base text-gray-500 hover:text-gray-900">
+                <Link href="/" className="text-sm text-gray-600 hover:text-orange-500 transition-colors">
                   Home
                 </Link>
               </li>
               <li>
-                <Link href="/add-recipe" className="text-base text-gray-500 hover:text-gray-900">
+                <Link href="/search" className="text-sm text-gray-600 hover:text-orange-500 transition-colors">
+                  Browse Recipes
+                </Link>
+              </li>
+              <li>
+                <Link href="/add-recipe" className="text-sm text-gray-600 hover:text-orange-500 transition-colors">
                   Add Recipe
                 </Link>
               </li>
               <li>
-                <Link href="/search" className="text-base text-gray-500 hover:text-gray-900">
-                  Search Recipes
-                </Link>
-              </li>
-              <li>
-                <Link href="/profile" className="text-base text-gray-500 hover:text-gray-900">
+                <Link href="/profile" className="text-sm text-gray-600 hover:text-orange-500 transition-colors">
                   My Profile
                 </Link>
               </li>
@@ -45,26 +53,40 @@ export default function Footer() {
 
           {/* Legal */}
           <div>
-            <h3 className="text-sm font-semibold text-gray-900 tracking-wider uppercase">Legal</h3>
-            <ul className="mt-4 space-y-4">
+            <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-4">Legal</h3>
+            <ul className="space-y-3">
               <li>
-                <Link href="/privacy" className="text-base text-gray-500 hover:text-gray-900">
+                <Link href="/privacy" className="text-sm text-gray-600 hover:text-orange-500 transition-colors">
                   Privacy Policy
                 </Link>
               </li>
               <li>
-                <Link href="/termsandconditions" className="text-base text-gray-500 hover:text-gray-900">
+                <Link
+                  href="/termsandconditions"
+                  className="text-sm text-gray-600 hover:text-orange-500 transition-colors"
+                >
                   Terms of Service
                 </Link>
+              </li>
+              <li>
+                <a
+                  href="mailto:support@jtdrecipe.com"
+                  className="text-sm text-gray-600 hover:text-orange-500 transition-colors"
+                >
+                  Contact Support
+                </a>
               </li>
             </ul>
           </div>
         </div>
 
-        <div className="mt-8 border-t border-gray-200 pt-8">
-          <div className="flex flex-col md:flex-row justify-between items-center">
-            <p className="text-base text-gray-400">&copy; {new Date().getFullYear()} JTDRecipe. All rights reserved.</p>
-            <p className="text-base text-gray-400 mt-2 md:mt-0">Made with ❤️ by the JTDRecipe Team</p>
+        {/* Bottom Border */}
+        <div className="mt-8 pt-8 border-t border-gray-200">
+          <div className="flex flex-col sm:flex-row justify-between items-center">
+            <p className="text-xs text-gray-500">Made with ❤️ for food enthusiasts everywhere</p>
+            <div className="mt-4 sm:mt-0">
+              <p className="text-xs text-gray-500">Version 1.0.0 | Last updated: {new Date().toLocaleDateString()}</p>
+            </div>
           </div>
         </div>
       </div>
