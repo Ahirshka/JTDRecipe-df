@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { findUserByEmail, createUser, createSession } from "@/lib/neon"
+import { findUserByEmail, createUser, createSession, initializeDatabase } from "@/lib/neon"
 import jwt from "jsonwebtoken"
 
 export const dynamic = "force-dynamic"
@@ -8,6 +8,13 @@ export const runtime = "nodejs"
 export async function POST(request: NextRequest) {
   try {
     console.log("🔍 [REGISTER] Starting registration process")
+
+    // Initialize database if needed
+    try {
+      await initializeDatabase()
+    } catch (dbError) {
+      console.error("❌ [REGISTER] Database initialization failed:", dbError)
+    }
 
     // Parse request body
     let body
@@ -19,6 +26,8 @@ export async function POST(request: NextRequest) {
     }
 
     const { username, email, password } = body
+
+    console.log("🔍 [REGISTER] Registration data:", { username, email, passwordLength: password?.length })
 
     // Validate required fields
     if (!username || !email || !password) {
@@ -48,10 +57,15 @@ export async function POST(request: NextRequest) {
     console.log("🔍 [REGISTER] Checking if user exists:", email)
 
     // Check if user already exists
-    const existingUser = await findUserByEmail(email)
-    if (existingUser) {
-      console.log("❌ [REGISTER] User already exists with email:", email)
-      return NextResponse.json({ success: false, error: "User already exists with this email" }, { status: 409 })
+    try {
+      const existingUser = await findUserByEmail(email)
+      if (existingUser) {
+        console.log("❌ [REGISTER] User already exists with email:", email)
+        return NextResponse.json({ success: false, error: "User already exists with this email" }, { status: 409 })
+      }
+    } catch (findError) {
+      console.error("❌ [REGISTER] Error checking existing user:", findError)
+      // Continue with registration if we can't check (table might not exist yet)
     }
 
     console.log("🔍 [REGISTER] Creating new user")
@@ -68,7 +82,7 @@ export async function POST(request: NextRequest) {
     console.log("✅ [REGISTER] User created successfully:", newUser.id)
 
     // Create JWT token
-    const jwtSecret = process.env.JWT_SECRET || "fallback-secret-key"
+    const jwtSecret = process.env.JWT_SECRET || "fallback-secret-key-for-development"
     const token = jwt.sign(
       {
         userId: newUser.id,
@@ -127,13 +141,20 @@ export async function POST(request: NextRequest) {
       if (error.message.includes("invalid input syntax")) {
         return NextResponse.json({ success: false, error: "Invalid data format" }, { status: 400 })
       }
+
+      if (error.message.includes("relation") && error.message.includes("does not exist")) {
+        return NextResponse.json(
+          { success: false, error: "Database not initialized. Please contact support." },
+          { status: 500 },
+        )
+      }
     }
 
     return NextResponse.json(
       {
         success: false,
         error: "Internal server error. Please try again later.",
-        details: process.env.NODE_ENV === "development" ? error.message : undefined,
+        details: process.env.NODE_ENV === "development" ? (error as Error).message : undefined,
       },
       { status: 500 },
     )

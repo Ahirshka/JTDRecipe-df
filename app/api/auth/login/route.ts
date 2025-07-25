@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { findUserByEmail, verifyUserPassword, createSession } from "@/lib/neon"
+import { findUserByEmail, verifyUserPassword, createSession, initializeDatabase } from "@/lib/neon"
 import jwt from "jsonwebtoken"
 
 export const dynamic = "force-dynamic"
@@ -8,6 +8,13 @@ export const runtime = "nodejs"
 export async function POST(request: NextRequest) {
   try {
     console.log("🔍 [LOGIN] Starting login process")
+
+    // Initialize database if needed
+    try {
+      await initializeDatabase()
+    } catch (dbError) {
+      console.error("❌ [LOGIN] Database initialization failed:", dbError)
+    }
 
     // Parse request body
     let body
@@ -19,6 +26,8 @@ export async function POST(request: NextRequest) {
     }
 
     const { email, password } = body
+
+    console.log("🔍 [LOGIN] Login attempt for email:", email)
 
     // Validate required fields
     if (!email || !password) {
@@ -44,14 +53,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Invalid email or password" }, { status: 401 })
     }
 
-    console.log("🔍 [LOGIN] Verifying password for user:", user.username)
-
-    // Verify password
-    const isValidPassword = await verifyUserPassword(user, password)
-    if (!isValidPassword) {
-      console.log("❌ [LOGIN] Invalid password for user:", user.username)
-      return NextResponse.json({ success: false, error: "Invalid email or password" }, { status: 401 })
-    }
+    console.log("🔍 [LOGIN] User found:", { id: user.id, username: user.username, status: user.status })
 
     // Check if user account is active
     if (user.status !== "active") {
@@ -62,10 +64,19 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    console.log("🔍 [LOGIN] Verifying password for user:", user.username)
+
+    // Verify password
+    const isValidPassword = await verifyUserPassword(user, password)
+    if (!isValidPassword) {
+      console.log("❌ [LOGIN] Invalid password for user:", user.username)
+      return NextResponse.json({ success: false, error: "Invalid email or password" }, { status: 401 })
+    }
+
     console.log("✅ [LOGIN] Password verified successfully")
 
     // Create JWT token
-    const jwtSecret = process.env.JWT_SECRET || "fallback-secret-key"
+    const jwtSecret = process.env.JWT_SECRET || "fallback-secret-key-for-development"
     const token = jwt.sign(
       {
         userId: user.id,
@@ -120,7 +131,7 @@ export async function POST(request: NextRequest) {
       {
         success: false,
         error: "Internal server error. Please try again later.",
-        details: process.env.NODE_ENV === "development" ? error.message : undefined,
+        details: process.env.NODE_ENV === "development" ? (error as Error).message : undefined,
       },
       { status: 500 },
     )

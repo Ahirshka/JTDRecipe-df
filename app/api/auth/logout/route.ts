@@ -12,12 +12,9 @@ export async function POST(request: NextRequest) {
     const token = request.cookies.get("auth-token")?.value
 
     if (token) {
-      console.log("🔍 [LOGOUT] Deleting session from database")
-
+      console.log("🔍 [LOGOUT] Deleting session")
       // Delete session from database
       await deleteUserSession(token)
-
-      console.log("✅ [LOGOUT] Session deleted from database")
     }
 
     // Create response
@@ -39,21 +36,13 @@ export async function POST(request: NextRequest) {
     return response
   } catch (error) {
     console.error("❌ [LOGOUT] Logout error:", error)
-
-    // Even if there's an error, we should still clear the cookie
-    const response = NextResponse.json({
-      success: true,
-      message: "Logged out successfully",
-    })
-
-    response.cookies.set("auth-token", "", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 0,
-      path: "/",
-    })
-
-    return response
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Internal server error",
+        details: process.env.NODE_ENV === "development" ? (error as Error).message : undefined,
+      },
+      { status: 500 },
+    )
   }
 }

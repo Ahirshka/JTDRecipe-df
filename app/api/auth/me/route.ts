@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { findSessionByToken, findUserById } from "@/lib/neon"
+import { findUserById, findSessionByToken } from "@/lib/neon"
 import jwt from "jsonwebtoken"
 
 export const dynamic = "force-dynamic"
@@ -7,55 +7,49 @@ export const runtime = "nodejs"
 
 export async function GET(request: NextRequest) {
   try {
-    console.log("🔍 [AUTH_ME] Checking authentication")
+    console.log("🔍 [AUTH-ME] Checking authentication")
 
     // Get token from cookie
     const token = request.cookies.get("auth-token")?.value
 
     if (!token) {
-      console.log("❌ [AUTH_ME] No auth token found")
+      console.log("❌ [AUTH-ME] No auth token found")
       return NextResponse.json({ success: false, error: "Not authenticated" }, { status: 401 })
     }
 
-    console.log("🔍 [AUTH_ME] Verifying JWT token")
+    console.log("🔍 [AUTH-ME] Token found, verifying...")
 
     // Verify JWT token
-    const jwtSecret = process.env.JWT_SECRET || "fallback-secret-key"
-    let decoded
+    const jwtSecret = process.env.JWT_SECRET || "fallback-secret-key-for-development"
+    let decoded: any
     try {
-      decoded = jwt.verify(token, jwtSecret) as any
+      decoded = jwt.verify(token, jwtSecret)
     } catch (jwtError) {
-      console.log("❌ [AUTH_ME] Invalid JWT token:", jwtError.message)
+      console.log("❌ [AUTH-ME] Invalid JWT token:", jwtError)
       return NextResponse.json({ success: false, error: "Invalid token" }, { status: 401 })
     }
 
-    console.log("🔍 [AUTH_ME] Finding session by token")
+    console.log("🔍 [AUTH-ME] JWT verified, checking session...")
 
     // Check if session exists and is valid
     const session = await findSessionByToken(token)
     if (!session) {
-      console.log("❌ [AUTH_ME] Session not found or expired")
+      console.log("❌ [AUTH-ME] Session not found or expired")
       return NextResponse.json({ success: false, error: "Session expired" }, { status: 401 })
     }
 
-    console.log("🔍 [AUTH_ME] Finding user by ID:", decoded.userId)
+    console.log("🔍 [AUTH-ME] Session valid, finding user...")
 
     // Get user data
     const user = await findUserById(decoded.userId)
     if (!user) {
-      console.log("❌ [AUTH_ME] User not found:", decoded.userId)
+      console.log("❌ [AUTH-ME] User not found:", decoded.userId)
       return NextResponse.json({ success: false, error: "User not found" }, { status: 404 })
     }
 
-    // Check if user account is still active
-    if (user.status !== "active") {
-      console.log("❌ [AUTH_ME] User account is not active:", user.status)
-      return NextResponse.json({ success: false, error: "Account is not active" }, { status: 403 })
-    }
+    console.log("✅ [AUTH-ME] User authenticated:", user.username)
 
-    console.log("✅ [AUTH_ME] User authenticated successfully:", user.username)
-
-    // Remove sensitive data from response
+    // Return user data (without sensitive information)
     const userResponse = {
       id: user.id,
       username: user.username,
@@ -75,13 +69,12 @@ export async function GET(request: NextRequest) {
       user: userResponse,
     })
   } catch (error) {
-    console.error("❌ [AUTH_ME] Authentication check error:", error)
-
+    console.error("❌ [AUTH-ME] Authentication check error:", error)
     return NextResponse.json(
       {
         success: false,
         error: "Internal server error",
-        details: process.env.NODE_ENV === "development" ? error.message : undefined,
+        details: process.env.NODE_ENV === "development" ? (error as Error).message : undefined,
       },
       { status: 500 },
     )

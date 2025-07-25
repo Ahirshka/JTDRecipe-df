@@ -1,9 +1,7 @@
 import { neon, neonConfig } from "@neondatabase/serverless"
-import { drizzle } from "drizzle-orm/neon-http"
-import { v4 as uuidv4 } from "uuid"
 import bcrypt from "bcryptjs"
 
-// Configure neon to use fetch polyfill
+// Configure neon
 neonConfig.fetchConnectionCache = true
 
 if (!process.env.DATABASE_URL) {
@@ -12,9 +10,7 @@ if (!process.env.DATABASE_URL) {
 
 // Initialize database connection
 const sql_client = neon(process.env.DATABASE_URL)
-// Export sql as required by other modules
 export const sql = sql_client
-const db = drizzle(sql_client)
 
 // User types
 export interface User {
@@ -73,6 +69,93 @@ export interface Session {
   created_at: Date
 }
 
+// Database initialization
+export async function initializeDatabase(): Promise<boolean> {
+  try {
+    console.log("🔍 [NEON] Initializing database")
+
+    // Create users table
+    await sql_client`
+      CREATE TABLE IF NOT EXISTS users (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        username VARCHAR(255) UNIQUE NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        role VARCHAR(50) NOT NULL DEFAULT 'user',
+        status VARCHAR(50) NOT NULL DEFAULT 'active',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        is_verified BOOLEAN NOT NULL DEFAULT TRUE,
+        verification_token VARCHAR(255),
+        reset_token VARCHAR(255),
+        reset_token_expires TIMESTAMP,
+        avatar_url TEXT,
+        bio TEXT,
+        location VARCHAR(255),
+        website VARCHAR(255),
+        warning_count INTEGER DEFAULT 0,
+        suspension_reason TEXT,
+        suspension_expires_at TIMESTAMP,
+        last_login_at TIMESTAMP,
+        is_profile_verified BOOLEAN DEFAULT FALSE
+      )
+    `
+
+    // Create user_sessions table
+    await sql_client`
+      CREATE TABLE IF NOT EXISTS user_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token VARCHAR(255) UNIQUE NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `
+
+    // Create recipes table
+    await sql_client`
+      CREATE TABLE IF NOT EXISTS recipes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        ingredients JSONB NOT NULL,
+        instructions JSONB NOT NULL,
+        prep_time INTEGER NOT NULL,
+        cook_time INTEGER NOT NULL,
+        servings INTEGER NOT NULL,
+        difficulty VARCHAR(50) NOT NULL,
+        category VARCHAR(100) NOT NULL,
+        tags JSONB DEFAULT '[]'::jsonb,
+        image_url VARCHAR(255),
+        author_id UUID NOT NULL REFERENCES users(id),
+        author_name VARCHAR(255) NOT NULL,
+        status VARCHAR(50) NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        rating FLOAT,
+        rating_count INTEGER DEFAULT 0
+      )
+    `
+
+    // Create moderation_log table
+    await sql_client`
+      CREATE TABLE IF NOT EXISTS moderation_log (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        moderator_id UUID NOT NULL REFERENCES users(id),
+        action VARCHAR(100) NOT NULL,
+        details JSONB,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `
+
+    console.log("✅ [NEON] Database initialization complete")
+    return true
+  } catch (error) {
+    console.error("❌ [NEON] Database initialization failed:", error)
+    throw error
+  }
+}
+
 // User functions
 export async function findUserById(id: string): Promise<User | null> {
   try {
@@ -116,27 +199,6 @@ export async function findUserByEmail(email: string): Promise<User | null> {
   }
 }
 
-export async function findUserByUsername(username: string): Promise<User | null> {
-  try {
-    console.log("🔍 [NEON] Finding user by username:", username)
-
-    const result = await sql_client`
-      SELECT * FROM users WHERE username = ${username} LIMIT 1
-    `
-
-    if (result && result.length > 0) {
-      console.log("✅ [NEON] User found by username")
-      return result[0] as User
-    }
-
-    console.log("❌ [NEON] User not found with username:", username)
-    return null
-  } catch (error) {
-    console.error("❌ [NEON] Error finding user by username:", error)
-    throw error
-  }
-}
-
 export async function createUser(userData: {
   username: string
   email: string
@@ -151,27 +213,16 @@ export async function createUser(userData: {
     const salt = await bcrypt.genSalt(12)
     const password_hash = await bcrypt.hash(userData.password, salt)
 
-    // Generate verification token
-    const verification_token = uuidv4()
-
-    const now = new Date()
-    const userId = uuidv4()
-
     const result = await sql_client`
       INSERT INTO users (
-        id, username, email, password_hash, role, status, 
-        created_at, updated_at, is_verified, verification_token
+        username, email, password_hash, role, status, is_verified
       ) VALUES (
-        ${userId}, 
         ${userData.username}, 
         ${userData.email}, 
         ${password_hash}, 
         ${userData.role || "user"}, 
         ${userData.status || "active"}, 
-        ${now}, 
-        ${now}, 
-        ${true}, 
-        ${verification_token}
+        ${true}
       )
       RETURNING *
     `
@@ -188,63 +239,6 @@ export async function createUser(userData: {
   }
 }
 
-// Add updateUser function
-export async function updateUser(id: string, updates: Partial<User>): Promise<User | null> {
-  try {
-    console.log("🔍 [NEON] Updating user:", id)
-
-    // Build the SET clause dynamically
-    const updateFields = Object.keys(updates).filter((key) => updates[key as keyof typeof updates] !== undefined)
-    if (updateFields.length === 0) {
-      return await findUserById(id)
-    }
-
-    const now = new Date()
-
-    // Build the query dynamically
-    const setClause = updateFields.map((field, index) => `${field} = $${index + 2}`).join(", ")
-    const values = [id, ...updateFields.map((field) => updates[field as keyof typeof updates]), now]
-
-    const query = `
-      UPDATE users 
-      SET ${setClause}, updated_at = $${values.length}
-      WHERE id = $1 
-      RETURNING *
-    `
-
-    const result = await sql_client.unsafe(query, values)
-
-    if (result && result.length > 0) {
-      console.log("✅ [NEON] User updated successfully")
-      return result[0] as User
-    }
-
-    console.log("❌ [NEON] User not found for update")
-    return null
-  } catch (error) {
-    console.error("❌ [NEON] Error updating user:", error)
-    throw error
-  }
-}
-
-// Add getAllUsers function
-export async function getAllUsers(): Promise<User[]> {
-  try {
-    console.log("🔍 [NEON] Getting all users")
-
-    const result = await sql_client`
-      SELECT * FROM users 
-      ORDER BY created_at DESC
-    `
-
-    console.log("✅ [NEON] Retrieved users:", result.length)
-    return result as User[]
-  } catch (error) {
-    console.error("❌ [NEON] Error getting all users:", error)
-    return []
-  }
-}
-
 export async function verifyUserPassword(user: User, password: string): Promise<boolean> {
   try {
     console.log("🔍 [NEON] Verifying password for user:", user.username)
@@ -258,22 +252,21 @@ export async function verifyUserPassword(user: User, password: string): Promise<
 }
 
 // Session functions
-export async function createUserSession(userId: string, token: string, expiresAt: Date): Promise<Session> {
+export async function createSession(userId: string, token: string): Promise<Session> {
   try {
     console.log("🔍 [NEON] Creating session for user:", userId)
 
-    const now = new Date()
-    const sessionId = uuidv4()
+    // Set expiration to 7 days from now
+    const expiresAt = new Date()
+    expiresAt.setDate(expiresAt.getDate() + 7)
 
     const result = await sql_client`
       INSERT INTO user_sessions (
-        id, user_id, token, expires_at, created_at
+        user_id, token, expires_at
       ) VALUES (
-        ${sessionId}, 
         ${userId}, 
         ${token}, 
-        ${expiresAt}, 
-        ${now}
+        ${expiresAt}
       )
       RETURNING *
     `
@@ -288,15 +281,6 @@ export async function createUserSession(userId: string, token: string, expiresAt
     console.error("❌ [NEON] Error creating session:", error)
     throw error
   }
-}
-
-// Add createSession function for compatibility
-export async function createSession(userId: string, token: string): Promise<Session> {
-  // Set expiration to 7 days from now
-  const expiresAt = new Date()
-  expiresAt.setDate(expiresAt.getDate() + 7)
-
-  return createUserSession(userId, token, expiresAt)
 }
 
 export async function findSessionByToken(token: string): Promise<Session | null> {
@@ -326,7 +310,7 @@ export async function deleteUserSession(token: string): Promise<boolean> {
   try {
     console.log("🔍 [NEON] Deleting session with token")
 
-    const result = await sql_client`
+    await sql_client`
       DELETE FROM user_sessions WHERE token = ${token}
     `
 
@@ -362,38 +346,26 @@ export async function createRecipe(recipeData: {
       throw new Error("Author not found")
     }
 
-    const now = new Date()
-    const recipeId = uuidv4()
-
-    // Convert arrays to JSON strings for storage
-    const ingredientsJson = JSON.stringify(recipeData.ingredients)
-    const instructionsJson = JSON.stringify(recipeData.instructions)
-    const tagsJson = JSON.stringify(recipeData.tags)
-
     const result = await sql_client`
       INSERT INTO recipes (
-        id, title, description, ingredients, instructions, 
+        title, description, ingredients, instructions, 
         prep_time, cook_time, servings, difficulty, category, 
-        tags, image_url, author_id, author_name, status, 
-        created_at, updated_at
+        tags, image_url, author_id, author_name, status
       ) VALUES (
-        ${recipeId}, 
         ${recipeData.title}, 
         ${recipeData.description}, 
-        ${ingredientsJson}, 
-        ${instructionsJson}, 
+        ${JSON.stringify(recipeData.ingredients)}, 
+        ${JSON.stringify(recipeData.instructions)}, 
         ${recipeData.prep_time}, 
         ${recipeData.cook_time}, 
         ${recipeData.servings}, 
         ${recipeData.difficulty}, 
         ${recipeData.category}, 
-        ${tagsJson}, 
+        ${JSON.stringify(recipeData.tags)}, 
         ${recipeData.image_url || null}, 
         ${recipeData.author_id}, 
         ${author.username}, 
-        ${"pending"}, 
-        ${now}, 
-        ${now}
+        ${"pending"}
       )
       RETURNING *
     `
@@ -413,41 +385,6 @@ export async function createRecipe(recipeData: {
   } catch (error) {
     console.error("❌ [NEON] Error creating recipe:", error)
     throw error
-  }
-}
-
-// Add moderateRecipe function
-export async function moderateRecipe(recipeId: string, status: string, moderatorId: string): Promise<boolean> {
-  try {
-    console.log(`🔍 [NEON] Moderating recipe ${recipeId} to status ${status}`)
-
-    const now = new Date()
-
-    // Update recipe status
-    await sql_client`
-      UPDATE recipes 
-      SET status = ${status}, updated_at = ${now} 
-      WHERE id = ${recipeId}
-    `
-
-    // Log moderation action
-    await sql_client`
-      INSERT INTO moderation_log (
-        id, moderator_id, action, details, created_at
-      ) VALUES (
-        ${uuidv4()},
-        ${moderatorId},
-        ${"recipe_moderation"},
-        ${JSON.stringify({ recipeId, status })},
-        ${now}
-      )
-    `
-
-    console.log("✅ [NEON] Recipe moderated successfully")
-    return true
-  } catch (error) {
-    console.error("❌ [NEON] Error moderating recipe:", error)
-    return false
   }
 }
 
@@ -474,34 +411,7 @@ export async function getAllRecipes(): Promise<Recipe[]> {
     return recipes
   } catch (error) {
     console.error("❌ [NEON] Error getting recipes:", error)
-    throw error
-  }
-}
-
-export async function getRecipeById(id: string): Promise<Recipe | null> {
-  try {
-    console.log("🔍 [NEON] Getting recipe by ID:", id)
-
-    const result = await sql_client`
-      SELECT * FROM recipes WHERE id = ${id} LIMIT 1
-    `
-
-    if (result && result.length > 0) {
-      // Parse JSON strings to arrays
-      const recipe = result[0]
-      recipe.ingredients = JSON.parse(recipe.ingredients)
-      recipe.instructions = JSON.parse(recipe.instructions)
-      recipe.tags = JSON.parse(recipe.tags)
-
-      console.log("✅ [NEON] Recipe found:", recipe.title)
-      return recipe as Recipe
-    }
-
-    console.log("❌ [NEON] Recipe not found with ID:", id)
-    return null
-  } catch (error) {
-    console.error("❌ [NEON] Error getting recipe by ID:", error)
-    throw error
+    return []
   }
 }
 
@@ -528,192 +438,70 @@ export async function getPendingRecipes(): Promise<Recipe[]> {
     return recipes
   } catch (error) {
     console.error("❌ [NEON] Error getting pending recipes:", error)
-    throw error
+    return []
   }
 }
 
-export async function updateRecipeStatus(id: string, status: string): Promise<Recipe | null> {
+// Additional required exports for compatibility
+export async function updateUser(id: string, updates: Partial<User>): Promise<User | null> {
   try {
-    console.log(`🔍 [NEON] Updating recipe ${id} status to ${status}`)
+    console.log("🔍 [NEON] Updating user:", id)
 
-    const now = new Date()
+    const updateFields = Object.keys(updates).filter((key) => updates[key as keyof typeof updates] !== undefined)
+    if (updateFields.length === 0) {
+      return await findUserById(id)
+    }
 
-    const result = await sql_client`
-      UPDATE recipes 
-      SET status = ${status}, updated_at = ${now} 
-      WHERE id = ${id} 
+    const setClause = updateFields.map((field, index) => `${field} = $${index + 2}`).join(", ")
+    const values = [id, ...updateFields.map((field) => updates[field as keyof typeof updates])]
+
+    const query = `
+      UPDATE users 
+      SET ${setClause}, updated_at = NOW()
+      WHERE id = $1 
       RETURNING *
     `
 
-    if (result && result.length > 0) {
-      // Parse JSON strings to arrays
-      const recipe = result[0]
-      recipe.ingredients = JSON.parse(recipe.ingredients)
-      recipe.instructions = JSON.parse(recipe.instructions)
-      recipe.tags = JSON.parse(recipe.tags)
+    const result = await sql_client.unsafe(query, values)
 
-      console.log("✅ [NEON] Recipe status updated successfully")
-      return recipe as Recipe
+    if (result && result.length > 0) {
+      console.log("✅ [NEON] User updated successfully")
+      return result[0] as User
     }
 
-    console.log("❌ [NEON] Recipe not found for status update")
     return null
   } catch (error) {
-    console.error("❌ [NEON] Error updating recipe status:", error)
+    console.error("❌ [NEON] Error updating user:", error)
     throw error
   }
 }
 
-// Database initialization and testing
-export async function testDatabaseConnection(): Promise<boolean> {
+export async function getAllUsers(): Promise<User[]> {
   try {
-    console.log("🔍 [NEON] Testing database connection")
+    const result = await sql_client`SELECT * FROM users ORDER BY created_at DESC`
+    return result as User[]
+  } catch (error) {
+    console.error("❌ [NEON] Error getting all users:", error)
+    return []
+  }
+}
 
-    const result = await sql_client`SELECT 1 as test`
+export async function moderateRecipe(recipeId: string, status: string, moderatorId: string): Promise<boolean> {
+  try {
+    await sql_client`UPDATE recipes SET status = ${status}, updated_at = NOW() WHERE id = ${recipeId}`
 
-    console.log("✅ [NEON] Database connection successful")
+    await sql_client`
+      INSERT INTO moderation_log (moderator_id, action, details)
+      VALUES (${moderatorId}, ${"recipe_moderation"}, ${JSON.stringify({ recipeId, status })})
+    `
+
     return true
   } catch (error) {
-    console.error("❌ [NEON] Database connection failed:", error)
+    console.error("❌ [NEON] Error moderating recipe:", error)
     return false
   }
 }
 
-export async function initializeDatabase(): Promise<boolean> {
-  try {
-    console.log("🔍 [NEON] Initializing database")
-
-    // Check if users table exists
-    const userTableExists = await sql_client`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name = 'users'
-      )
-    `
-
-    if (!userTableExists[0].exists) {
-      console.log("🔍 [NEON] Creating users table")
-
-      await sql_client`
-        CREATE TABLE users (
-          id UUID PRIMARY KEY,
-          username VARCHAR(255) UNIQUE NOT NULL,
-          email VARCHAR(255) UNIQUE NOT NULL,
-          password_hash VARCHAR(255) NOT NULL,
-          role VARCHAR(50) NOT NULL DEFAULT 'user',
-          status VARCHAR(50) NOT NULL DEFAULT 'active',
-          created_at TIMESTAMP NOT NULL,
-          updated_at TIMESTAMP NOT NULL,
-          is_verified BOOLEAN NOT NULL DEFAULT FALSE,
-          verification_token VARCHAR(255),
-          reset_token VARCHAR(255),
-          reset_token_expires TIMESTAMP,
-          avatar_url TEXT,
-          bio TEXT,
-          location VARCHAR(255),
-          website VARCHAR(255),
-          warning_count INTEGER DEFAULT 0,
-          suspension_reason TEXT,
-          suspension_expires_at TIMESTAMP,
-          last_login_at TIMESTAMP,
-          is_profile_verified BOOLEAN DEFAULT FALSE
-        )
-      `
-    }
-
-    // Check if sessions table exists
-    const sessionTableExists = await sql_client`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name = 'user_sessions'
-      )
-    `
-
-    if (!sessionTableExists[0].exists) {
-      console.log("🔍 [NEON] Creating user_sessions table")
-
-      await sql_client`
-        CREATE TABLE user_sessions (
-          id UUID PRIMARY KEY,
-          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          token VARCHAR(255) UNIQUE NOT NULL,
-          expires_at TIMESTAMP NOT NULL,
-          created_at TIMESTAMP NOT NULL
-        )
-      `
-    }
-
-    // Check if recipes table exists
-    const recipeTableExists = await sql_client`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name = 'recipes'
-      )
-    `
-
-    if (!recipeTableExists[0].exists) {
-      console.log("🔍 [NEON] Creating recipes table")
-
-      await sql_client`
-        CREATE TABLE recipes (
-          id UUID PRIMARY KEY,
-          title VARCHAR(255) NOT NULL,
-          description TEXT,
-          ingredients JSONB NOT NULL,
-          instructions JSONB NOT NULL,
-          prep_time INTEGER NOT NULL,
-          cook_time INTEGER NOT NULL,
-          servings INTEGER NOT NULL,
-          difficulty VARCHAR(50) NOT NULL,
-          category VARCHAR(100) NOT NULL,
-          tags JSONB,
-          image_url VARCHAR(255),
-          author_id UUID NOT NULL REFERENCES users(id),
-          author_name VARCHAR(255) NOT NULL,
-          status VARCHAR(50) NOT NULL DEFAULT 'pending',
-          created_at TIMESTAMP NOT NULL,
-          updated_at TIMESTAMP NOT NULL,
-          rating FLOAT,
-          rating_count INTEGER DEFAULT 0
-        )
-      `
-    }
-
-    // Check if moderation_log table exists
-    const moderationLogTableExists = await sql_client`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name = 'moderation_log'
-      )
-    `
-
-    if (!moderationLogTableExists[0].exists) {
-      console.log("🔍 [NEON] Creating moderation_log table")
-
-      await sql_client`
-        CREATE TABLE moderation_log (
-          id UUID PRIMARY KEY,
-          moderator_id UUID NOT NULL REFERENCES users(id),
-          action VARCHAR(100) NOT NULL,
-          details JSONB,
-          created_at TIMESTAMP NOT NULL
-        )
-      `
-    }
-
-    console.log("✅ [NEON] Database initialization complete")
-    return true
-  } catch (error) {
-    console.error("❌ [NEON] Database initialization failed:", error)
-    return false
-  }
-}
-
-// Add getStackAuthConfig function
 export function getStackAuthConfig() {
   return {
     baseUrl: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
@@ -723,5 +511,12 @@ export function getStackAuthConfig() {
   }
 }
 
-// Export the database client for direct queries
-export { sql_client, db }
+export async function testDatabaseConnection(): Promise<boolean> {
+  try {
+    await sql_client`SELECT 1 as test`
+    return true
+  } catch (error) {
+    console.error("❌ [NEON] Database connection failed:", error)
+    return false
+  }
+}
