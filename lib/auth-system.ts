@@ -108,6 +108,14 @@ export async function loginUser(credentials: LoginCredentials): Promise<AuthResu
       }
     }
 
+    console.log("🔍 [AUTH] Found user:", {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+    })
+
     // Verify password
     const isValidPassword = await bcrypt.compare(credentials.password, user.password_hash)
     if (!isValidPassword) {
@@ -117,6 +125,8 @@ export async function loginUser(credentials: LoginCredentials): Promise<AuthResu
         message: "Invalid email or password",
       }
     }
+
+    console.log("✅ [AUTH] Password verified")
 
     // Check user status
     if (user.status !== "active") {
@@ -137,11 +147,15 @@ export async function loginUser(credentials: LoginCredentials): Promise<AuthResu
       }
     }
 
+    console.log("✅ [AUTH] Session created:", sessionData.token.substring(0, 10) + "...")
+
     // Set cookie
     const cookieStore = await cookies()
     cookieStore.set(COOKIE_NAME, sessionData.token, COOKIE_OPTIONS)
 
+    console.log("✅ [AUTH] Cookie set successfully")
     console.log("✅ [AUTH] Login successful for:", user.username)
+
     return {
       success: true,
       message: "Login successful",
@@ -221,17 +235,21 @@ export async function getCurrentSession(): Promise<SessionResult> {
     const sessionToken = cookieStore.get(COOKIE_NAME)?.value
 
     if (!sessionToken) {
-      console.log("❌ [AUTH] No session token found")
+      console.log("❌ [AUTH] No session token found in cookies")
       return {
         success: false,
         error: "No session token",
       }
     }
 
+    console.log("🔍 [AUTH] Found session token:", sessionToken.substring(0, 10) + "...")
+
     // Validate session
     const sessionData = await validateSession(sessionToken)
     if (!sessionData) {
       console.log("❌ [AUTH] Invalid session")
+      // Clear invalid cookie
+      cookieStore.delete(COOKIE_NAME)
       return {
         success: false,
         error: "Invalid session",
@@ -264,10 +282,12 @@ export async function logoutUser(): Promise<{ success: boolean; message: string 
     if (sessionToken) {
       // Delete session from database
       await deleteSession(sessionToken)
+      console.log("✅ [AUTH] Session deleted from database")
     }
 
     // Clear cookie
     cookieStore.delete(COOKIE_NAME)
+    console.log("✅ [AUTH] Cookie cleared")
 
     console.log("✅ [AUTH] Logout successful")
     return {

@@ -1,85 +1,68 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { testConnection, findUserByEmail, getAllUsers, createOwnerAccount, OWNER_CONFIG } from "@/lib/neon"
 import { getCurrentSession } from "@/lib/auth-system"
-import bcrypt from "bcryptjs"
+import { findUserByEmail, getAllUsers, testConnection } from "@/lib/neon"
+import { cookies } from "next/headers"
 
 export async function GET(request: NextRequest) {
-  console.log("🔍 [DEBUG-AUTH] Starting comprehensive auth debug")
-
-  const debugResults = {
-    timestamp: new Date().toISOString(),
-    database: {
-      connected: false,
-      error: null as string | null,
-    },
-    owner: {
-      exists: false,
-      details: null as any,
-      passwordTest: false,
-    },
-    session: {
-      valid: false,
-      user: null as any,
-      error: null as string | null,
-    },
-    users: {
-      total: 0,
-      list: [] as any[],
-    },
-    environment: {
-      DATABASE_URL: !!process.env.DATABASE_URL,
-      NODE_ENV: process.env.NODE_ENV,
-    },
-  }
+  console.log("🔍 [API-DEBUG] Auth debug request received")
 
   try {
-    // Test database connection
-    console.log("🔍 [DEBUG-AUTH] Testing database connection...")
-    debugResults.database.connected = await testConnection()
-
-    if (!debugResults.database.connected) {
-      debugResults.database.error = "Connection failed"
-      console.log("❌ [DEBUG-AUTH] Database connection failed")
-    } else {
-      console.log("✅ [DEBUG-AUTH] Database connected")
+    const debugInfo: any = {
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV,
+      database: {},
+      session: {},
+      cookies: {},
+      users: {},
     }
 
-    // Check owner account
-    if (debugResults.database.connected) {
-      console.log("🔍 [DEBUG-AUTH] Checking owner account...")
-      const ownerUser = await findUserByEmail(OWNER_CONFIG.email)
+    // Test database connection
+    console.log("🔍 [API-DEBUG] Testing database connection...")
+    try {
+      const dbConnected = await testConnection()
+      debugInfo.database.connected = dbConnected
+      debugInfo.database.status = dbConnected ? "Connected" : "Failed"
+    } catch (error) {
+      debugInfo.database.connected = false
+      debugInfo.database.error = error instanceof Error ? error.message : "Unknown error"
+    }
 
-      if (ownerUser) {
-        debugResults.owner.exists = true
-        debugResults.owner.details = {
-          id: ownerUser.id,
-          username: ownerUser.username,
-          email: ownerUser.email,
-          role: ownerUser.role,
-          status: ownerUser.status,
-          is_verified: ownerUser.is_verified,
-          created_at: ownerUser.created_at,
-          hasPasswordHash: !!ownerUser.password_hash,
+    // Check cookies
+    console.log("🔍 [API-DEBUG] Checking cookies...")
+    try {
+      const cookieStore = await cookies()
+      const sessionCookie = cookieStore.get("auth_session")
+      debugInfo.cookies.hasSessionCookie = !!sessionCookie
+      debugInfo.cookies.sessionToken = sessionCookie?.value?.substring(0, 10) + "..." || "None"
+    } catch (error) {
+      debugInfo.cookies.error = error instanceof Error ? error.message : "Unknown error"
+    }
+
+    // Check current session
+    console.log("🔍 [API-DEBUG] Checking current session...")
+    try {
+      const session = await getCurrentSession()
+      debugInfo.session.valid = session.success
+      debugInfo.session.error = session.error || null
+      if (session.user) {
+        debugInfo.session.user = {
+          id: session.user.id,
+          username: session.user.username,
+          email: session.user.email,
+          role: session.user.role,
+          status: session.user.status,
         }
-
-        // Test password
-        if (ownerUser.password_hash) {
-          debugResults.owner.passwordTest = await bcrypt.compare(OWNER_CONFIG.password, ownerUser.password_hash)
-        }
-
-        console.log("✅ [DEBUG-AUTH] Owner account found:", {
-          username: ownerUser.username,
-          passwordValid: debugResults.owner.passwordTest,
-        })
-      } else {
-        console.log("❌ [DEBUG-AUTH] Owner account not found")
       }
+    } catch (error) {
+      debugInfo.session.error = error instanceof Error ? error.message : "Unknown error"
+    }
 
-      // Get all users
-      console.log("🔍 [DEBUG-AUTH] Getting all users...")
-      const allUsers = await getAllUsers()
-      debugResults.users.total = allUsers.length
-      debugResults.users.list = allUsers.map((user) => ({
+    // Check users in database
+    console.log("🔍 [API-DEBUG] Checking users in database...")
+    try {
+      const users = await getAllUsers()
+      debugInfo.users.count = users.length
+      debugInfo.users.list = users.map((user) => ({
         id: user.id,
         username: user.username,
         email: user.email,
@@ -89,83 +72,45 @@ export async function GET(request: NextRequest) {
         created_at: user.created_at,
       }))
 
-      console.log(`✅ [DEBUG-AUTH] Found ${allUsers.length} users`)
+      // Check specific users
+      const ownerUser = await findUserByEmail("aaronhirshka@gmail.com")
+      debugInfo.users.owner = ownerUser
+        ? {
+            id: ownerUser.id,
+            username: ownerUser.username,
+            email: ownerUser.email,
+            role: ownerUser.role,
+            status: ownerUser.status,
+            hasPasswordHash: !!ownerUser.password_hash,
+          }
+        : null
+
+      const testUser = await findUserByEmail("test@example.com")
+      debugInfo.users.testUser = testUser
+        ? {
+            id: testUser.id,
+            username: testUser.username,
+            email: testUser.email,
+            role: testUser.role,
+            status: testUser.status,
+            hasPasswordHash: !!testUser.password_hash,
+          }
+        : null
+    } catch (error) {
+      debugInfo.users.error = error instanceof Error ? error.message : "Unknown error"
     }
 
-    // Check current session
-    console.log("🔍 [DEBUG-AUTH] Checking current session...")
-    try {
-      const sessionResult = await getCurrentSession()
-      debugResults.session.valid = sessionResult.success
-
-      if (sessionResult.success && sessionResult.user) {
-        debugResults.session.user = {
-          id: sessionResult.user.id,
-          username: sessionResult.user.username,
-          email: sessionResult.user.email,
-          role: sessionResult.user.role,
-        }
-        console.log("✅ [DEBUG-AUTH] Valid session found for:", sessionResult.user.username)
-      } else {
-        debugResults.session.error = sessionResult.error || "No valid session"
-        console.log("❌ [DEBUG-AUTH] No valid session")
-      }
-    } catch (sessionError) {
-      debugResults.session.error = sessionError instanceof Error ? sessionError.message : "Session check failed"
-      console.log("❌ [DEBUG-AUTH] Session check error:", sessionError)
-    }
-
-    console.log("✅ [DEBUG-AUTH] Debug complete")
+    console.log("✅ [API-DEBUG] Debug info collected successfully")
 
     return NextResponse.json({
       success: true,
-      debug: debugResults,
+      debug: debugInfo,
     })
   } catch (error) {
-    console.error("❌ [DEBUG-AUTH] Debug error:", error)
-
+    console.error("❌ [API-DEBUG] Debug error:", error)
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-        debug: debugResults,
-      },
-      { status: 500 },
-    )
-  }
-}
-
-export async function POST(request: NextRequest) {
-  console.log("🔄 [DEBUG-AUTH] Creating owner account via debug endpoint")
-
-  try {
-    const result = await createOwnerAccount()
-
-    if (result.success) {
-      console.log("✅ [DEBUG-AUTH] Owner account created successfully")
-      return NextResponse.json({
-        success: true,
-        message: "Owner account created successfully",
-        user: result.user,
-        credentials: result.credentials,
-      })
-    } else {
-      console.log("❌ [DEBUG-AUTH] Owner account creation failed:", result.error)
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Owner account creation failed",
-          error: result.error,
-        },
-        { status: 500 },
-      )
-    }
-  } catch (error) {
-    console.error("❌ [DEBUG-AUTH] Owner account creation error:", error)
-    return NextResponse.json(
-      {
-        success: false,
-        message: "Owner account creation failed",
         error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },

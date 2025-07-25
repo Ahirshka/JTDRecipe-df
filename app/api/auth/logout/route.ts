@@ -7,6 +7,8 @@ export async function POST(request: NextRequest) {
   try {
     const result = await logoutUser()
 
+    console.log("🔄 [API] Logout result:", result)
+
     if (result.success) {
       console.log("✅ [API] Logout successful")
       return NextResponse.json({

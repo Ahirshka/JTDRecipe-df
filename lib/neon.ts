@@ -196,8 +196,14 @@ export async function initializeDatabase(): Promise<boolean> {
       CREATE INDEX IF NOT EXISTS recipe_search_idx ON recipes USING GIN(search_vector);
     `
 
-    // Add trigger to update search_vector
+    // Add trigger to update search_vector - FIXED: Handle existing triggers
     console.log("📋 [NEON-DB] Creating search trigger...")
+
+    // Drop existing trigger and function first
+    await sql`DROP TRIGGER IF EXISTS recipes_search_update_trigger ON recipes;`
+    await sql`DROP FUNCTION IF EXISTS recipes_search_update();`
+
+    // Create function
     await sql`
       CREATE OR REPLACE FUNCTION recipes_search_update() RETURNS trigger AS $$
       BEGIN
@@ -211,6 +217,7 @@ export async function initializeDatabase(): Promise<boolean> {
       $$ LANGUAGE plpgsql;
     `
 
+    // Create trigger
     await sql`
       CREATE TRIGGER recipes_search_update_trigger
       BEFORE INSERT OR UPDATE ON recipes
@@ -318,6 +325,78 @@ export async function createOwnerAccount(ownerData?: {
     return {
       success: false,
       error: `Failed to create owner account: ${error instanceof Error ? error.message : "Unknown error"}`,
+    }
+  }
+}
+
+// Create test user account
+export async function createTestUser() {
+  console.log("🔄 [NEON-DB] Creating test user account...")
+
+  try {
+    const testUser = {
+      username: "testuser",
+      email: "test@example.com",
+      password: "testpass123",
+      role: "user",
+    }
+
+    // Delete any existing test user
+    await sql`DELETE FROM users WHERE email = ${testUser.email} OR username = ${testUser.username};`
+    console.log("🗑️ [NEON-DB] Cleared any existing test user")
+
+    // Hash the password
+    console.log("🔐 [NEON-DB] Hashing test user password...")
+    const hashedPassword = await bcrypt.hash(testUser.password, 12)
+    console.log("✅ [NEON-DB] Test user password hashed successfully")
+
+    // Create test user account
+    const result = await sql`
+      INSERT INTO users (
+        username, 
+        email, 
+        password_hash, 
+        role, 
+        status, 
+        is_verified
+      )
+      VALUES (
+        ${testUser.username}, 
+        ${testUser.email}, 
+        ${hashedPassword},
+        ${testUser.role}, 
+        'active', 
+        true
+      )
+      RETURNING id, username, email, role, status, is_verified, created_at;
+    `
+
+    if (result.length === 0) {
+      throw new Error("Failed to insert test user account")
+    }
+
+    const createdUser = result[0]
+    console.log("✅ [NEON-DB] Test user account created successfully:", {
+      id: createdUser.id,
+      username: createdUser.username,
+      email: createdUser.email,
+      role: createdUser.role,
+    })
+
+    return {
+      success: true,
+      message: "Test user account created successfully",
+      user: createdUser,
+      credentials: {
+        email: testUser.email,
+        password: testUser.password,
+      },
+    }
+  } catch (error) {
+    console.error("❌ [NEON-DB] Create test user error:", error)
+    return {
+      success: false,
+      error: `Failed to create test user: ${error instanceof Error ? error.message : "Unknown error"}`,
     }
   }
 }

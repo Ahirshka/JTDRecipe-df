@@ -20,6 +20,10 @@ interface InitResult {
     email: string
     password: string
   }
+  testUser?: {
+    email: string
+    password: string
+  }
   error?: string
 }
 
@@ -170,14 +174,14 @@ export default function DatabaseSetupPage() {
             <AlertTriangle className="h-5 w-5" />
             Initialize Database
           </CardTitle>
-          <CardDescription>This will create all necessary tables and the owner account</CardDescription>
+          <CardDescription>This will create all necessary tables and accounts</CardDescription>
         </CardHeader>
         <CardContent>
           <Alert className="mb-4">
             <AlertTriangle className="h-4 w-4" />
             <AlertDescription>
-              <strong>Warning:</strong> This will drop existing tables and recreate them. Only run this on a fresh
-              database or if you want to reset everything.
+              <strong>Note:</strong> This will handle existing database objects safely and create owner + test user
+              accounts.
             </AlertDescription>
           </Alert>
 
@@ -188,7 +192,7 @@ export default function DatabaseSetupPage() {
                 Initializing Database...
               </>
             ) : (
-              "Initialize Database & Create Owner Account"
+              "Initialize Database & Create Accounts"
             )}
           </Button>
         </CardContent>
@@ -236,15 +240,26 @@ export default function DatabaseSetupPage() {
                   </div>
 
                   <div className="p-4 bg-muted rounded-lg">
-                    <h4 className="font-medium mb-2">Login Credentials</h4>
+                    <h4 className="font-medium mb-2">Owner Login Credentials</h4>
                     <div className="space-y-1 text-sm font-mono">
                       <div>Email: {result.credentials.email}</div>
                       <div>Password: {result.credentials.password}</div>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Save these credentials securely. You'll need them to log in as the owner.
-                    </p>
                   </div>
+
+                  {result.testUser && (
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                      <h4 className="font-medium mb-2 text-blue-800">Test User Credentials</h4>
+                      <div className="space-y-1 text-sm font-mono text-blue-700">
+                        <div>Email: {result.testUser.email}</div>
+                        <div>Password: {result.testUser.password}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  <p className="text-xs text-muted-foreground">
+                    Save these credentials securely. You'll need them to log in.
+                  </p>
 
                   <div className="flex gap-2">
                     <Button asChild>

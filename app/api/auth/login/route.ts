@@ -8,6 +8,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { email, password } = body
 
+    console.log("🔄 [API] Login attempt for email:", email)
+
     // Validate input
     if (!email || !password) {
       console.log("❌ [API] Missing email or password")
@@ -23,6 +25,12 @@ export async function POST(request: NextRequest) {
     // Attempt login
     const result = await loginUser({ email, password })
 
+    console.log("🔄 [API] Login result:", {
+      success: result.success,
+      message: result.message,
+      hasUser: !!result.user,
+    })
+
     if (result.success) {
       console.log("✅ [API] Login successful")
       return NextResponse.json({
@@ -33,6 +41,7 @@ export async function POST(request: NextRequest) {
           username: result.user?.username,
           email: result.user?.email,
           role: result.user?.role,
+          status: result.user?.status,
         },
       })
     } else {

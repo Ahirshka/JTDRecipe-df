@@ -8,6 +8,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { username, email, password, role } = body
 
+    console.log("🔄 [API] Registration attempt for:", { username, email, role })
+
     // Validate input
     if (!username || !email || !password) {
       console.log("❌ [API] Missing required fields")
@@ -20,20 +22,9 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    if (!emailRegex.test(email)) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: "Invalid email format",
-        },
-        { status: 400 },
-      )
-    }
-
     // Validate password strength
     if (password.length < 6) {
+      console.log("❌ [API] Password too short")
       return NextResponse.json(
         {
           success: false,
@@ -49,6 +40,12 @@ export async function POST(request: NextRequest) {
       email,
       password,
       role: role || "user",
+    })
+
+    console.log("🔄 [API] Registration result:", {
+      success: result.success,
+      message: result.message,
+      hasUser: !!result.user,
     })
 
     if (result.success) {

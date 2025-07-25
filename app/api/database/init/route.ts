@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { initializeDatabase, createOwnerAccount, testConnection } from "@/lib/neon"
+import { initializeDatabase, createOwnerAccount, createTestUser, testConnection } from "@/lib/neon"
 
 export async function POST(request: NextRequest) {
   console.log("🔄 [API] Database initialization request received")
@@ -57,6 +57,17 @@ export async function POST(request: NextRequest) {
 
     console.log("✅ [API] Owner account created successfully")
 
+    // Create test user account
+    console.log("🔄 [API] Creating test user account...")
+    const testUserResult = await createTestUser()
+
+    if (!testUserResult.success) {
+      console.log("❌ [API] Test user creation failed:", testUserResult.error)
+      // Don't fail the whole process if test user creation fails
+    } else {
+      console.log("✅ [API] Test user account created successfully")
+    }
+
     return NextResponse.json({
       success: true,
       message: "Database initialized successfully",
@@ -66,6 +77,7 @@ export async function POST(request: NextRequest) {
         role: ownerResult.user?.role,
       },
       credentials: ownerResult.credentials,
+      testUser: testUserResult.success ? testUserResult.credentials : null,
     })
   } catch (error) {
     console.error("❌ [API] Database initialization error:", error)

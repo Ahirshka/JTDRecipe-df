@@ -7,6 +7,12 @@ export async function GET(request: NextRequest) {
   try {
     const session = await getCurrentSession()
 
+    console.log("🔄 [API] Session result:", {
+      success: session.success,
+      hasUser: !!session.user,
+      error: session.error,
+    })
+
     if (session.success && session.user) {
       console.log("✅ [API] Current user found:", session.user.username)
       return NextResponse.json({
@@ -22,11 +28,12 @@ export async function GET(request: NextRequest) {
         },
       })
     } else {
-      console.log("❌ [API] No valid session found")
+      console.log("❌ [API] No valid session found:", session.error)
       return NextResponse.json(
         {
           success: false,
           message: "Not authenticated",
+          error: session.error,
         },
         { status: 401 },
       )
