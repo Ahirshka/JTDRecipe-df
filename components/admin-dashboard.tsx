@@ -16,6 +16,7 @@ import { Shield, Users, Ban, CheckCircle, Clock, Search, Eye, UserX, ChefHat, Tr
 import { secureDB, type SecureUser, type SecureRecipe, type UserRole } from "@/lib/secure-database"
 import { toast } from "@/hooks/use-toast"
 import { hasPermission, canModerateUser, ROLE_HIERARCHY } from "@/lib/auth"
+import { useRouter } from "next/navigation"
 
 interface AdminDashboardProps {
   currentUser: SecureUser
@@ -58,6 +59,8 @@ export function AdminDashboard({ currentUser }: AdminDashboardProps) {
   const [loading, setLoading] = useState(true)
   const [moderatingId, setModeratingId] = useState<string | null>(null)
   const [moderationNotes, setModerationNotes] = useState("")
+
+  const router = useRouter()
 
   useEffect(() => {
     loadData()
@@ -377,6 +380,24 @@ export function AdminDashboard({ currentUser }: AdminDashboardProps) {
           <CardContent>
             <div className="text-2xl font-bold">{stats.activeUsers}</div>
             <p className="text-xs text-muted-foreground">Active user accounts</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Manage Recipes</CardTitle>
+            <ChefHat className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.totalRecipes}</div>
+            <p className="text-xs text-muted-foreground">
+              <Button
+                variant="link"
+                className="p-0 h-auto text-xs"
+                onClick={() => router.push("/admin/recipes/manage")}
+              >
+                View all recipes →
+              </Button>
+            </p>
           </CardContent>
         </Card>
       </div>

@@ -9,6 +9,7 @@ import { Clock, Users, ChefHat, Eye, ArrowLeft } from "lucide-react"
 import Image from "next/image"
 import { useAuth } from "@/contexts/auth-context"
 import StarRating from "@/components/star-rating"
+import RecipeQuickActions from "@/components/recipe-quick-actions"
 
 interface Recipe {
   id: string
@@ -82,6 +83,11 @@ export default function RecipePage() {
     }
   }
 
+  const handleRecipeDeleted = () => {
+    // Recipe was deleted, redirect to homepage
+    router.push("/")
+  }
+
   const getCategoryColor = (category: string) => {
     const colors: Record<string, string> = {
       appetizer: "bg-green-100 text-green-800",
@@ -138,11 +144,23 @@ export default function RecipePage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-4xl mx-auto px-4 py-8">
-        {/* Back Button */}
-        <Button variant="ghost" onClick={() => router.back()} className="mb-6">
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back
-        </Button>
+        {/* Header with Back Button and Quick Actions */}
+        <div className="flex items-center justify-between mb-6">
+          <Button variant="ghost" onClick={() => router.back()}>
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back
+          </Button>
+
+          <RecipeQuickActions
+            recipe={{
+              id: recipe.id,
+              title: recipe.title,
+              author_username: recipe.author_username,
+              author_id: recipe.author_id,
+            }}
+            onRecipeDeleted={handleRecipeDeleted}
+          />
+        </div>
 
         {/* Recipe Header */}
         <Card className="mb-6">
