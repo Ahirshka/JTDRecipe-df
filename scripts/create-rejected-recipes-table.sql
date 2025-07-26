@@ -20,21 +20,17 @@ CREATE TABLE IF NOT EXISTS rejected_recipes (
     rejected_at TIMESTAMP DEFAULT NOW(),
     original_created_at TIMESTAMP NOT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
-    
-    -- Foreign key constraints
-    CONSTRAINT fk_rejected_recipes_author FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE,
-    CONSTRAINT fk_rejected_recipes_moderator FOREIGN KEY (rejected_by) REFERENCES users(id) ON DELETE SET NULL
+    updated_at TIMESTAMP DEFAULT NOW()
 );
 
--- Create indexes for better performance
-CREATE INDEX IF NOT EXISTS idx_rejected_recipes_author_id ON rejected_recipes(author_id);
+-- Add indexes for better performance
+CREATE INDEX IF NOT EXISTS idx_rejected_recipes_original_id ON rejected_recipes(original_recipe_id);
+CREATE INDEX IF NOT EXISTS idx_rejected_recipes_author ON rejected_recipes(author_id);
 CREATE INDEX IF NOT EXISTS idx_rejected_recipes_rejected_by ON rejected_recipes(rejected_by);
 CREATE INDEX IF NOT EXISTS idx_rejected_recipes_rejected_at ON rejected_recipes(rejected_at);
-CREATE INDEX IF NOT EXISTS idx_rejected_recipes_original_id ON rejected_recipes(original_recipe_id);
 
--- Add comments for documentation
-COMMENT ON TABLE rejected_recipes IS 'Stores rejected recipe submissions for audit trail and potential appeals';
-COMMENT ON COLUMN rejected_recipes.original_recipe_id IS 'The original ID from the recipes table before rejection';
-COMMENT ON COLUMN rejected_recipes.rejection_reason IS 'Reason provided by moderator for rejection';
-COMMENT ON COLUMN rejected_recipes.rejected_by IS 'ID of the moderator who rejected the recipe';
-COMMENT ON COLUMN rejected_recipes.original_created_at IS 'Original creation timestamp from recipes table';
+-- Add foreign key constraints if users table exists
+-- ALTER TABLE rejected_recipes ADD CONSTRAINT fk_rejected_recipes_author 
+--     FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE;
+-- ALTER TABLE rejected_recipes ADD CONSTRAINT fk_rejected_recipes_rejected_by 
+--     FOREIGN KEY (rejected_by) REFERENCES users(id) ON DELETE CASCADE;

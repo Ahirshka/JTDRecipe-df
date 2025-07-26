@@ -4,7 +4,7 @@ import { getCurrentUserFromRequest } from "@/lib/server-auth"
 
 export async function GET(request: NextRequest) {
   try {
-    console.log("🔄 [ADMIN-PENDING] Getting pending recipes")
+    console.log("🔄 [ADMIN-PENDING] Fetching pending recipes")
 
     // Check authentication
     const user = await getCurrentUserFromRequest(request)
@@ -21,89 +21,73 @@ export async function GET(request: NextRequest) {
 
     console.log("✅ [ADMIN-PENDING] Admin permissions verified for user:", user.username)
 
-    // Get pending recipes
+    // Fetch pending recipes
     const pendingRecipes = await sql`
       SELECT 
-        r.*,
-        u.username as author_username,
-        u.email as author_email
-      FROM recipes r
-      JOIN users u ON r.author_id = u.id
-      WHERE r.moderation_status = 'pending'
-      ORDER BY r.created_at ASC
+        id, title, description, author_id, author_username, category, difficulty,
+        prep_time_minutes, cook_time_minutes, servings, image_url, ingredients, 
+        instructions, tags, moderation_status, created_at, updated_at
+      FROM recipes 
+      WHERE moderation_status = 'pending'
+      ORDER BY created_at DESC
     `
 
     console.log(`📋 [ADMIN-PENDING] Found ${pendingRecipes.length} pending recipes`)
 
-    // Process recipes for frontend
-    const processedRecipes = pendingRecipes.map((recipe) => {
-      // Parse JSON fields safely
+    // Process recipes to ensure proper data format
+    const processedRecipes = pendingRecipes.map((recipe: any) => {
       let ingredients = []
       let instructions = []
       let tags = []
 
+      // Parse ingredients
       try {
-        ingredients = typeof recipe.ingredients === "string" ? JSON.parse(recipe.ingredients) : recipe.ingredients || []
-      } catch (e) {
-        console.warn(`Failed to parse ingredients for recipe ${recipe.id}:`, e)
+        if (typeof recipe.ingredients === "string") {
+          ingredients = JSON.parse(recipe.ingredients)
+        } else if (Array.isArray(recipe.ingredients)) {
+          ingredients = recipe.ingredients
+        }
+      } catch (error) {
+        console.warn(`Failed to parse ingredients for recipe ${recipe.id}:`, error)
         ingredients = []
       }
 
+      // Parse instructions
       try {
-        instructions =
-          typeof recipe.instructions === "string" ? JSON.parse(recipe.instructions) : recipe.instructions || []
-      } catch (e) {
-        console.warn(`Failed to parse instructions for recipe ${recipe.id}:`, e)
+        if (typeof recipe.instructions === "string") {
+          instructions = JSON.parse(recipe.instructions)
+        } else if (Array.isArray(recipe.instructions)) {
+          instructions = recipe.instructions
+        }
+      } catch (error) {
+        console.warn(`Failed to parse instructions for recipe ${recipe.id}:`, error)
         instructions = []
       }
 
+      // Parse tags
       try {
-        tags = typeof recipe.tags === "string" ? JSON.parse(recipe.tags) : recipe.tags || []
-      } catch (e) {
-        console.warn(`Failed to parse tags for recipe ${recipe.id}:`, e)
+        if (typeof recipe.tags === "string") {
+          tags = JSON.parse(recipe.tags)
+        } else if (Array.isArray(recipe.tags)) {
+          tags = recipe.tags
+        }
+      } catch (error) {
+        console.warn(`Failed to parse tags for recipe ${recipe.id}:`, error)
         tags = []
       }
 
       return {
-        id: recipe.id,
-        title: recipe.title,
-        description: recipe.description,
-        author_id: recipe.author_id,
-        author_username: recipe.author_username,
-        author_email: recipe.author_email,
-        category: recipe.category,
-        difficulty: recipe.difficulty,
-        prep_time_minutes: recipe.prep_time_minutes,
-        cook_time_minutes: recipe.cook_time_minutes,
-        servings: recipe.servings,
-        image_url: recipe.image_url,
+        ...recipe,
         ingredients,
         instructions,
         tags,
-        rating: recipe.rating || 0,
-        review_count: recipe.review_count || 0,
-        view_count: recipe.view_count || 0,
-        moderation_status: recipe.moderation_status,
-        moderation_notes: recipe.moderation_notes,
-        is_published: recipe.is_published,
-        created_at: recipe.created_at,
-        updated_at: recipe.updated_at,
+        prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
+        cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
+        servings: Number(recipe.servings) || 1,
       }
     })
 
-    // Log each recipe for debugging
-    processedRecipes.forEach((recipe, index) => {
-      console.log(`📋 [ADMIN-PENDING] Recipe ${index + 1}:`, {
-        id: recipe.id,
-        title: recipe.title,
-        author: recipe.author_username,
-        category: recipe.category,
-        difficulty: recipe.difficulty,
-        ingredients_count: recipe.ingredients.length,
-        instructions_count: recipe.instructions.length,
-        created_at: recipe.created_at,
-      })
-    })
+    console.log("✅ [ADMIN-PENDING] Recipes processed successfully")
 
     return NextResponse.json({
       success: true,
@@ -111,13 +95,14 @@ export async function GET(request: NextRequest) {
       count: processedRecipes.length,
     })
   } catch (error) {
-    console.error("❌ [ADMIN-PENDING] Error getting pending recipes:", error)
+    console.error("❌ [ADMIN-PENDING] Error fetching pending recipes:", error)
     return NextResponse.json(
       {
         success: false,
         error: "Internal server error",
         details: error instanceof Error ? error.message : "Unknown error",
         recipes: [],
+        count: 0,
       },
       { status: 500 },
     )

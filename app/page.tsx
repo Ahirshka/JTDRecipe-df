@@ -63,12 +63,15 @@ export default function HomePage() {
   useEffect(() => {
     const loadData = async () => {
       try {
+        console.log("🔄 [HOMEPAGE] Loading recipes from API...")
         const response = await fetch("/api/recipes?limit=50")
 
+        console.log("📡 [HOMEPAGE] Response status:", response.status)
+
         if (!response.ok) {
-          console.error(`HTTP error! status: ${response.status}`)
+          console.error(`❌ [HOMEPAGE] HTTP error! status: ${response.status}`)
           const errorText = await response.text()
-          console.error("Error response:", errorText)
+          console.error("❌ [HOMEPAGE] Error response:", errorText)
           setAllFeaturedRecipes({
             recent: [],
             rated: [],
@@ -83,7 +86,7 @@ export default function HomePage() {
         console.log("📋 [HOMEPAGE] API Response:", data)
 
         if (!data.success) {
-          console.error("API returned error:", data.error)
+          console.error("❌ [HOMEPAGE] API returned error:", data.error)
           setAllFeaturedRecipes({
             recent: [],
             rated: [],
@@ -96,6 +99,18 @@ export default function HomePage() {
 
         const allRecipes = Array.isArray(data.recipes) ? data.recipes : []
         console.log(`📋 [HOMEPAGE] Processing ${allRecipes.length} recipes`)
+
+        // Log each recipe for debugging
+        allRecipes.forEach((recipe: any, index: number) => {
+          console.log(`📋 [HOMEPAGE] Recipe ${index + 1}:`, {
+            id: recipe.id,
+            title: recipe.title,
+            author: recipe.author_username,
+            status: recipe.moderation_status,
+            published: recipe.is_published,
+            created: recipe.created_at,
+          })
+        })
 
         // Ensure all recipes have proper numeric values
         const processedRecipes = allRecipes.map((recipe: any) => ({
@@ -132,6 +147,13 @@ export default function HomePage() {
           })
           .slice(0, 12)
 
+        console.log("📊 [HOMEPAGE] Categorized recipes:", {
+          recent: recentlyAdded.length,
+          rated: topRated.length,
+          viewed: mostViewed.length,
+          trending: trending.length,
+        })
+
         // Store all categories of recipes
         const categorizedRecipes = {
           recent: recentlyAdded,
@@ -150,8 +172,10 @@ export default function HomePage() {
           { ...categories[2], count: mostViewed.length },
           { ...categories[3], count: trending.length },
         ])
+
+        console.log("✅ [HOMEPAGE] Homepage data loaded successfully")
       } catch (error) {
-        console.error("Error loading homepage data:", error)
+        console.error("❌ [HOMEPAGE] Error loading homepage data:", error)
         setAllFeaturedRecipes({
           recent: [],
           rated: [],

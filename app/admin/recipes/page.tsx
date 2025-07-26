@@ -23,8 +23,8 @@ interface Recipe {
   prep_time_minutes: number
   cook_time_minutes: number
   servings: number
-  ingredients: string
-  instructions: string
+  ingredients: string[]
+  instructions: string[]
   image_url?: string
   created_at: string
 }
@@ -95,6 +95,7 @@ export default function RecipeModerationPage() {
   }
 
   const handleModerate = (recipe: Recipe, action: "approve" | "reject") => {
+    console.log(`🔄 [ADMIN-UI] Opening ${action} dialog for recipe:`, recipe.id)
     setSelectedRecipe(recipe)
     setActionType(action)
     setModerationNotes("")
@@ -104,24 +105,30 @@ export default function RecipeModerationPage() {
   const handleEdit = (recipe: Recipe) => {
     setSelectedRecipe(recipe)
 
-    // Parse ingredients and instructions if they're JSON strings
-    let ingredients = recipe.ingredients
-    let instructions = recipe.instructions
+    // Parse ingredients and instructions if they're arrays
+    let ingredients = ""
+    let instructions = ""
 
-    try {
-      if (typeof recipe.ingredients === "string" && recipe.ingredients.startsWith("[")) {
-        ingredients = JSON.parse(recipe.ingredients).join("\n")
+    if (Array.isArray(recipe.ingredients)) {
+      ingredients = recipe.ingredients.join("\n")
+    } else if (typeof recipe.ingredients === "string") {
+      try {
+        const parsed = JSON.parse(recipe.ingredients)
+        ingredients = Array.isArray(parsed) ? parsed.join("\n") : recipe.ingredients
+      } catch {
+        ingredients = recipe.ingredients
       }
-    } catch (e) {
-      console.log("Could not parse ingredients as JSON, using as string")
     }
 
-    try {
-      if (typeof recipe.instructions === "string" && recipe.instructions.startsWith("[")) {
-        instructions = JSON.parse(recipe.instructions).join("\n")
+    if (Array.isArray(recipe.instructions)) {
+      instructions = recipe.instructions.join("\n")
+    } else if (typeof recipe.instructions === "string") {
+      try {
+        const parsed = JSON.parse(recipe.instructions)
+        instructions = Array.isArray(parsed) ? parsed.join("\n") : recipe.instructions
+      } catch {
+        instructions = recipe.instructions
       }
-    } catch (e) {
-      console.log("Could not parse instructions as JSON, using as string")
     }
 
     setEditForm({
@@ -156,7 +163,6 @@ export default function RecipeModerationPage() {
           recipeId: selectedRecipe.id,
           action: actionType,
           notes: moderationNotes,
-          edits: actionType === "approve" ? editForm : null,
         }),
       })
 
@@ -166,7 +172,8 @@ export default function RecipeModerationPage() {
       if (data.success) {
         setMessage(`Recipe ${actionType}ed successfully`)
         setModerationDialogOpen(false)
-        setEditDialogOpen(false)
+        setSelectedRecipe(null)
+        setModerationNotes("")
         loadPendingRecipes() // Reload recipes
       } else {
         setMessage(data.error || "Moderation failed")
@@ -209,6 +216,15 @@ export default function RecipeModerationPage() {
       if (data.success) {
         setMessage("Recipe approved with edits successfully")
         setEditDialogOpen(false)
+        setSelectedRecipe(null)
+        setEditForm({
+          title: "",
+          description: "",
+          ingredients: "",
+          instructions: "",
+          category: "",
+          difficulty: "",
+        })
         loadPendingRecipes()
       } else {
         setMessage(data.error || "Failed to save edits")
@@ -296,17 +312,17 @@ export default function RecipeModerationPage() {
                           <div>
                             <h4 className="font-medium mb-2">Ingredients:</h4>
                             <div className="text-sm text-gray-700 whitespace-pre-line bg-gray-50 p-3 rounded">
-                              {typeof recipe.ingredients === "string" && recipe.ingredients.startsWith("[")
-                                ? JSON.parse(recipe.ingredients).join("\n")
-                                : recipe.ingredients}
+                              {Array.isArray(recipe.ingredients)
+                                ? recipe.ingredients.join("\n")
+                                : recipe.ingredients || "No ingredients specified"}
                             </div>
                           </div>
                           <div>
                             <h4 className="font-medium mb-2">Instructions:</h4>
                             <div className="text-sm text-gray-700 whitespace-pre-line bg-gray-50 p-3 rounded">
-                              {typeof recipe.instructions === "string" && recipe.instructions.startsWith("[")
-                                ? JSON.parse(recipe.instructions).join("\n")
-                                : recipe.instructions}
+                              {Array.isArray(recipe.instructions)
+                                ? recipe.instructions.join("\n")
+                                : recipe.instructions || "No instructions specified"}
                             </div>
                           </div>
                         </div>
@@ -376,7 +392,14 @@ export default function RecipeModerationPage() {
             </div>
 
             <DialogFooter>
-              <Button variant="outline" onClick={() => setModerationDialogOpen(false)}>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setModerationDialogOpen(false)
+                  setSelectedRecipe(null)
+                  setModerationNotes("")
+                }}
+              >
                 Cancel
               </Button>
               <Button onClick={executeModeration} disabled={processing}>
@@ -468,7 +491,21 @@ export default function RecipeModerationPage() {
             </div>
 
             <DialogFooter>
-              <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setEditDialogOpen(false)
+                  setSelectedRecipe(null)
+                  setEditForm({
+                    title: "",
+                    description: "",
+                    ingredients: "",
+                    instructions: "",
+                    category: "",
+                    difficulty: "",
+                  })
+                }}
+              >
                 Cancel
               </Button>
               <Button onClick={saveEditsAndApprove} disabled={processing}>

@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
     const userStats = await sql`
       SELECT 
         COUNT(*) as total_users,
-        COUNT(*) FILTER (WHERE status = 'active') as active_users,
+        COUNT(*) FILTER (WHERE status = 'active' OR status IS NULL) as active_users,
         COUNT(*) FILTER (WHERE status = 'suspended') as suspended_users,
         COUNT(*) FILTER (WHERE status = 'banned') as banned_users
       FROM users
@@ -42,45 +42,58 @@ export async function GET(request: NextRequest) {
       FROM recipes
     `
 
-    // Get rejected recipes count
-    const rejectedStats = await sql`
-      SELECT COUNT(*) as rejected_count FROM rejected_recipes
-    `
-
-    // Get recent activity (optional - handle if comments table doesn't exist)
-    let commentStats = [{ total_comments: 0, flagged_comments: 0 }]
+    // Get rejected recipes count (handle if table doesn't exist)
+    let rejectedStats = [{ rejected_count: 0 }]
     try {
-      commentStats = await sql`
-        SELECT 
-          COUNT(*) as total_comments,
-          COUNT(*) FILTER (WHERE is_flagged = true) as flagged_comments
-        FROM comments
+      rejectedStats = await sql`
+        SELECT COUNT(*) as rejected_count FROM rejected_recipes
       `
     } catch (error) {
-      console.log("⚠️ [ADMIN-STATS] Comments table not found, using defaults")
+      console.log("⚠️ [ADMIN-STATS] Rejected recipes table not found, using default count")
     }
+
+    // Get recent activity
+    const recentActivity = await sql`
+      SELECT 
+        'recipe_submitted' as activity_type,
+        r.title as description,
+        r.created_at as timestamp,
+        u.username as user_name,
+        r.moderation_status
+      FROM recipes r
+      JOIN users u ON r.author_id = u.id
+      WHERE r.created_at > NOW() - INTERVAL '7 days'
+      ORDER BY r.created_at DESC
+      LIMIT 10
+    `
 
     const stats = {
-      users: {
-        total: Number(userStats[0]?.total_users || 0),
-        active: Number(userStats[0]?.active_users || 0),
-        suspended: Number(userStats[0]?.suspended_users || 0),
-        banned: Number(userStats[0]?.banned_users || 0),
-      },
-      recipes: {
-        total: Number(recipeStats[0]?.total_recipes || 0),
-        pending: Number(recipeStats[0]?.pending_recipes || 0),
-        approved: Number(recipeStats[0]?.approved_recipes || 0),
-        rejected: Number(recipeStats[0]?.rejected_recipes || 0) + Number(rejectedStats[0]?.rejected_count || 0),
-        published: Number(recipeStats[0]?.published_recipes || 0),
-      },
-      comments: {
-        total: Number(commentStats[0]?.total_comments || 0),
-        flagged: Number(commentStats[0]?.flagged_comments || 0),
-      },
+      totalUsers: Number(userStats[0]?.total_users || 0),
+      activeUsers: Number(userStats[0]?.active_users || 0),
+      suspendedUsers: Number(userStats[0]?.suspended_users || 0),
+      bannedUsers: Number(userStats[0]?.banned_users || 0),
+      totalRecipes: Number(recipeStats[0]?.total_recipes || 0),
+      pendingRecipes: Number(recipeStats[0]?.pending_recipes || 0),
+      approvedRecipes: Number(recipeStats[0]?.approved_recipes || 0),
+      rejectedRecipes: Number(recipeStats[0]?.rejected_recipes || 0) + Number(rejectedStats[0]?.rejected_count || 0),
+      publishedRecipes: Number(recipeStats[0]?.published_recipes || 0),
+      recentActivity: recentActivity.map((activity: any) => ({
+        type: activity.activity_type,
+        description: activity.description,
+        timestamp: activity.timestamp,
+        userName: activity.user_name,
+        status: activity.moderation_status,
+      })),
     }
 
-    console.log("📊 [ADMIN-STATS] Statistics compiled:", stats)
+    console.log("📊 [ADMIN-STATS] Statistics compiled:", {
+      totalUsers: stats.totalUsers,
+      totalRecipes: stats.totalRecipes,
+      pendingRecipes: stats.pendingRecipes,
+      approvedRecipes: stats.approvedRecipes,
+      rejectedRecipes: stats.rejectedRecipes,
+      publishedRecipes: stats.publishedRecipes,
+    })
 
     return NextResponse.json({
       success: true,
@@ -93,6 +106,18 @@ export async function GET(request: NextRequest) {
         success: false,
         error: "Internal server error",
         details: error instanceof Error ? error.message : "Unknown error",
+        stats: {
+          totalUsers: 0,
+          activeUsers: 0,
+          suspendedUsers: 0,
+          bannedUsers: 0,
+          totalRecipes: 0,
+          pendingRecipes: 0,
+          approvedRecipes: 0,
+          rejectedRecipes: 0,
+          publishedRecipes: 0,
+          recentActivity: [],
+        },
       },
       { status: 500 },
     )
