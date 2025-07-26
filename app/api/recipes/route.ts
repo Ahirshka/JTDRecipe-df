@@ -32,7 +32,25 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Build the query - only get approved and published recipes
+    // First, let's check what recipes exist in the database
+    const allRecipesCheck = await sql`
+      SELECT 
+        id, title, moderation_status, is_published, created_at, updated_at
+      FROM recipes 
+      ORDER BY created_at DESC
+      LIMIT 10
+    `
+    console.log("🔍 [RECIPES-API] Sample recipes in database:", allRecipesCheck)
+
+    // Check specifically for approved and published recipes
+    const approvedCheck = await sql`
+      SELECT COUNT(*) as count
+      FROM recipes 
+      WHERE moderation_status = 'approved' AND is_published = true
+    `
+    console.log("📊 [RECIPES-API] Approved & published recipe count:", approvedCheck[0]?.count || 0)
+
+    // Build the main query - get approved and published recipes
     let baseQuery = `
       SELECT 
         id, title, description, author_id, author_username, category, difficulty,
@@ -81,11 +99,25 @@ export async function GET(request: NextRequest) {
           LIMIT ${limit}
         `
       } else {
-        // Use unsafe query for dynamic parameters
+        // Use parameterized query for search/category filters
         recipes = await sql.unsafe(baseQuery, queryParams)
       }
 
       console.log(`✅ [RECIPES-API] Query executed successfully, found ${recipes.length} recipes`)
+
+      // Log first few recipes for debugging
+      if (recipes.length > 0) {
+        console.log(
+          "📋 [RECIPES-API] Sample retrieved recipes:",
+          recipes.slice(0, 3).map((r) => ({
+            id: r.id,
+            title: r.title,
+            status: r.moderation_status,
+            published: r.is_published,
+            author: r.author_username,
+          })),
+        )
+      }
     } catch (queryError) {
       console.error("❌ [RECIPES-API] Query execution failed:", queryError)
       return NextResponse.json(
@@ -110,17 +142,6 @@ export async function GET(request: NextRequest) {
         const approvalDate = updatedDate > createdDate ? updatedDate : createdDate
         const daysSinceApproval = Math.floor((Date.now() - approvalDate.getTime()) / (1000 * 60 * 60 * 24))
         const isRecentlyApproved = daysSinceApproval <= 30
-
-        console.log(`📋 [RECIPES-API] Processing recipe "${recipe.title}":`, {
-          id: recipe.id,
-          author: recipe.author_username,
-          status: recipe.moderation_status,
-          published: recipe.is_published,
-          created: recipe.created_at,
-          updated: recipe.updated_at,
-          daysSinceApproval,
-          isRecentlyApproved,
-        })
 
         return {
           id: recipe.id || "",
@@ -174,16 +195,29 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    // Categorize recipes for homepage sections
+    const recentlyApproved = processedRecipes.filter((recipe) => recipe.is_recently_approved)
+    const topRated = processedRecipes.filter((recipe) => recipe.rating >= 4.0).slice(0, 8)
+    const allRecipes = processedRecipes
+
     console.log(`✅ [RECIPES-API] Successfully processed ${processedRecipes.length} recipes`)
+    console.log(
+      `📊 [RECIPES-API] Categories: ${recentlyApproved.length} recent, ${topRated.length} top-rated, ${allRecipes.length} total`,
+    )
 
     return NextResponse.json({
       success: true,
-      recipes: processedRecipes,
+      recipes: allRecipes, // For backward compatibility
+      recentlyApproved,
+      topRated,
+      allRecipes,
       count: processedRecipes.length,
       debug: {
         query_params: { limit, search, category },
         total_found: recipes.length,
-        recently_approved_count: processedRecipes.filter((r) => r.is_recently_approved).length,
+        recently_approved_count: recentlyApproved.length,
+        top_rated_count: topRated.length,
+        database_approved_count: approvedCheck[0]?.count || 0,
         timestamp: new Date().toISOString(),
       },
     })
@@ -203,6 +237,9 @@ export async function GET(request: NextRequest) {
         error: "Internal server error",
         details: error instanceof Error ? error.message : "Unknown error occurred",
         recipes: [],
+        recentlyApproved: [],
+        topRated: [],
+        allRecipes: [],
         count: 0,
         debug: {
           timestamp: new Date().toISOString(),
