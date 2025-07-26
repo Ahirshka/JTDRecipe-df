@@ -4,398 +4,366 @@ import { getCurrentUserFromRequest } from "@/lib/server-auth"
 
 export async function POST(request: NextRequest) {
   try {
-    console.log("🔄 [ADMIN-MODERATE] Recipe moderation started")
+    console.log("🔄 [MODERATE-API] Starting recipe moderation")
 
-    // Check authentication
+    // Get user from session
     const user = await getCurrentUserFromRequest(request)
     if (!user) {
-      console.log("❌ [ADMIN-MODERATE] No authenticated user found")
-      return NextResponse.json({ success: false, error: "Not authenticated" }, { status: 401 })
+      console.log("❌ [MODERATE-API] No authenticated user found")
+      return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
     }
 
-    // Check if user is admin/owner
-    if (user.role !== "admin" && user.role !== "owner") {
-      console.log("❌ [ADMIN-MODERATE] User lacks admin permissions:", { role: user.role })
-      return NextResponse.json({ success: false, error: "Insufficient permissions" }, { status: 403 })
+    // Check if user has admin privileges
+    if (user.role !== "owner" && user.role !== "admin") {
+      console.log("❌ [MODERATE-API] User lacks admin privileges:", user.role)
+      return NextResponse.json({ success: false, error: "Admin privileges required" }, { status: 403 })
     }
 
-    console.log("✅ [ADMIN-MODERATE] Admin permissions verified for user:", user.username)
+    console.log("✅ [MODERATE-API] User authenticated:", user.username, "Role:", user.role)
 
     // Parse request body
     const body = await request.json()
-    const { recipeId, action, notes, edits } = body
+    const { recipeId, action, notes, recipeData } = body
 
-    console.log("📝 [ADMIN-MODERATE] Moderation request:", {
+    console.log("📝 [MODERATE-API] Moderation request:", {
       recipeId,
       action,
       hasNotes: !!notes,
-      hasEdits: !!edits,
+      hasRecipeData: !!recipeData,
     })
 
     if (!recipeId || !action) {
-      return NextResponse.json({ success: false, error: "Recipe ID and action are required" }, { status: 400 })
+      return NextResponse.json({ success: false, error: "Missing recipeId or action" }, { status: 400 })
     }
 
-    if (!["approve", "reject"].includes(action)) {
-      return NextResponse.json({ success: false, error: "Action must be 'approve' or 'reject'" }, { status: 400 })
-    }
-
-    // Check if recipe exists and get current data
-    const existingRecipe = await sql`
-      SELECT * FROM recipes WHERE id = ${recipeId}
-    `
-
-    if (existingRecipe.length === 0) {
-      console.log("❌ [ADMIN-MODERATE] Recipe not found:", recipeId)
-      return NextResponse.json({ success: false, error: "Recipe not found" }, { status: 404 })
-    }
-
-    const recipe = existingRecipe[0]
-    console.log("✅ [ADMIN-MODERATE] Recipe found:", {
-      id: recipe.id,
-      title: recipe.title,
-      currentStatus: recipe.moderation_status,
-    })
-
-    if (action === "reject") {
-      console.log("🔄 [ADMIN-MODERATE] Processing rejection")
+    if (action === "approve") {
+      console.log("✅ [MODERATE-API] Processing approval for recipe:", recipeId)
 
       try {
-        // First, ensure the rejected_recipes table exists
-        console.log("🔄 [ADMIN-MODERATE] Creating rejected_recipes table if not exists")
+        // If we have updated recipe data, use it; otherwise, get existing data
+        let finalRecipeData = recipeData
+
+        if (!finalRecipeData) {
+          console.log("📋 [MODERATE-API] No recipe data provided, fetching existing recipe")
+          const existingRecipe = await sql`
+            SELECT * FROM recipes WHERE id = ${recipeId}
+          `
+
+          if (existingRecipe.length === 0) {
+            console.log("❌ [MODERATE-API] Recipe not found:", recipeId)
+            return NextResponse.json({ success: false, error: "Recipe not found" }, { status: 404 })
+          }
+
+          finalRecipeData = existingRecipe[0]
+          console.log("📋 [MODERATE-API] Using existing recipe data")
+        }
+
+        // Ensure all required fields have valid values
+        const safeData = {
+          title: finalRecipeData.title || "Untitled Recipe",
+          description: finalRecipeData.description || "",
+          category: finalRecipeData.category || "Other",
+          difficulty: finalRecipeData.difficulty || "Easy",
+          prep_time_minutes: Number(finalRecipeData.prep_time_minutes) || 0,
+          cook_time_minutes: Number(finalRecipeData.cook_time_minutes) || 0,
+          servings: Number(finalRecipeData.servings) || 1,
+          image_url: finalRecipeData.image_url || "",
+        }
+
+        // Handle ingredients - ensure it's a valid JSON array
+        let ingredients = []
+        try {
+          if (typeof finalRecipeData.ingredients === "string") {
+            ingredients = JSON.parse(finalRecipeData.ingredients)
+          } else if (Array.isArray(finalRecipeData.ingredients)) {
+            ingredients = finalRecipeData.ingredients
+          }
+        } catch (e) {
+          console.log("⚠️ [MODERATE-API] Invalid ingredients data, using default")
+          ingredients = ["No ingredients specified"]
+        }
+
+        if (!Array.isArray(ingredients) || ingredients.length === 0) {
+          ingredients = ["No ingredients specified"]
+        }
+
+        // Handle instructions - ensure it's a valid JSON array
+        let instructions = []
+        try {
+          if (typeof finalRecipeData.instructions === "string") {
+            instructions = JSON.parse(finalRecipeData.instructions)
+          } else if (Array.isArray(finalRecipeData.instructions)) {
+            instructions = finalRecipeData.instructions
+          }
+        } catch (e) {
+          console.log("⚠️ [MODERATE-API] Invalid instructions data, using default")
+          instructions = ["No instructions specified"]
+        }
+
+        if (!Array.isArray(instructions) || instructions.length === 0) {
+          instructions = ["No instructions specified"]
+        }
+
+        // Handle tags
+        let tags = []
+        try {
+          if (typeof finalRecipeData.tags === "string") {
+            tags = JSON.parse(finalRecipeData.tags)
+          } else if (Array.isArray(finalRecipeData.tags)) {
+            tags = finalRecipeData.tags
+          }
+        } catch (e) {
+          console.log("⚠️ [MODERATE-API] Invalid tags data, using empty array")
+          tags = []
+        }
+
+        if (!Array.isArray(tags)) {
+          tags = []
+        }
+
+        console.log("📝 [MODERATE-API] Processed recipe data:", {
+          title: safeData.title,
+          category: safeData.category,
+          difficulty: safeData.difficulty,
+          ingredientsCount: ingredients.length,
+          instructionsCount: instructions.length,
+          tagsCount: tags.length,
+        })
+
+        // Update the recipe with approval status and ensure it's published
+        const updateResult = await sql`
+          UPDATE recipes 
+          SET 
+            title = ${safeData.title},
+            description = ${safeData.description},
+            category = ${safeData.category},
+            difficulty = ${safeData.difficulty},
+            prep_time_minutes = ${safeData.prep_time_minutes},
+            cook_time_minutes = ${safeData.cook_time_minutes},
+            servings = ${safeData.servings},
+            image_url = ${safeData.image_url},
+            ingredients = ${JSON.stringify(ingredients)}::jsonb,
+            instructions = ${JSON.stringify(instructions)}::jsonb,
+            tags = ${JSON.stringify(tags)}::jsonb,
+            moderation_status = 'approved',
+            is_published = true,
+            moderation_notes = ${notes || null},
+            updated_at = NOW()
+          WHERE id = ${recipeId}
+          RETURNING id, title, moderation_status, is_published, created_at, updated_at
+        `
+
+        if (updateResult.length === 0) {
+          console.log("❌ [MODERATE-API] Failed to update recipe:", recipeId)
+          return NextResponse.json({ success: false, error: "Failed to update recipe" }, { status: 500 })
+        }
+
+        const updatedRecipe = updateResult[0]
+        console.log("✅ [MODERATE-API] Recipe approved successfully:", {
+          id: updatedRecipe.id,
+          title: updatedRecipe.title,
+          status: updatedRecipe.moderation_status,
+          published: updatedRecipe.is_published,
+          updated_at: updatedRecipe.updated_at,
+        })
+
+        // Verify the recipe is now published
+        const verifyResult = await sql`
+          SELECT id, title, moderation_status, is_published, created_at, updated_at
+          FROM recipes 
+          WHERE id = ${recipeId} AND moderation_status = 'approved' AND is_published = true
+        `
+
+        if (verifyResult.length === 0) {
+          console.log("❌ [MODERATE-API] Recipe approval verification failed")
+          return NextResponse.json({ success: false, error: "Recipe approval verification failed" }, { status: 500 })
+        }
+
+        console.log("✅ [MODERATE-API] Recipe approval verified - recipe is now published")
+
+        return NextResponse.json({
+          success: true,
+          message: `Recipe "${updatedRecipe.title}" has been approved and published`,
+          recipe: updatedRecipe,
+        })
+      } catch (error) {
+        console.error("❌ [MODERATE-API] Error approving recipe:", error)
+        console.error("❌ [MODERATE-API] Error stack:", error instanceof Error ? error.stack : "No stack trace")
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Failed to approve recipe",
+            details: error instanceof Error ? error.message : "Unknown error",
+          },
+          { status: 500 },
+        )
+      }
+    } else if (action === "reject") {
+      console.log("❌ [MODERATE-API] Processing rejection for recipe:", recipeId)
+
+      try {
+        // First, get the recipe data to store in rejected_recipes
+        const recipeToReject = await sql`
+          SELECT * FROM recipes WHERE id = ${recipeId}
+        `
+
+        if (recipeToReject.length === 0) {
+          console.log("❌ [MODERATE-API] Recipe not found for rejection:", recipeId)
+          return NextResponse.json({ success: false, error: "Recipe not found" }, { status: 404 })
+        }
+
+        const recipe = recipeToReject[0]
+        console.log("📋 [MODERATE-API] Recipe found for rejection:", recipe.title)
+
+        // Ensure rejected_recipes table exists
         await sql`
           CREATE TABLE IF NOT EXISTS rejected_recipes (
-            id SERIAL PRIMARY KEY,
-            original_recipe_id VARCHAR(255) NOT NULL,
+            id VARCHAR(50) PRIMARY KEY,
+            original_recipe_id VARCHAR(50) NOT NULL,
             title VARCHAR(255) NOT NULL,
-            description TEXT,
+            description TEXT DEFAULT '',
             author_id INTEGER NOT NULL,
-            author_username VARCHAR(100) NOT NULL,
-            category VARCHAR(100) NOT NULL,
-            difficulty VARCHAR(50) NOT NULL,
-            prep_time_minutes INTEGER DEFAULT 0,
-            cook_time_minutes INTEGER DEFAULT 0,
-            servings INTEGER DEFAULT 1,
-            image_url TEXT,
+            author_username VARCHAR(50) NOT NULL,
+            category VARCHAR(50) NOT NULL DEFAULT 'Other',
+            difficulty VARCHAR(20) NOT NULL DEFAULT 'Easy',
+            prep_time_minutes INTEGER NOT NULL DEFAULT 0,
+            cook_time_minutes INTEGER NOT NULL DEFAULT 0,
+            servings INTEGER NOT NULL DEFAULT 1,
+            image_url TEXT DEFAULT '',
             ingredients JSONB NOT NULL DEFAULT '[]'::jsonb,
             instructions JSONB NOT NULL DEFAULT '[]'::jsonb,
             tags JSONB DEFAULT '[]'::jsonb,
             rejection_reason TEXT,
             rejected_by INTEGER NOT NULL,
-            rejected_at TIMESTAMP DEFAULT NOW(),
+            rejected_at TIMESTAMP NOT NULL DEFAULT NOW(),
             original_created_at TIMESTAMP NOT NULL,
-            created_at TIMESTAMP DEFAULT NOW()
-          )
+            UNIQUE(original_recipe_id)
+          );
         `
 
-        console.log("✅ [ADMIN-MODERATE] Table creation completed")
-
-        // Prepare ingredients and instructions as JSONB
-        let ingredientsJson = "[]"
-        let instructionsJson = "[]"
+        // Process the recipe data safely
+        let ingredients = []
+        let instructions = []
+        let tags = []
 
         try {
-          if (recipe.ingredients) {
-            if (typeof recipe.ingredients === "string") {
-              // Try to parse if it's a JSON string
-              try {
-                const parsed = JSON.parse(recipe.ingredients)
-                ingredientsJson = JSON.stringify(Array.isArray(parsed) ? parsed : [recipe.ingredients])
-              } catch {
-                // If parsing fails, treat as single ingredient
-                ingredientsJson = JSON.stringify([recipe.ingredients])
-              }
-            } else if (Array.isArray(recipe.ingredients)) {
-              ingredientsJson = JSON.stringify(recipe.ingredients)
-            } else {
-              ingredientsJson = JSON.stringify([String(recipe.ingredients)])
-            }
+          if (typeof recipe.ingredients === "string") {
+            ingredients = JSON.parse(recipe.ingredients)
+          } else if (Array.isArray(recipe.ingredients)) {
+            ingredients = recipe.ingredients
+          } else if (recipe.ingredients && typeof recipe.ingredients === "object") {
+            ingredients = recipe.ingredients
           }
-        } catch (error) {
-          console.log("⚠️ [ADMIN-MODERATE] Error processing ingredients, using empty array:", error)
-          ingredientsJson = "[]"
+        } catch (e) {
+          console.log("⚠️ [MODERATE-API] Error parsing ingredients, using default")
+          ingredients = ["No ingredients specified"]
         }
 
         try {
-          if (recipe.instructions) {
-            if (typeof recipe.instructions === "string") {
-              // Try to parse if it's a JSON string
-              try {
-                const parsed = JSON.parse(recipe.instructions)
-                instructionsJson = JSON.stringify(Array.isArray(parsed) ? parsed : [recipe.instructions])
-              } catch {
-                // If parsing fails, treat as single instruction
-                instructionsJson = JSON.stringify([recipe.instructions])
-              }
-            } else if (Array.isArray(recipe.instructions)) {
-              instructionsJson = JSON.stringify(recipe.instructions)
-            } else {
-              instructionsJson = JSON.stringify([String(recipe.instructions)])
-            }
+          if (typeof recipe.instructions === "string") {
+            instructions = JSON.parse(recipe.instructions)
+          } else if (Array.isArray(recipe.instructions)) {
+            instructions = recipe.instructions
+          } else if (recipe.instructions && typeof recipe.instructions === "object") {
+            instructions = recipe.instructions
           }
-        } catch (error) {
-          console.log("⚠️ [ADMIN-MODERATE] Error processing instructions, using empty array:", error)
-          instructionsJson = "[]"
+        } catch (e) {
+          console.log("⚠️ [MODERATE-API] Error parsing instructions, using default")
+          instructions = ["No instructions specified"]
         }
 
-        console.log("📝 [ADMIN-MODERATE] Prepared data for rejection:", {
-          ingredientsJson: ingredientsJson.substring(0, 100) + "...",
-          instructionsJson: instructionsJson.substring(0, 100) + "...",
+        try {
+          if (typeof recipe.tags === "string") {
+            tags = JSON.parse(recipe.tags)
+          } else if (Array.isArray(recipe.tags)) {
+            tags = recipe.tags
+          } else if (recipe.tags && typeof recipe.tags === "object") {
+            tags = recipe.tags
+          }
+        } catch (e) {
+          console.log("⚠️ [MODERATE-API] Error parsing tags, using empty array")
+          tags = []
+        }
+
+        // Ensure arrays are valid
+        if (!Array.isArray(ingredients)) ingredients = ["No ingredients specified"]
+        if (!Array.isArray(instructions)) instructions = ["No instructions specified"]
+        if (!Array.isArray(tags)) tags = []
+
+        console.log("📝 [MODERATE-API] Processed rejection data:", {
+          title: recipe.title,
+          ingredientsCount: ingredients.length,
+          instructionsCount: instructions.length,
+          tagsCount: tags.length,
         })
 
-        // Insert into rejected_recipes table
-        console.log("🔄 [ADMIN-MODERATE] Inserting into rejected_recipes table")
-        const insertResult = await sql`
+        // Store in rejected_recipes table
+        const rejectedId = `rejected_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
+
+        await sql`
           INSERT INTO rejected_recipes (
-            original_recipe_id, title, description, author_id, author_username,
+            id, original_recipe_id, title, description, author_id, author_username,
             category, difficulty, prep_time_minutes, cook_time_minutes, servings,
-            image_url, ingredients, instructions, tags, rejection_reason,
-            rejected_by, rejected_at, original_created_at
+            image_url, ingredients, instructions, tags, rejection_reason, rejected_by,
+            rejected_at, original_created_at
+          ) VALUES (
+            ${rejectedId}, ${recipe.id}, ${recipe.title || "Untitled Recipe"}, 
+            ${recipe.description || ""}, ${recipe.author_id}, ${recipe.author_username},
+            ${recipe.category || "Other"}, ${recipe.difficulty || "Easy"}, 
+            ${Number(recipe.prep_time_minutes) || 0}, ${Number(recipe.cook_time_minutes) || 0}, 
+            ${Number(recipe.servings) || 1}, ${recipe.image_url || ""}, 
+            ${JSON.stringify(ingredients)}::jsonb, ${JSON.stringify(instructions)}::jsonb, 
+            ${JSON.stringify(tags)}::jsonb, ${notes || "No reason provided"}, ${user.id}, 
+            NOW(), ${recipe.created_at}
           )
-          VALUES (
-            ${recipe.id}, 
-            ${recipe.title || "Untitled Recipe"}, 
-            ${recipe.description || ""}, 
-            ${recipe.author_id || 0}, 
-            ${recipe.author_username || "Unknown"}, 
-            ${recipe.category || "Other"}, 
-            ${recipe.difficulty || "Easy"},
-            ${recipe.prep_time_minutes || 0}, 
-            ${recipe.cook_time_minutes || 0}, 
-            ${recipe.servings || 1},
-            ${recipe.image_url || ""}, 
-            ${ingredientsJson}::jsonb, 
-            ${instructionsJson}::jsonb, 
-            ${recipe.tags || "[]"}::jsonb, 
-            ${notes || "No reason provided"}, 
-            ${user.id}, 
-            NOW(), 
-            ${recipe.created_at || "NOW()"}
-          )
-          RETURNING id
+          ON CONFLICT (original_recipe_id) DO UPDATE SET
+            rejection_reason = ${notes || "No reason provided"},
+            rejected_by = ${user.id},
+            rejected_at = NOW()
         `
 
-        console.log("✅ [ADMIN-MODERATE] Recipe inserted into rejected_recipes table:", insertResult[0]?.id)
+        console.log("✅ [MODERATE-API] Recipe data stored in rejected_recipes table")
 
-        // Delete from recipes table
-        console.log("🔄 [ADMIN-MODERATE] Deleting from recipes table")
+        // Remove from main recipes table
         const deleteResult = await sql`
           DELETE FROM recipes WHERE id = ${recipeId}
-          RETURNING id
+          RETURNING id, title
         `
 
-        console.log("✅ [ADMIN-MODERATE] Recipe deleted from recipes table:", deleteResult[0]?.id)
+        if (deleteResult.length === 0) {
+          console.log("❌ [MODERATE-API] Failed to delete recipe from main table")
+          return NextResponse.json({ success: false, error: "Failed to delete recipe" }, { status: 500 })
+        }
+
+        console.log("✅ [MODERATE-API] Recipe rejected and removed from main table:", deleteResult[0].title)
 
         return NextResponse.json({
           success: true,
-          message: `Recipe "${recipe.title}" has been rejected and archived`,
+          message: `Recipe "${deleteResult[0].title}" has been rejected`,
         })
-      } catch (rejectionError) {
-        console.error("❌ [ADMIN-MODERATE] Error during rejection process:", rejectionError)
-
-        // Provide more detailed error information
-        let errorMessage = "Failed to reject recipe"
-        if (rejectionError instanceof Error) {
-          errorMessage += `: ${rejectionError.message}`
-          console.error("❌ [ADMIN-MODERATE] Error stack:", rejectionError.stack)
-        }
-
+      } catch (error) {
+        console.error("❌ [MODERATE-API] Error rejecting recipe:", error)
+        console.error("❌ [MODERATE-API] Error stack:", error instanceof Error ? error.stack : "No stack trace")
         return NextResponse.json(
           {
             success: false,
-            error: errorMessage,
-            details: rejectionError instanceof Error ? rejectionError.message : "Unknown error",
+            error: "Failed to reject recipe",
+            details: error instanceof Error ? error.message : "Unknown error",
           },
           { status: 500 },
         )
       }
-    }
-
-    // Handle approval
-    console.log("🔄 [ADMIN-MODERATE] Processing approval")
-
-    try {
-      // Prepare moderation data
-      const moderationStatus = "approved"
-      const isPublished = true
-      const moderationNotes = notes || null
-
-      // Start with base update data - ensure we have valid data
-      let updateTitle = recipe.title || "Untitled Recipe"
-      let updateDescription = recipe.description || ""
-      let updateCategory = recipe.category || "Other"
-      let updateDifficulty = recipe.difficulty || "Easy"
-      let updateIngredients = recipe.ingredients
-      let updateInstructions = recipe.instructions
-
-      // Ensure ingredients and instructions are properly formatted JSON
-      try {
-        if (typeof updateIngredients === "string") {
-          try {
-            const parsed = JSON.parse(updateIngredients)
-            updateIngredients = JSON.stringify(Array.isArray(parsed) ? parsed : [updateIngredients])
-          } catch {
-            updateIngredients = JSON.stringify([updateIngredients])
-          }
-        } else if (Array.isArray(updateIngredients)) {
-          updateIngredients = JSON.stringify(updateIngredients)
-        } else {
-          updateIngredients = JSON.stringify(updateIngredients ? [String(updateIngredients)] : [])
-        }
-      } catch (error) {
-        console.log("⚠️ [ADMIN-MODERATE] Error processing ingredients for approval, using empty array:", error)
-        updateIngredients = "[]"
-      }
-
-      try {
-        if (typeof updateInstructions === "string") {
-          try {
-            const parsed = JSON.parse(updateInstructions)
-            updateInstructions = JSON.stringify(Array.isArray(parsed) ? parsed : [updateInstructions])
-          } catch {
-            updateInstructions = JSON.stringify([updateInstructions])
-          }
-        } else if (Array.isArray(updateInstructions)) {
-          updateInstructions = JSON.stringify(updateInstructions)
-        } else {
-          updateInstructions = JSON.stringify(updateInstructions ? [String(updateInstructions)] : [])
-        }
-      } catch (error) {
-        console.log("⚠️ [ADMIN-MODERATE] Error processing instructions for approval, using empty array:", error)
-        updateInstructions = "[]"
-      }
-
-      // If approving with edits, apply the edits
-      if (edits) {
-        console.log("📝 [ADMIN-MODERATE] Applying edits to recipe")
-
-        if (edits.title && edits.title.trim()) updateTitle = edits.title.trim()
-        if (edits.description !== undefined) updateDescription = edits.description.trim()
-        if (edits.category && edits.category.trim()) updateCategory = edits.category.trim()
-        if (edits.difficulty && edits.difficulty.trim()) updateDifficulty = edits.difficulty.trim()
-
-        // Handle ingredients and instructions from edits
-        if (edits.ingredients) {
-          const ingredientsArray =
-            typeof edits.ingredients === "string"
-              ? edits.ingredients.split("\n").filter((i) => i.trim())
-              : Array.isArray(edits.ingredients)
-                ? edits.ingredients
-                : []
-          updateIngredients = JSON.stringify(ingredientsArray)
-        }
-
-        if (edits.instructions) {
-          const instructionsArray =
-            typeof edits.instructions === "string"
-              ? edits.instructions.split("\n").filter((i) => i.trim())
-              : Array.isArray(edits.instructions)
-                ? edits.instructions
-                : []
-          updateInstructions = JSON.stringify(instructionsArray)
-        }
-
-        console.log("📝 [ADMIN-MODERATE] Edit data prepared:", {
-          title: updateTitle,
-          category: updateCategory,
-          difficulty: updateDifficulty,
-          ingredientsLength: JSON.parse(updateIngredients).length,
-          instructionsLength: JSON.parse(updateInstructions).length,
-        })
-      }
-
-      console.log("📝 [ADMIN-MODERATE] Final approval data:", {
-        title: updateTitle,
-        category: updateCategory,
-        difficulty: updateDifficulty,
-        status: moderationStatus,
-        published: isPublished,
-        hasNotes: !!moderationNotes,
-      })
-
-      // Update recipe with proper JSONB casting
-      const result = await sql`
-        UPDATE recipes 
-        SET 
-          moderation_status = ${moderationStatus},
-          moderation_notes = ${moderationNotes},
-          is_published = ${isPublished},
-          title = ${updateTitle},
-          description = ${updateDescription},
-          category = ${updateCategory},
-          difficulty = ${updateDifficulty},
-          ingredients = ${updateIngredients}::jsonb,
-          instructions = ${updateInstructions}::jsonb,
-          updated_at = NOW()
-        WHERE id = ${recipeId}
-        RETURNING id, title, moderation_status, is_published, updated_at
-      `
-
-      if (result.length === 0) {
-        console.log("❌ [ADMIN-MODERATE] Failed to update recipe - no rows affected")
-        return NextResponse.json(
-          { success: false, error: "Failed to update recipe - recipe may not exist" },
-          { status: 500 },
-        )
-      }
-
-      const updatedRecipe = result[0]
-      console.log("✅ [ADMIN-MODERATE] Recipe approved successfully:", {
-        id: updatedRecipe.id,
-        title: updatedRecipe.title,
-        status: updatedRecipe.moderation_status,
-        published: updatedRecipe.is_published,
-        updated: updatedRecipe.updated_at,
-      })
-
-      // Verify the update worked by checking the database
-      const verifyResult = await sql`
-        SELECT id, title, moderation_status, is_published, updated_at FROM recipes WHERE id = ${recipeId}
-      `
-
-      if (verifyResult.length === 0) {
-        console.log("❌ [ADMIN-MODERATE] Recipe not found after update")
-        return NextResponse.json({ success: false, error: "Recipe disappeared after update" }, { status: 500 })
-      }
-
-      console.log("🔍 [ADMIN-MODERATE] Final verification:", verifyResult[0])
-
-      return NextResponse.json({
-        success: true,
-        message: `Recipe "${updatedRecipe.title}" has been approved and published successfully`,
-        recipe: updatedRecipe,
-      })
-    } catch (approvalError) {
-      console.error("❌ [ADMIN-MODERATE] Error during approval process:", approvalError)
-
-      let errorMessage = "Failed to approve recipe"
-      if (approvalError instanceof Error) {
-        errorMessage += `: ${approvalError.message}`
-        console.error("❌ [ADMIN-MODERATE] Approval error stack:", approvalError.stack)
-      }
-
-      return NextResponse.json(
-        {
-          success: false,
-          error: errorMessage,
-          details: approvalError instanceof Error ? approvalError.message : "Unknown error",
-        },
-        { status: 500 },
-      )
+    } else {
+      console.log("❌ [MODERATE-API] Invalid action:", action)
+      return NextResponse.json({ success: false, error: "Invalid action. Use 'approve' or 'reject'" }, { status: 400 })
     }
   } catch (error) {
-    console.error("❌ [ADMIN-MODERATE] Recipe moderation error:", error)
-
-    let errorMessage = "Internal server error"
-    if (error instanceof Error) {
-      errorMessage += `: ${error.message}`
-      console.error("❌ [ADMIN-MODERATE] Main error stack:", error.stack)
-    }
-
+    console.error("❌ [MODERATE-API] General error:", error)
+    console.error("❌ [MODERATE-API] Error stack:", error instanceof Error ? error.stack : "No stack trace")
     return NextResponse.json(
       {
         success: false,
-        error: errorMessage,
+        error: "Internal server error",
         details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },

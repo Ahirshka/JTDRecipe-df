@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { Star, Clock, Eye, TrendingUp } from "lucide-react"
+import { Star, Clock, Eye, TrendingUp, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
@@ -59,123 +59,26 @@ export default function HomePage() {
   const [categoryData, setCategoryData] = useState(categories)
   const [loadingRecipes, setLoadingRecipes] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
+  const [refreshing, setRefreshing] = useState(false)
 
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        console.log("🔄 [HOMEPAGE] Loading recipes from API...")
-        const response = await fetch("/api/recipes?limit=50")
+  const loadData = async (showRefreshing = false) => {
+    try {
+      if (showRefreshing) setRefreshing(true)
 
-        console.log("📡 [HOMEPAGE] Response status:", response.status)
+      console.log("🔄 [HOMEPAGE] Loading recipes from API...")
+      const response = await fetch("/api/recipes?limit=50", {
+        cache: "no-store", // Ensure fresh data
+        headers: {
+          "Cache-Control": "no-cache",
+        },
+      })
 
-        if (!response.ok) {
-          console.error(`❌ [HOMEPAGE] HTTP error! status: ${response.status}`)
-          const errorText = await response.text()
-          console.error("❌ [HOMEPAGE] Error response:", errorText)
-          setAllFeaturedRecipes({
-            recent: [],
-            rated: [],
-            viewed: [],
-            trending: [],
-          })
-          setDisplayedRecipes([])
-          return
-        }
+      console.log("📡 [HOMEPAGE] Response status:", response.status)
 
-        const data = await response.json()
-        console.log("📋 [HOMEPAGE] API Response:", data)
-
-        if (!data.success) {
-          console.error("❌ [HOMEPAGE] API returned error:", data.error)
-          setAllFeaturedRecipes({
-            recent: [],
-            rated: [],
-            viewed: [],
-            trending: [],
-          })
-          setDisplayedRecipes([])
-          return
-        }
-
-        const allRecipes = Array.isArray(data.recipes) ? data.recipes : []
-        console.log(`📋 [HOMEPAGE] Processing ${allRecipes.length} recipes`)
-
-        // Log each recipe for debugging
-        allRecipes.forEach((recipe: any, index: number) => {
-          console.log(`📋 [HOMEPAGE] Recipe ${index + 1}:`, {
-            id: recipe.id,
-            title: recipe.title,
-            author: recipe.author_username,
-            status: recipe.moderation_status,
-            published: recipe.is_published,
-            created: recipe.created_at,
-          })
-        })
-
-        // Ensure all recipes have proper numeric values
-        const processedRecipes = allRecipes.map((recipe: any) => ({
-          ...recipe,
-          rating: Number(recipe.rating) || 0,
-          review_count: Number(recipe.review_count) || 0,
-          view_count: Number(recipe.view_count) || 0,
-          prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
-          cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
-          servings: Number(recipe.servings) || 1,
-        }))
-
-        // Calculate date ranges
-        const now = new Date()
-        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-
-        // Filter and sort recipes for different categories
-        const recentlyAdded = processedRecipes
-          .filter((recipe: Recipe) => new Date(recipe.created_at) >= thirtyDaysAgo)
-          .sort((a: Recipe, b: Recipe) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-          .slice(0, 12)
-
-        const topRated = [...processedRecipes].sort((a: Recipe, b: Recipe) => b.rating - a.rating).slice(0, 12)
-
-        const mostViewed = [...processedRecipes]
-          .sort((a: Recipe, b: Recipe) => b.view_count - a.view_count)
-          .slice(0, 12)
-
-        const trending = [...processedRecipes]
-          .sort((a: Recipe, b: Recipe) => {
-            const aScore = a.view_count * 0.3 + a.rating * a.review_count * 0.7
-            const bScore = b.view_count * 0.3 + b.rating * b.review_count * 0.7
-            return bScore - aScore
-          })
-          .slice(0, 12)
-
-        console.log("📊 [HOMEPAGE] Categorized recipes:", {
-          recent: recentlyAdded.length,
-          rated: topRated.length,
-          viewed: mostViewed.length,
-          trending: trending.length,
-        })
-
-        // Store all categories of recipes
-        const categorizedRecipes = {
-          recent: recentlyAdded,
-          rated: topRated,
-          viewed: mostViewed,
-          trending: trending,
-        }
-
-        setAllFeaturedRecipes(categorizedRecipes)
-        setDisplayedRecipes(recentlyAdded.slice(0, 6))
-
-        // Update category counts
-        setCategoryData([
-          { ...categories[0], count: recentlyAdded.length },
-          { ...categories[1], count: topRated.length },
-          { ...categories[2], count: mostViewed.length },
-          { ...categories[3], count: trending.length },
-        ])
-
-        console.log("✅ [HOMEPAGE] Homepage data loaded successfully")
-      } catch (error) {
-        console.error("❌ [HOMEPAGE] Error loading homepage data:", error)
+      if (!response.ok) {
+        console.error(`❌ [HOMEPAGE] HTTP error! status: ${response.status}`)
+        const errorText = await response.text()
+        console.error("❌ [HOMEPAGE] Error response:", errorText)
         setAllFeaturedRecipes({
           recent: [],
           rated: [],
@@ -183,18 +86,133 @@ export default function HomePage() {
           trending: [],
         })
         setDisplayedRecipes([])
-      } finally {
-        setLoadingRecipes(false)
+        return
       }
-    }
 
+      const data = await response.json()
+      console.log("📋 [HOMEPAGE] API Response:", data)
+
+      if (!data.success) {
+        console.error("❌ [HOMEPAGE] API returned error:", data.error)
+        setAllFeaturedRecipes({
+          recent: [],
+          rated: [],
+          viewed: [],
+          trending: [],
+        })
+        setDisplayedRecipes([])
+        return
+      }
+
+      const allRecipes = Array.isArray(data.recipes) ? data.recipes : []
+      console.log(`📋 [HOMEPAGE] Processing ${allRecipes.length} recipes`)
+
+      // Log each recipe for debugging
+      allRecipes.forEach((recipe: any, index: number) => {
+        console.log(`📋 [HOMEPAGE] Recipe ${index + 1}:`, {
+          id: recipe.id,
+          title: recipe.title,
+          author: recipe.author_username,
+          status: recipe.moderation_status,
+          published: recipe.is_published,
+          created: recipe.created_at,
+          updated: recipe.updated_at,
+        })
+      })
+
+      // Ensure all recipes have proper numeric values
+      const processedRecipes = allRecipes.map((recipe: any) => ({
+        ...recipe,
+        rating: Number(recipe.rating) || 0,
+        review_count: Number(recipe.review_count) || 0,
+        view_count: Number(recipe.view_count) || 0,
+        prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
+        cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
+        servings: Number(recipe.servings) || 1,
+      }))
+
+      // Calculate date ranges
+      const now = new Date()
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+
+      // Filter and sort recipes for different categories
+      const recentlyAdded = processedRecipes
+        .filter((recipe: Recipe) => new Date(recipe.created_at) >= thirtyDaysAgo)
+        .sort(
+          (a: Recipe, b: Recipe) =>
+            new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime(),
+        )
+        .slice(0, 12)
+
+      const topRated = [...processedRecipes].sort((a: Recipe, b: Recipe) => b.rating - a.rating).slice(0, 12)
+
+      const mostViewed = [...processedRecipes].sort((a: Recipe, b: Recipe) => b.view_count - a.view_count).slice(0, 12)
+
+      const trending = [...processedRecipes]
+        .sort((a: Recipe, b: Recipe) => {
+          const aScore = a.view_count * 0.3 + a.rating * a.review_count * 0.7
+          const bScore = b.view_count * 0.3 + b.rating * b.review_count * 0.7
+          return bScore - aScore
+        })
+        .slice(0, 12)
+
+      console.log("📊 [HOMEPAGE] Categorized recipes:", {
+        recent: recentlyAdded.length,
+        rated: topRated.length,
+        viewed: mostViewed.length,
+        trending: trending.length,
+      })
+
+      // Store all categories of recipes
+      const categorizedRecipes = {
+        recent: recentlyAdded,
+        rated: topRated,
+        viewed: mostViewed,
+        trending: trending,
+      }
+
+      setAllFeaturedRecipes(categorizedRecipes)
+
+      // Update displayed recipes based on active category
+      const currentCategoryRecipes = categorizedRecipes[activeCategory as keyof typeof categorizedRecipes] || []
+      setDisplayedRecipes(currentCategoryRecipes.slice(0, 6))
+
+      // Update category counts
+      setCategoryData([
+        { ...categories[0], count: recentlyAdded.length },
+        { ...categories[1], count: topRated.length },
+        { ...categories[2], count: mostViewed.length },
+        { ...categories[3], count: trending.length },
+      ])
+
+      console.log("✅ [HOMEPAGE] Homepage data loaded successfully")
+    } catch (error) {
+      console.error("❌ [HOMEPAGE] Error loading homepage data:", error)
+      setAllFeaturedRecipes({
+        recent: [],
+        rated: [],
+        viewed: [],
+        trending: [],
+      })
+      setDisplayedRecipes([])
+    } finally {
+      setLoadingRecipes(false)
+      if (showRefreshing) setRefreshing(false)
+    }
+  }
+
+  useEffect(() => {
     loadData()
   }, [])
 
+  // Update displayed recipes when active category changes
+  useEffect(() => {
+    const recipesToShow = allFeaturedRecipes[activeCategory as keyof typeof allFeaturedRecipes] || []
+    setDisplayedRecipes(recipesToShow.slice(0, 6))
+  }, [activeCategory, allFeaturedRecipes])
+
   const handleCategoryClick = async (categoryKey: string, categoryName: string) => {
     setActiveCategory(categoryKey)
-    const recipesToShow = allFeaturedRecipes[categoryKey as keyof typeof allFeaturedRecipes] || []
-    setDisplayedRecipes(recipesToShow.slice(0, 6))
   }
 
   const handleSearch = (e: React.FormEvent) => {
@@ -202,6 +220,10 @@ export default function HomePage() {
     if (searchQuery.trim()) {
       router.push(`/search?q=${encodeURIComponent(searchQuery.trim())}`)
     }
+  }
+
+  const handleRefresh = () => {
+    loadData(true)
   }
 
   if (loading) {
@@ -243,7 +265,19 @@ export default function HomePage() {
       {/* Categories */}
       <section className="py-8 bg-gray-50">
         <div className="max-w-7xl mx-auto px-4">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">Browse Categories</h2>
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-bold text-gray-900">Browse Categories</h2>
+            <Button
+              onClick={handleRefresh}
+              variant="outline"
+              size="sm"
+              disabled={refreshing}
+              className="flex items-center gap-2 bg-transparent"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+              {refreshing ? "Refreshing..." : "Refresh"}
+            </Button>
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {categoryData.map((category) => (
               <button
@@ -359,12 +393,21 @@ export default function HomePage() {
             <div className="text-center py-12">
               <p className="text-gray-500 text-lg">No approved recipes found in this category.</p>
               {user?.role === "owner" || user?.role === "admin" ? (
-                <p className="text-orange-600 mt-2">
-                  <Link href="/admin" className="underline">
-                    Check the admin panel for pending recipes
-                  </Link>
-                </p>
-              ) : null}
+                <div className="mt-4 space-y-2">
+                  <p className="text-orange-600">
+                    <Link href="/admin" className="underline">
+                      Check the admin panel for pending recipes
+                    </Link>
+                  </p>
+                  <Button onClick={handleRefresh} variant="outline" size="sm">
+                    Refresh to check for new recipes
+                  </Button>
+                </div>
+              ) : (
+                <Button onClick={handleRefresh} variant="outline" size="sm" className="mt-4 bg-transparent">
+                  Refresh to check for new recipes
+                </Button>
+              )}
             </div>
           )}
         </div>

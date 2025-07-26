@@ -60,6 +60,7 @@ export async function GET(request: NextRequest) {
         status: recipe.moderation_status,
         published: recipe.is_published,
         created: recipe.created_at,
+        updated: recipe.updated_at,
       })
     })
 
