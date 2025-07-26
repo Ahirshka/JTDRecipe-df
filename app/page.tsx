@@ -1,15 +1,11 @@
 "use client"
 
-import type React from "react"
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Loader2, Search, Plus, ChefHat, Settings } from "lucide-react"
+import { Plus, TrendingUp, Clock, Star } from "lucide-react"
+import Link from "next/link"
 import { useAuth } from "@/contexts/auth-context"
 import { RecipePreview } from "@/components/recipe-preview"
 
@@ -34,266 +30,217 @@ interface Recipe {
   is_recently_approved: boolean
 }
 
-export default function HomePage() {
-  const { user, isAuthenticated } = useAuth()
-  const router = useRouter()
-  const [recipes, setRecipes] = useState<Recipe[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState("")
-  const [searchTerm, setSearchTerm] = useState("")
-  const [selectedCategory, setSelectedCategory] = useState("all-categories")
-  const [debugInfo, setDebugInfo] = useState<any>(null)
+interface RecipeData {
+  recentlyApproved: Recipe[]
+  topRated: Recipe[]
+  allRecipes: Recipe[]
+}
 
-  const categories = ["appetizer", "main-course", "dessert", "beverage", "snack", "breakfast", "lunch", "dinner"]
+export default function HomePage() {
+  const { user, isAuthenticated, isLoading } = useAuth()
+  const [recipes, setRecipes] = useState<RecipeData>({
+    recentlyApproved: [],
+    topRated: [],
+    allRecipes: [],
+  })
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    fetchRecipes()
+  }, [])
 
   const fetchRecipes = async () => {
     try {
+      setLoading(true)
       console.log("🔄 [HOMEPAGE] Fetching recipes...")
-      setIsLoading(true)
-      setError("")
 
-      const params = new URLSearchParams()
-      if (searchTerm) params.append("search", searchTerm)
-      if (selectedCategory !== "all-categories") params.append("category", selectedCategory)
-      params.append("limit", "50")
-
-      const url = `/api/recipes?${params.toString()}`
-      console.log("🔍 [HOMEPAGE] Fetching from:", url)
-
-      const response = await fetch(url, {
+      const response = await fetch("/api/recipes", {
         credentials: "include",
+        cache: "no-store",
       })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
 
       const data = await response.json()
       console.log("📊 [HOMEPAGE] API Response:", data)
 
       if (data.success) {
-        setRecipes(data.recipes || [])
-        setDebugInfo(data.debug || null)
-        console.log(`✅ [HOMEPAGE] Loaded ${data.recipes?.length || 0} recipes`)
+        setRecipes({
+          recentlyApproved: data.recentlyApproved || [],
+          topRated: data.topRated || [],
+          allRecipes: data.allRecipes || [],
+        })
+        console.log("✅ [HOMEPAGE] Recipes loaded successfully")
       } else {
-        setError(data.error || "Failed to load recipes")
-        console.error("❌ [HOMEPAGE] API Error:", data.error)
-        console.error("❌ [HOMEPAGE] API Details:", data.details)
+        setError(data.message || "Failed to load recipes")
+        console.error("❌ [HOMEPAGE] API Error:", data.message)
       }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to load recipes"
-      setError(errorMessage)
-      console.error("❌ [HOMEPAGE] Fetch Error:", err)
+    } catch (error) {
+      console.error("❌ [HOMEPAGE] Fetch error:", error)
+      setError("Failed to load recipes")
     } finally {
-      setIsLoading(false)
+      setLoading(false)
     }
   }
 
-  useEffect(() => {
-    fetchRecipes()
-  }, [searchTerm, selectedCategory])
-
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault()
-    fetchRecipes()
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    )
   }
-
-  const clearFilters = () => {
-    setSearchTerm("")
-    setSelectedCategory("all-categories")
-  }
-
-  // Categorize recipes
-  const recentlyApproved = recipes.filter((recipe) => recipe.is_recently_approved)
-  const allRecipes = recipes
-
-  console.log("📊 [HOMEPAGE] Recipe categorization:", {
-    total: allRecipes.length,
-    recently_approved: recentlyApproved.length,
-    recipes_with_approval_data: recipes.filter((r) => r.approval_date).length,
-  })
 
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Hero Section */}
-      <div className="bg-gradient-to-r from-orange-500 to-red-600 text-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+      <div className="bg-gradient-to-r from-orange-500 to-red-500 text-white">
+        <div className="max-w-7xl mx-auto px-4 py-16">
           <div className="text-center">
-            <h1 className="text-4xl md:text-6xl font-bold mb-4">Share Your Culinary Creations</h1>
+            <h1 className="text-4xl md:text-6xl font-bold mb-4">Share Your Recipes</h1>
             <p className="text-xl md:text-2xl mb-8 opacity-90">
-              Discover amazing recipes from our community of home chefs
+              Discover, create, and share amazing recipes with our community
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               {isAuthenticated ? (
-                <Button
-                  onClick={() => router.push("/add-recipe")}
-                  size="lg"
-                  className="bg-white text-orange-600 hover:bg-gray-100"
-                >
-                  <Plus className="mr-2 h-5 w-5" />
-                  Share Your Recipe
-                </Button>
+                <Link href="/add-recipe">
+                  <Button size="lg" className="bg-white text-orange-600 hover:bg-gray-100">
+                    <Plus className="w-5 h-5 mr-2" />
+                    Add Your Recipe
+                  </Button>
+                </Link>
               ) : (
-                <Button
-                  onClick={() => router.push("/login")}
-                  size="lg"
-                  className="bg-white text-orange-600 hover:bg-gray-100"
-                >
-                  <ChefHat className="mr-2 h-5 w-5" />
-                  Join Our Community
-                </Button>
+                <Link href="/signup">
+                  <Button size="lg" className="bg-white text-orange-600 hover:bg-gray-100">
+                    Get Started
+                  </Button>
+                </Link>
               )}
-              <Button
-                onClick={() => router.push("/search")}
-                size="lg"
-                variant="outline"
-                className="border-white text-white hover:bg-white hover:text-orange-600"
-              >
-                <Search className="mr-2 h-5 w-5" />
-                Explore Recipes
-              </Button>
+              <Link href="/search">
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="border-white text-white hover:bg-white hover:text-orange-600 bg-transparent"
+                >
+                  Browse Recipes
+                </Button>
+              </Link>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Search and Filter Section */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <Card className="mb-8">
-          <CardContent className="pt-6">
-            <form onSubmit={handleSearch} className="flex flex-col md:flex-row gap-4">
-              <div className="flex-1">
-                <Input
-                  type="text"
-                  placeholder="Search recipes..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full"
-                />
-              </div>
-              <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                <SelectTrigger className="w-full md:w-48">
-                  <SelectValue placeholder="All Categories" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all-categories">All Categories</SelectItem>
-                  {categories.map((category) => (
-                    <SelectItem key={category} value={category}>
-                      {category.charAt(0).toUpperCase() + category.slice(1).replace("-", " ")}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button type="submit" disabled={isLoading}>
-                {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
-                Search
-              </Button>
-              {(searchTerm || selectedCategory !== "all-categories") && (
-                <Button type="button" variant="outline" onClick={clearFilters}>
-                  Clear
-                </Button>
-              )}
-            </form>
-          </CardContent>
-        </Card>
-
-        {/* Debug Info for Admins */}
-        {(user?.role === "admin" || user?.role === "owner") && (
-          <div className="mb-6 flex gap-4">
-            <Button onClick={() => router.push("/test-homepage")} variant="outline" size="sm">
-              <Settings className="mr-2 h-4 w-4" />
-              Debug Homepage
-            </Button>
-            {debugInfo && (
-              <Badge variant="secondary">
-                API: {debugInfo.total_found || 0} recipes, {debugInfo.recently_approved_count || 0} recent
-              </Badge>
-            )}
+      <div className="max-w-7xl mx-auto px-4 py-12">
+        {loading ? (
+          <div className="text-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading recipes...</p>
           </div>
-        )}
+        ) : error ? (
+          <div className="text-center py-12">
+            <Card className="max-w-md mx-auto">
+              <CardContent className="p-6">
+                <h3 className="text-lg font-semibold mb-2">Unable to Load Recipes</h3>
+                <p className="text-gray-600 mb-4">{error}</p>
+                <Button onClick={fetchRecipes} variant="outline">
+                  Try Again
+                </Button>
+                {user?.role === "admin" && (
+                  <div className="mt-4">
+                    <Link href="/test-homepage">
+                      <Button variant="link" size="sm">
+                        Debug (Admin)
+                      </Button>
+                    </Link>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        ) : (
+          <div className="space-y-12">
+            {/* Recently Approved Recipes */}
+            {recipes.recentlyApproved.length > 0 && (
+              <section>
+                <div className="flex items-center gap-2 mb-6">
+                  <Clock className="w-6 h-6 text-orange-600" />
+                  <h2 className="text-2xl font-bold">Recently Approved</h2>
+                  <Badge variant="secondary" className="bg-green-100 text-green-800">
+                    New
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                  {recipes.recentlyApproved.map((recipe) => (
+                    <RecipePreview key={recipe.id} recipe={recipe} />
+                  ))}
+                </div>
+              </section>
+            )}
 
-        {/* Error Display */}
-        {error && (
-          <Alert variant="destructive" className="mb-8">
-            <AlertDescription>
-              {error}
-              {(user?.role === "admin" || user?.role === "owner") && (
-                <div className="mt-2">
-                  <Button onClick={() => router.push("/test-homepage")} variant="outline" size="sm">
-                    Debug This Issue
-                  </Button>
+            {/* Top Rated Recipes */}
+            {recipes.topRated.length > 0 && (
+              <section>
+                <div className="flex items-center gap-2 mb-6">
+                  <Star className="w-6 h-6 text-yellow-500" />
+                  <h2 className="text-2xl font-bold">Top Rated</h2>
+                  <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">
+                    Popular
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                  {recipes.topRated.map((recipe) => (
+                    <RecipePreview key={recipe.id} recipe={recipe} />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* All Recipes */}
+            {recipes.allRecipes.length > 0 && (
+              <section>
+                <div className="flex items-center gap-2 mb-6">
+                  <TrendingUp className="w-6 h-6 text-blue-600" />
+                  <h2 className="text-2xl font-bold">All Recipes</h2>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                  {recipes.allRecipes.map((recipe) => (
+                    <RecipePreview key={recipe.id} recipe={recipe} />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* No Recipes State */}
+            {recipes.allRecipes.length === 0 &&
+              recipes.recentlyApproved.length === 0 &&
+              recipes.topRated.length === 0 && (
+                <div className="text-center py-12">
+                  <Card className="max-w-md mx-auto">
+                    <CardContent className="p-6">
+                      <h3 className="text-lg font-semibold mb-2">No Recipes Yet</h3>
+                      <p className="text-gray-600 mb-4">Be the first to share a recipe with our community!</p>
+                      {isAuthenticated ? (
+                        <Link href="/add-recipe">
+                          <Button>
+                            <Plus className="w-4 h-4 mr-2" />
+                            Add First Recipe
+                          </Button>
+                        </Link>
+                      ) : (
+                        <Link href="/signup">
+                          <Button>Get Started</Button>
+                        </Link>
+                      )}
+                    </CardContent>
+                  </Card>
                 </div>
               )}
-            </AlertDescription>
-          </Alert>
-        )}
-
-        {/* Loading State */}
-        {isLoading && (
-          <div className="flex justify-center items-center py-12">
-            <div className="flex items-center space-x-2">
-              <Loader2 className="h-6 w-6 animate-spin" />
-              <span className="text-lg">Loading delicious recipes...</span>
-            </div>
-          </div>
-        )}
-
-        {/* Recently Added Section */}
-        {!isLoading && recentlyApproved.length > 0 && (
-          <div className="mb-12">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-gray-900">Recently Added</h2>
-              <Badge variant="secondary" className="bg-green-100 text-green-800">
-                {recentlyApproved.length} new recipes
-              </Badge>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {recentlyApproved.slice(0, 8).map((recipe) => (
-                <RecipePreview key={recipe.id} recipe={recipe} showApprovalBadge={true} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* All Recipes Section */}
-        {!isLoading && allRecipes.length > 0 && (
-          <div className="mb-12">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-gray-900">
-                {searchTerm || selectedCategory !== "all-categories" ? "Search Results" : "All Recipes"}
-              </h2>
-              <Badge variant="outline">{allRecipes.length} recipes</Badge>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {allRecipes.map((recipe) => (
-                <RecipePreview key={recipe.id} recipe={recipe} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* No Recipes State */}
-        {!isLoading && allRecipes.length === 0 && (
-          <div className="text-center py-12">
-            <ChefHat className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
-              {searchTerm || selectedCategory !== "all-categories" ? "No recipes found" : "No recipes available"}
-            </h3>
-            <p className="text-gray-600 mb-6">
-              {searchTerm || selectedCategory !== "all-categories"
-                ? "Try adjusting your search terms or filters"
-                : "Be the first to share a delicious recipe with our community!"}
-            </p>
-            <div className="flex justify-center gap-4">
-              {isAuthenticated && (
-                <Button onClick={() => router.push("/add-recipe")}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Your Recipe
-                </Button>
-              )}
-              {(user?.role === "admin" || user?.role === "owner") && (
-                <Button onClick={() => router.push("/test-homepage")} variant="outline">
-                  <Settings className="mr-2 h-4 w-4" />
-                  Debug Homepage
-                </Button>
-              )}
-            </div>
           </div>
         )}
       </div>

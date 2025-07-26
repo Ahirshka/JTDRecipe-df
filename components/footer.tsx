@@ -110,3 +110,6 @@ export function Footer() {
     </footer>
   )
 }
+
+// Add default export
+export default Footer

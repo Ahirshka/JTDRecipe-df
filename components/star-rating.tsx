@@ -13,17 +13,17 @@ interface StarRatingProps {
   onRatingUpdate?: (newRating: number, newReviewCount: number) => void
 }
 
-export default function StarRating({ recipeId, currentRating, reviewCount, onRatingUpdate }: StarRatingProps) {
+export function StarRating({ recipeId, currentRating, reviewCount, onRatingUpdate }: StarRatingProps) {
   const { user, isAuthenticated } = useAuth()
   const [userRating, setUserRating] = useState(0)
   const [hoveredRating, setHoveredRating] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [displayRating, setDisplayRating] = useState(currentRating)
-  const [displayReviewCount, setDisplayReviewCount] = useState(reviewCount)
+  const [displayRating, setDisplayRating] = useState(currentRating || 0)
+  const [displayReviewCount, setDisplayReviewCount] = useState(reviewCount || 0)
 
   // Fetch user's existing rating
   useEffect(() => {
-    if (isAuthenticated && user) {
+    if (isAuthenticated && user && recipeId) {
       fetchUserRating()
     }
   }, [isAuthenticated, user, recipeId])
@@ -120,6 +120,10 @@ export default function StarRating({ recipeId, currentRating, reviewCount, onRat
     }
   }
 
+  if (!recipeId) {
+    return null
+  }
+
   if (!isAuthenticated) {
     // Display-only version for non-authenticated users
     return (
@@ -207,3 +211,5 @@ export default function StarRating({ recipeId, currentRating, reviewCount, onRat
     </div>
   )
 }
+
+export default StarRating

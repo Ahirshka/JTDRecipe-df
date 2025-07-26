@@ -9,14 +9,14 @@ import Image from "next/image"
 interface Recipe {
   id: string
   title: string
-  description: string
+  description?: string
   author_username: string
   category: string
   difficulty: string
   prep_time_minutes: number
   cook_time_minutes: number
   servings: number
-  image_url: string
+  image_url?: string
   rating: number
   review_count: number
   view_count: number
@@ -28,7 +28,11 @@ interface RecipePreviewProps {
   recipe: Recipe
 }
 
-export default function RecipePreview({ recipe }: RecipePreviewProps) {
+export function RecipePreview({ recipe }: RecipePreviewProps) {
+  if (!recipe) {
+    return null
+  }
+
   const totalTime = (recipe.prep_time_minutes || 0) + (recipe.cook_time_minutes || 0)
 
   const getCategoryColor = (category: string) => {
@@ -42,7 +46,7 @@ export default function RecipePreview({ recipe }: RecipePreviewProps) {
       lunch: "bg-teal-100 text-teal-800",
       dinner: "bg-red-100 text-red-800",
     }
-    return colors[category.toLowerCase()] || "bg-gray-100 text-gray-800"
+    return colors[category?.toLowerCase()] || "bg-gray-100 text-gray-800"
   }
 
   const getDifficultyColor = (difficulty: string) => {
@@ -51,7 +55,7 @@ export default function RecipePreview({ recipe }: RecipePreviewProps) {
       medium: "bg-yellow-100 text-yellow-800",
       hard: "bg-red-100 text-red-800",
     }
-    return colors[difficulty.toLowerCase()] || "bg-gray-100 text-gray-800"
+    return colors[difficulty?.toLowerCase()] || "bg-gray-100 text-gray-800"
   }
 
   return (
@@ -61,7 +65,7 @@ export default function RecipePreview({ recipe }: RecipePreviewProps) {
           <div className="aspect-video relative overflow-hidden">
             <Image
               src={recipe.image_url || "/placeholder.svg?height=200&width=300"}
-              alt={recipe.title}
+              alt={recipe.title || "Recipe"}
               fill
               className="object-cover transition-transform duration-200 group-hover:scale-105"
               sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
@@ -70,12 +74,12 @@ export default function RecipePreview({ recipe }: RecipePreviewProps) {
 
           {/* Category Badge - Top Left */}
           <Badge className={`absolute top-2 left-2 ${getCategoryColor(recipe.category)} font-medium`}>
-            {recipe.category.replace("-", " ").replace(/\b\w/g, (l) => l.toUpperCase())}
+            {recipe.category?.replace("-", " ").replace(/\b\w/g, (l) => l.toUpperCase()) || "Uncategorized"}
           </Badge>
 
           {/* Difficulty Badge - Top Right */}
           <Badge className={`absolute top-2 right-2 ${getDifficultyColor(recipe.difficulty)} font-medium`}>
-            {recipe.difficulty.charAt(0).toUpperCase() + recipe.difficulty.slice(1)}
+            {recipe.difficulty?.charAt(0).toUpperCase() + recipe.difficulty?.slice(1) || "Unknown"}
           </Badge>
 
           {/* Rating Overlay - Bottom Left */}
@@ -90,13 +94,13 @@ export default function RecipePreview({ recipe }: RecipePreviewProps) {
 
         <CardContent className="p-4">
           <h3 className="font-semibold text-lg mb-2 line-clamp-2 group-hover:text-orange-600 transition-colors">
-            {recipe.title}
+            {recipe.title || "Untitled Recipe"}
           </h3>
 
           <p className="text-gray-600 text-sm mb-3 line-clamp-2">{recipe.description || "No description available"}</p>
 
           <div className="flex items-center justify-between text-sm text-gray-500 mb-2">
-            <span className="font-medium text-gray-700">by {recipe.author_username}</span>
+            <span className="font-medium text-gray-700">by {recipe.author_username || "Unknown"}</span>
           </div>
 
           <div className="flex items-center justify-between text-sm text-gray-500">
@@ -128,3 +132,5 @@ export default function RecipePreview({ recipe }: RecipePreviewProps) {
     </Link>
   )
 }
+
+export default RecipePreview

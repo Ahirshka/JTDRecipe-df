@@ -278,3 +278,6 @@ export function Navigation() {
     </nav>
   )
 }
+
+// Add default export
+export default Navigation
