@@ -36,11 +36,11 @@ export interface Session {
   created_at: string
 }
 
-// Recipe interface
+// Recipe interface - Updated to match exact database schema
 export interface Recipe {
   id: string
   title: string
-  description?: string
+  description?: string | null
   author_id: number
   author_username: string
   category: string
@@ -48,7 +48,7 @@ export interface Recipe {
   prep_time_minutes: number
   cook_time_minutes: number
   servings: number
-  image_url?: string
+  image_url?: string | null
   ingredients: string[]
   instructions: string[]
   tags: string[]
@@ -56,11 +56,28 @@ export interface Recipe {
   review_count: number
   view_count: number
   moderation_status: string
-  moderation_notes?: string
+  moderation_notes?: string | null
   is_published: boolean
   created_at: string
   updated_at: string
-  search_vector: string
+  search_vector?: string
+}
+
+// Recipe creation data interface
+export interface RecipeCreateData {
+  title: string
+  description?: string | null
+  author_id: number
+  author_username: string
+  category: string
+  difficulty: string
+  prep_time_minutes: number
+  cook_time_minutes: number
+  servings: number
+  image_url?: string | null
+  ingredients: string[]
+  instructions: string[]
+  tags: string[]
 }
 
 // Stack Auth Config interface
@@ -160,7 +177,7 @@ export async function initializeDatabase(): Promise<boolean> {
     `
     console.log("✅ [NEON-DB] Sessions table created")
 
-    // Create recipes table
+    // Create recipes table with exact schema matching
     console.log("📋 [NEON-DB] Creating recipes table...")
     await sql`
       CREATE TABLE IF NOT EXISTS recipes (
@@ -171,16 +188,16 @@ export async function initializeDatabase(): Promise<boolean> {
         author_username VARCHAR(50) NOT NULL,
         category VARCHAR(50) NOT NULL,
         difficulty VARCHAR(20) NOT NULL,
-        prep_time_minutes INTEGER NOT NULL,
-        cook_time_minutes INTEGER NOT NULL,
-        servings INTEGER NOT NULL,
+        prep_time_minutes INTEGER NOT NULL CHECK (prep_time_minutes >= 0),
+        cook_time_minutes INTEGER NOT NULL CHECK (cook_time_minutes >= 0),
+        servings INTEGER NOT NULL CHECK (servings > 0),
         image_url TEXT,
         ingredients JSONB NOT NULL DEFAULT '[]'::jsonb,
         instructions JSONB NOT NULL DEFAULT '[]'::jsonb,
         tags JSONB DEFAULT '[]'::jsonb,
-        rating DECIMAL(3,2) DEFAULT 0,
-        review_count INTEGER DEFAULT 0,
-        view_count INTEGER DEFAULT 0,
+        rating DECIMAL(3,2) DEFAULT 0 CHECK (rating >= 0 AND rating <= 5),
+        review_count INTEGER DEFAULT 0 CHECK (review_count >= 0),
+        view_count INTEGER DEFAULT 0 CHECK (view_count >= 0),
         moderation_status VARCHAR(20) NOT NULL DEFAULT 'pending',
         moderation_notes TEXT,
         is_published BOOLEAN NOT NULL DEFAULT false,
@@ -194,6 +211,15 @@ export async function initializeDatabase(): Promise<boolean> {
     console.log("📋 [NEON-DB] Creating search index...")
     await sql`
       CREATE INDEX IF NOT EXISTS recipe_search_idx ON recipes USING GIN(search_vector);
+    `
+
+    // Add other useful indexes
+    await sql`
+      CREATE INDEX IF NOT EXISTS recipe_author_idx ON recipes(author_id);
+      CREATE INDEX IF NOT EXISTS recipe_category_idx ON recipes(category);
+      CREATE INDEX IF NOT EXISTS recipe_status_idx ON recipes(moderation_status);
+      CREATE INDEX IF NOT EXISTS recipe_published_idx ON recipes(is_published);
+      CREATE INDEX IF NOT EXISTS recipe_created_idx ON recipes(created_at);
     `
 
     // Add trigger to update search_vector - FIXED: Handle existing triggers
@@ -211,7 +237,8 @@ export async function initializeDatabase(): Promise<boolean> {
           setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
           setweight(to_tsvector('english', coalesce(NEW.description, '')), 'B') ||
           setweight(to_tsvector('english', coalesce(NEW.category, '')), 'C') ||
-          setweight(to_tsvector('english', coalesce(NEW.difficulty, '')), 'D');
+          setweight(to_tsvector('english', coalesce(NEW.difficulty, '')), 'D') ||
+          setweight(to_tsvector('english', coalesce(array_to_string(ARRAY(SELECT jsonb_array_elements_text(NEW.tags)), ' ', '')), 'D');
         RETURN NEW;
       END
       $$ LANGUAGE plpgsql;
@@ -741,39 +768,101 @@ export async function getAllUsers(): Promise<User[]> {
   }
 }
 
-// Create recipe
-export async function createRecipe(recipeData: any): Promise<{ success: boolean; recipeId?: string } | null> {
+// Create recipe with proper JSONB handling
+export async function createRecipe(
+  recipeData: RecipeCreateData,
+): Promise<{ success: boolean; recipeId?: string; error?: string } | null> {
   console.log("🔄 [NEON-DB] Creating recipe:", recipeData.title)
 
   try {
     // Generate unique ID
     const recipeId = `recipe_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
 
-    // Insert recipe
-    await sql`
+    console.log("📝 [NEON-DB] Recipe data to insert:", {
+      id: recipeId,
+      title: recipeData.title,
+      author_id: recipeData.author_id,
+      author_username: recipeData.author_username,
+      category: recipeData.category,
+      difficulty: recipeData.difficulty,
+      prep_time: recipeData.prep_time_minutes,
+      cook_time: recipeData.cook_time_minutes,
+      servings: recipeData.servings,
+      ingredients_count: recipeData.ingredients.length,
+      instructions_count: recipeData.instructions.length,
+      tags_count: recipeData.tags.length,
+    })
+
+    // Validate JSONB data before insertion
+    if (!Array.isArray(recipeData.ingredients) || recipeData.ingredients.length === 0) {
+      throw new Error("Ingredients must be a non-empty array")
+    }
+
+    if (!Array.isArray(recipeData.instructions) || recipeData.instructions.length === 0) {
+      throw new Error("Instructions must be a non-empty array")
+    }
+
+    if (!Array.isArray(recipeData.tags)) {
+      throw new Error("Tags must be an array")
+    }
+
+    // Convert arrays to JSONB strings
+    const ingredientsJson = JSON.stringify(recipeData.ingredients)
+    const instructionsJson = JSON.stringify(recipeData.instructions)
+    const tagsJson = JSON.stringify(recipeData.tags)
+
+    console.log("📝 [NEON-DB] JSONB data prepared:", {
+      ingredients: ingredientsJson.substring(0, 100) + "...",
+      instructions: instructionsJson.substring(0, 100) + "...",
+      tags: tagsJson,
+    })
+
+    // Insert recipe with explicit JSONB casting
+    const result = await sql`
       INSERT INTO recipes (
         id, title, description, author_id, author_username, 
         category, difficulty, prep_time_minutes, cook_time_minutes, 
         servings, image_url, ingredients, instructions, tags,
-        moderation_status, is_published
+        moderation_status, is_published, rating, review_count, view_count
       ) VALUES (
-        ${recipeId}, ${recipeData.title}, ${recipeData.description}, 
-        ${recipeData.author_id}, ${recipeData.author_username},
-        ${recipeData.category}, ${recipeData.difficulty}, 
-        ${recipeData.prep_time_minutes}, ${recipeData.cook_time_minutes}, 
-        ${recipeData.servings}, ${recipeData.image_url},
-        ${JSON.stringify(recipeData.ingredients)}, 
-        ${JSON.stringify(recipeData.instructions)}, 
-        ${JSON.stringify(recipeData.tags)},
-        'pending', false
-      );
+        ${recipeId}, 
+        ${recipeData.title}, 
+        ${recipeData.description}, 
+        ${recipeData.author_id}, 
+        ${recipeData.author_username},
+        ${recipeData.category}, 
+        ${recipeData.difficulty}, 
+        ${recipeData.prep_time_minutes}, 
+        ${recipeData.cook_time_minutes}, 
+        ${recipeData.servings}, 
+        ${recipeData.image_url},
+        ${ingredientsJson}::jsonb, 
+        ${instructionsJson}::jsonb, 
+        ${tagsJson}::jsonb,
+        'pending', 
+        false, 
+        0, 
+        0, 
+        0
+      )
+      RETURNING id, title, moderation_status, created_at;
     `
 
-    console.log(`✅ [NEON-DB] Recipe created with ID: ${recipeId}`)
+    if (result.length === 0) {
+      throw new Error("Failed to insert recipe - no result returned")
+    }
+
+    const insertedRecipe = result[0]
+    console.log(`✅ [NEON-DB] Recipe created successfully:`, {
+      id: insertedRecipe.id,
+      title: insertedRecipe.title,
+      status: insertedRecipe.moderation_status,
+      created_at: insertedRecipe.created_at,
+    })
 
     return {
       success: true,
-      recipeId,
+      recipeId: insertedRecipe.id,
     }
   } catch (error) {
     console.error("❌ [NEON-DB] Error creating recipe:", error)

@@ -34,11 +34,18 @@ export async function POST(request: NextRequest) {
       role: user.role,
     })
 
-    // Parse request body
+    // Parse request body with proper error handling
     let body
     try {
-      body = await request.json()
-      console.log("📝 [API] Request body received:", {
+      const rawBody = await request.text()
+      console.log("📝 [API] Raw request body:", rawBody.substring(0, 200) + "...")
+
+      if (!rawBody.trim()) {
+        throw new Error("Empty request body")
+      }
+
+      body = JSON.parse(rawBody)
+      console.log("📝 [API] Parsed request body:", {
         title: body.title,
         category: body.category,
         difficulty: body.difficulty,
@@ -46,9 +53,16 @@ export async function POST(request: NextRequest) {
         instructionsCount: Array.isArray(body.instructions) ? body.instructions.length : 0,
         tagsCount: Array.isArray(body.tags) ? body.tags.length : 0,
       })
-    } catch (error) {
-      console.log("❌ [API] Invalid JSON in request body")
-      return NextResponse.json({ success: false, error: "Invalid JSON in request body" }, { status: 400 })
+    } catch (parseError) {
+      console.error("❌ [API] JSON parsing error:", parseError)
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid JSON in request body",
+          details: parseError instanceof Error ? parseError.message : "Unknown parsing error",
+        },
+        { status: 400 },
+      )
     }
 
     // Validate required fields
@@ -63,38 +77,86 @@ export async function POST(request: NextRequest) {
       "instructions",
     ]
 
-    const missingFields = requiredFields.filter((field) => !body[field])
+    const missingFields = requiredFields.filter((field) => {
+      const value = body[field]
+      if (field === "ingredients" || field === "instructions") {
+        return !Array.isArray(value) || value.length === 0
+      }
+      return !value && value !== 0
+    })
+
     if (missingFields.length > 0) {
       console.log("❌ [API] Missing required fields:", missingFields)
       return NextResponse.json(
-        { success: false, error: `Missing required fields: ${missingFields.join(", ")}` },
+        {
+          success: false,
+          error: `Missing required fields: ${missingFields.join(", ")}`,
+          received: Object.keys(body),
+        },
         { status: 400 },
       )
     }
 
-    // Validate arrays
+    // Validate and process arrays
     if (!Array.isArray(body.ingredients) || body.ingredients.length === 0) {
       console.log("❌ [API] Invalid ingredients array")
-      return NextResponse.json({ success: false, error: "Ingredients must be a non-empty array" }, { status: 400 })
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Ingredients must be a non-empty array",
+          received: typeof body.ingredients,
+        },
+        { status: 400 },
+      )
     }
 
     if (!Array.isArray(body.instructions) || body.instructions.length === 0) {
       console.log("❌ [API] Invalid instructions array")
-      return NextResponse.json({ success: false, error: "Instructions must be a non-empty array" }, { status: 400 })
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Instructions must be a non-empty array",
+          received: typeof body.instructions,
+        },
+        { status: 400 },
+      )
     }
 
-    // Process arrays to remove empty items
+    // Process arrays to remove empty items and ensure strings
     const processedIngredients = body.ingredients
-      .filter((item: string) => item && item.trim().length > 0)
+      .filter((item: any) => item && typeof item === "string" && item.trim().length > 0)
       .map((item: string) => item.trim())
 
     const processedInstructions = body.instructions
-      .filter((item: string) => item && item.trim().length > 0)
+      .filter((item: any) => item && typeof item === "string" && item.trim().length > 0)
       .map((item: string) => item.trim())
 
     const processedTags = Array.isArray(body.tags)
-      ? body.tags.filter((item: string) => item && item.trim().length > 0).map((item: string) => item.trim())
+      ? body.tags
+          .filter((item: any) => item && typeof item === "string" && item.trim().length > 0)
+          .map((item: string) => item.trim())
       : []
+
+    // Validate processed arrays
+    if (processedIngredients.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "At least one valid ingredient is required",
+        },
+        { status: 400 },
+      )
+    }
+
+    if (processedInstructions.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "At least one valid instruction is required",
+        },
+        { status: 400 },
+      )
+    }
 
     console.log("🔄 [API] Processed arrays:", {
       ingredients: processedIngredients.length,
@@ -102,18 +164,53 @@ export async function POST(request: NextRequest) {
       tags: processedTags.length,
     })
 
-    // Prepare recipe data
+    // Validate numeric fields
+    const prepTime = Number.parseInt(body.prep_time_minutes)
+    const cookTime = Number.parseInt(body.cook_time_minutes)
+    const servings = Number.parseInt(body.servings)
+
+    if (isNaN(prepTime) || prepTime < 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Prep time must be a valid positive number",
+        },
+        { status: 400 },
+      )
+    }
+
+    if (isNaN(cookTime) || cookTime < 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Cook time must be a valid positive number",
+        },
+        { status: 400 },
+      )
+    }
+
+    if (isNaN(servings) || servings < 1) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Servings must be a valid positive number",
+        },
+        { status: 400 },
+      )
+    }
+
+    // Prepare recipe data matching database schema exactly
     const recipeData = {
-      title: body.title.trim(),
-      description: body.description?.trim() || null,
+      title: String(body.title).trim(),
+      description: body.description ? String(body.description).trim() : null,
       author_id: user.id,
       author_username: user.username,
-      category: body.category.trim(),
-      difficulty: body.difficulty.trim(),
-      prep_time_minutes: Number.parseInt(body.prep_time_minutes),
-      cook_time_minutes: Number.parseInt(body.cook_time_minutes),
-      servings: Number.parseInt(body.servings),
-      image_url: body.image_url?.trim() || null,
+      category: String(body.category).trim(),
+      difficulty: String(body.difficulty).trim(),
+      prep_time_minutes: prepTime,
+      cook_time_minutes: cookTime,
+      servings: servings,
+      image_url: body.image_url ? String(body.image_url).trim() : null,
       ingredients: processedIngredients,
       instructions: processedInstructions,
       tags: processedTags,
@@ -130,17 +227,20 @@ export async function POST(request: NextRequest) {
       ingredients_count: recipeData.ingredients.length,
       instructions_count: recipeData.instructions.length,
       tags_count: recipeData.tags.length,
+      has_description: !!recipeData.description,
+      has_image: !!recipeData.image_url,
     })
 
     // Create recipe in database
     const result = await createRecipe(recipeData)
 
     if (!result || !result.success) {
-      console.log("❌ [API] Failed to create recipe in database")
+      console.log("❌ [API] Failed to create recipe in database:", result)
       return NextResponse.json(
         {
           success: false,
           error: result?.error || "Failed to create recipe in database",
+          details: result,
         },
         { status: 500 },
       )
@@ -148,25 +248,34 @@ export async function POST(request: NextRequest) {
 
     console.log("✅ [API] Recipe created successfully:", result.recipeId)
 
-    return NextResponse.json({
+    // Return success response matching expected format
+    const successResponse = {
       success: true,
       message: "Recipe submitted successfully and is pending moderation",
       recipeId: result.recipeId,
       data: {
+        id: result.recipeId,
         title: recipeData.title,
         author: recipeData.author_username,
         status: "pending_moderation",
+        created_at: new Date().toISOString(),
       },
-    })
+    }
+
+    console.log("📤 [API] Sending success response:", successResponse)
+    return NextResponse.json(successResponse)
   } catch (error) {
     console.error("❌ [API] Recipe submission error:", error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: `Server error: ${error instanceof Error ? error.message : "Unknown error"}`,
-      },
-      { status: 500 },
-    )
+
+    // Ensure we always return valid JSON
+    const errorResponse = {
+      success: false,
+      error: `Server error: ${error instanceof Error ? error.message : "Unknown error"}`,
+      timestamp: new Date().toISOString(),
+    }
+
+    console.log("📤 [API] Sending error response:", errorResponse)
+    return NextResponse.json(errorResponse, { status: 500 })
   }
 }
 
@@ -176,8 +285,8 @@ export async function GET(request: NextRequest) {
   try {
     // Get query parameters
     const { searchParams } = new URL(request.url)
-    const limit = Number.parseInt(searchParams.get("limit") || "20")
-    const offset = Number.parseInt(searchParams.get("offset") || "0")
+    const limit = Math.min(Number.parseInt(searchParams.get("limit") || "20"), 100) // Cap at 100
+    const offset = Math.max(Number.parseInt(searchParams.get("offset") || "0"), 0) // Ensure non-negative
 
     console.log("📋 [API] Query params:", { limit, offset })
 
@@ -187,23 +296,28 @@ export async function GET(request: NextRequest) {
 
     console.log(`✅ [API] Retrieved ${recipes.length} recipes`)
 
-    return NextResponse.json({
+    const response = {
       success: true,
       data: recipes,
       pagination: {
         limit,
         offset,
         count: recipes.length,
+        hasMore: recipes.length === limit,
       },
-    })
+      timestamp: new Date().toISOString(),
+    }
+
+    return NextResponse.json(response)
   } catch (error) {
     console.error("❌ [API] Get recipes error:", error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: `Failed to get recipes: ${error instanceof Error ? error.message : "Unknown error"}`,
-      },
-      { status: 500 },
-    )
+
+    const errorResponse = {
+      success: false,
+      error: `Failed to get recipes: ${error instanceof Error ? error.message : "Unknown error"}`,
+      timestamp: new Date().toISOString(),
+    }
+
+    return NextResponse.json(errorResponse, { status: 500 })
   }
 }
