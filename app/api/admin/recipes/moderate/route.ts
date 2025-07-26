@@ -173,12 +173,29 @@ export async function POST(request: NextRequest) {
       updated: updatedRecipe.updated_at,
     })
 
-    // Verify the update worked by checking the database
+    // Verify the update worked and ensure recipe is published
     const verifyResult = await sql`
-      SELECT moderation_status, is_published FROM recipes WHERE id = ${recipeId}
+      SELECT id, title, moderation_status, is_published FROM recipes WHERE id = ${recipeId}
     `
 
-    console.log("🔍 [ADMIN-MODERATE] Verification check:", verifyResult[0])
+    if (
+      verifyResult.length === 0 ||
+      verifyResult[0].moderation_status !== "approved" ||
+      !verifyResult[0].is_published
+    ) {
+      console.log("❌ [ADMIN-MODERATE] Recipe approval verification failed:", verifyResult[0])
+
+      // Try to fix the issue by updating again
+      await sql`
+        UPDATE recipes 
+        SET moderation_status = 'approved', is_published = true, updated_at = NOW()
+        WHERE id = ${recipeId}
+      `
+
+      console.log("🔄 [ADMIN-MODERATE] Applied corrective update to recipe")
+    }
+
+    console.log("🔍 [ADMIN-MODERATE] Final verification:", verifyResult[0])
 
     return NextResponse.json({
       success: true,

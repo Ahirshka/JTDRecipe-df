@@ -63,10 +63,12 @@ export default function HomePage() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const response = await fetch("/api/recipes")
+        const response = await fetch("/api/recipes?limit=50")
 
         if (!response.ok) {
           console.error(`HTTP error! status: ${response.status}`)
+          const errorText = await response.text()
+          console.error("Error response:", errorText)
           setAllFeaturedRecipes({
             recent: [],
             rated: [],
@@ -78,7 +80,22 @@ export default function HomePage() {
         }
 
         const data = await response.json()
+        console.log("📋 [HOMEPAGE] API Response:", data)
+
+        if (!data.success) {
+          console.error("API returned error:", data.error)
+          setAllFeaturedRecipes({
+            recent: [],
+            rated: [],
+            viewed: [],
+            trending: [],
+          })
+          setDisplayedRecipes([])
+          return
+        }
+
         const allRecipes = Array.isArray(data.recipes) ? data.recipes : []
+        console.log(`📋 [HOMEPAGE] Processing ${allRecipes.length} recipes`)
 
         // Ensure all recipes have proper numeric values
         const processedRecipes = allRecipes.map((recipe: any) => ({
