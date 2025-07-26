@@ -84,13 +84,8 @@ export function RecipePreview({ recipe, showApprovalBadge = false }: RecipePrevi
           />
 
           {/* Badges overlay */}
-          <div className="absolute top-2 left-2 flex flex-col gap-1">
-            <Badge className={getCategoryColor(recipe.category)} variant="secondary">
-              {recipe.category.charAt(0).toUpperCase() + recipe.category.slice(1).replace("-", " ")}
-            </Badge>
-            {showApprovalBadge && recipe.is_recently_approved && (
-              <Badge className="bg-green-500 text-white">Recently Approved</Badge>
-            )}
+          <div className="absolute top-2 left-2 flex flex-wrap gap-1">
+            <Badge className={`text-xs ${getDifficultyColor(recipe.difficulty)}`}>{recipe.difficulty}</Badge>
           </div>
 
           <div className="absolute top-2 right-2">
@@ -135,11 +130,6 @@ export function RecipePreview({ recipe, showApprovalBadge = false }: RecipePrevi
               <span>{recipe.view_count}</span>
             </div>
           </div>
-
-          {/* Approval info for debugging */}
-          {showApprovalBadge && recipe.days_since_approval !== undefined && (
-            <div className="mt-2 text-xs text-gray-400">Approved {recipe.days_since_approval} days ago</div>
-          )}
         </CardContent>
       </Card>
     </Link>
