@@ -5,7 +5,7 @@ import { getCurrentUserFromRequest } from "@/lib/server-auth"
 // GET - Fetch published recipes
 export async function GET(request: NextRequest) {
   try {
-    console.log("🔄 [RECIPES-API] Fetching published recipes...")
+    console.log("🔄 [RECIPES-API] Getting published recipes")
 
     const { searchParams } = new URL(request.url)
     const limit = Number.parseInt(searchParams.get("limit") || "20")
@@ -16,18 +16,18 @@ export async function GET(request: NextRequest) {
     console.log("📋 [RECIPES-API] Query parameters:", { limit, offset, category, search })
 
     // Build query conditions
-    const whereConditions = ["r.moderation_status = 'approved'", "r.is_published = true"]
+    const whereConditions = ["moderation_status = 'approved'", "is_published = true"]
     const queryParams: any[] = []
     let paramIndex = 1
 
     if (category) {
-      whereConditions.push(`r.category = $${paramIndex}`)
+      whereConditions.push(`category = $${paramIndex}`)
       queryParams.push(category)
       paramIndex++
     }
 
     if (search) {
-      whereConditions.push(`(r.title ILIKE $${paramIndex} OR r.description ILIKE $${paramIndex})`)
+      whereConditions.push(`(title ILIKE $${paramIndex} OR description ILIKE $${paramIndex})`)
       queryParams.push(`%${search}%`)
       paramIndex++
     }
@@ -36,73 +36,51 @@ export async function GET(request: NextRequest) {
     queryParams.push(limit, offset)
 
     const whereClause = whereConditions.join(" AND ")
-
-    console.log("🔍 [RECIPES-API] Query conditions:", whereClause)
-
-    const result = await sql`
+    const query = `
       SELECT 
-        r.id,
-        r.title,
-        r.description,
-        r.category,
-        r.difficulty,
-        r.prep_time_minutes,
-        r.cook_time_minutes,
-        r.servings,
-        r.ingredients,
-        r.instructions,
-        r.tags,
-        r.image_url,
-        r.rating,
-        r.review_count,
-        r.view_count,
-        r.created_at,
-        r.updated_at,
+        r.*,
         u.username as author_username
       FROM recipes r
       JOIN users u ON r.author_id = u.id
-      WHERE ${sql.raw(whereClause)}
+      WHERE ${whereClause}
       ORDER BY r.created_at DESC
-      LIMIT ${limit}
-      OFFSET ${offset}
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `
 
-    console.log(`✅ [RECIPES-API] Found ${result.length} published recipes`)
+    console.log("🔍 [RECIPES-API] Executing query:", query)
+    console.log("🔍 [RECIPES-API] Query params:", queryParams)
 
-    const recipes = result.map((recipe: any) => ({
-      id: recipe.id,
-      title: recipe.title,
-      description: recipe.description,
-      author_username: recipe.author_username,
-      category: recipe.category,
-      difficulty: recipe.difficulty,
-      prep_time_minutes: recipe.prep_time_minutes,
-      cook_time_minutes: recipe.cook_time_minutes,
-      servings: recipe.servings,
-      ingredients: recipe.ingredients,
-      instructions: recipe.instructions,
-      tags: recipe.tags,
-      image_url: recipe.image_url,
-      rating: recipe.rating,
-      review_count: recipe.review_count,
-      view_count: recipe.view_count,
-      created_at: recipe.created_at,
-      updated_at: recipe.updated_at,
-    }))
+    const result = await sql.unsafe(query, queryParams)
+
+    console.log(`✅ [RECIPES-API] Retrieved ${result.length} published recipes`)
+
+    // Log each recipe for debugging
+    result.forEach((recipe, index) => {
+      console.log(`📋 [RECIPES-API] Recipe ${index + 1}:`, {
+        id: recipe.id,
+        title: recipe.title,
+        author: recipe.author_username,
+        status: recipe.moderation_status,
+        published: recipe.is_published,
+      })
+    })
 
     return NextResponse.json({
       success: true,
-      recipes,
-      count: recipes.length,
+      recipes: result,
+      pagination: {
+        limit,
+        offset,
+        count: result.length,
+      },
     })
   } catch (error) {
-    console.error("❌ [RECIPES-API] Error fetching recipes:", error)
+    console.error("❌ [RECIPES-API] Error getting recipes:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Failed to fetch recipes",
+        error: "Internal server error",
         details: error instanceof Error ? error.message : "Unknown error",
-        recipes: [],
       },
       { status: 500 },
     )
@@ -111,44 +89,33 @@ export async function GET(request: NextRequest) {
 
 // POST - Create new recipe
 export async function POST(request: NextRequest) {
-  console.log("🔄 [API] Recipe submission started")
-
   try {
+    console.log("🔄 [RECIPES-API] Creating new recipe")
+
     // Check authentication
     const user = await getCurrentUserFromRequest(request)
     if (!user) {
-      console.log("❌ [API] No authenticated user found")
+      console.log("❌ [RECIPES-API] No authenticated user found")
       return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
     }
 
-    console.log("✅ [API] User authenticated:", user.username)
+    console.log("✅ [RECIPES-API] User authenticated:", user.username)
 
     // Parse request body
     const body = await request.json()
-    const {
-      title,
-      description,
-      category,
-      difficulty,
-      prep_time_minutes,
-      cook_time_minutes,
-      servings,
-      ingredients,
-      instructions,
-      tags,
-      image_url,
-    } = body
+    const { title, description, category, difficulty, prepTime, cookTime, servings, ingredients, instructions, tags } =
+      body
 
-    console.log("📝 [API] Recipe data received:", {
+    console.log("📝 [RECIPES-API] Recipe data received:", {
       title,
       category,
       difficulty,
-      prep_time_minutes,
-      cook_time_minutes,
+      prepTime,
+      cookTime,
       servings,
-      ingredients_count: ingredients?.length,
-      instructions_count: instructions?.length,
-      tags_count: tags?.length,
+      ingredientsCount: ingredients?.length,
+      instructionsCount: instructions?.length,
+      tagsCount: tags?.length,
     })
 
     // Validate required fields
@@ -168,98 +135,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Instructions must be a non-empty array" }, { status: 400 })
     }
 
-    // Process arrays to remove empty items and ensure strings
-    const processedIngredients = ingredients
-      .filter((item: any) => item && typeof item === "string" && item.trim().length > 0)
-      .map((item: string) => item.trim())
+    // Generate unique recipe ID
+    const recipeId = `recipe_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
 
-    const processedInstructions = instructions
-      .filter((item: any) => item && typeof item === "string" && item.trim().length > 0)
-      .map((item: string) => item.trim())
-
-    const processedTags = Array.isArray(tags)
-      ? tags
-          .filter((item: any) => item && typeof item === "string" && item.trim().length > 0)
-          .map((item: string) => item.trim())
-      : []
-
-    // Validate processed arrays
-    if (processedIngredients.length === 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "At least one valid ingredient is required",
-        },
-        { status: 400 },
-      )
-    }
-
-    if (processedInstructions.length === 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "At least one valid instruction is required",
-        },
-        { status: 400 },
-      )
-    }
-
-    console.log("🔄 [API] Processed arrays:", {
-      ingredients: processedIngredients.length,
-      instructions: processedInstructions.length,
-      tags: processedTags.length,
-    })
-
-    // Validate numeric fields
-    const prepTime = Number.parseInt(prep_time_minutes)
-    const cookTime = Number.parseInt(cook_time_minutes)
-    const servingsCount = Number.parseInt(servings)
-
-    if (isNaN(prepTime) || prepTime < 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Prep time must be a valid positive number",
-        },
-        { status: 400 },
-      )
-    }
-
-    if (isNaN(cookTime) || cookTime < 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Cook time must be a valid positive number",
-        },
-        { status: 400 },
-      )
-    }
-
-    if (isNaN(servingsCount) || servingsCount < 1) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Servings must be a valid positive number",
-        },
-        { status: 400 },
-      )
-    }
-
-    // Prepare recipe data matching database schema exactly
+    // Prepare data for insertion
     const recipeData = {
-      title: String(title).trim(),
-      description: description ? String(description).trim() : null,
+      id: recipeId,
+      title: title.trim(),
+      description: description?.trim() || null,
       author_id: user.id,
       author_username: user.username,
-      category: String(category).trim(),
-      difficulty: String(difficulty).trim(),
-      prep_time_minutes: prepTime,
-      cook_time_minutes: cookTime,
-      servings: servingsCount,
-      image_url: image_url ? String(image_url).trim() : null,
-      ingredients: processedIngredients,
-      instructions: processedInstructions,
-      tags: processedTags,
+      category: category.trim(),
+      difficulty: difficulty.trim(),
+      prep_time_minutes: Number.parseInt(prepTime) || 0,
+      cook_time_minutes: Number.parseInt(cookTime) || 0,
+      servings: Number.parseInt(servings) || 1,
+      image_url: null, // TODO: Handle image uploads
+      ingredients: JSON.stringify(ingredients.filter((i) => i.trim())),
+      instructions: JSON.stringify(instructions.filter((i) => i.trim())),
+      tags: JSON.stringify(tags || []),
       moderation_status: "pending",
       is_published: false,
       rating: 0,
@@ -267,22 +161,13 @@ export async function POST(request: NextRequest) {
       view_count: 0,
     }
 
-    console.log("📝 [API] Final recipe data prepared:", {
+    console.log("💾 [RECIPES-API] Inserting recipe into database:", {
+      id: recipeData.id,
       title: recipeData.title,
       author: recipeData.author_username,
-      category: recipeData.category,
-      difficulty: recipeData.difficulty,
-      prep_time: recipeData.prep_time_minutes,
-      cook_time: recipeData.cook_time_minutes,
-      servings: recipeData.servings,
-      ingredients_count: recipeData.ingredients.length,
-      instructions_count: recipeData.instructions.length,
-      tags_count: recipeData.tags.length,
-      has_description: !!recipeData.description,
-      has_image: !!recipeData.image_url,
     })
 
-    // Create recipe in database
+    // Insert recipe into database
     const result = await sql`
       INSERT INTO recipes (
         id, title, description, author_id, author_username, 
@@ -290,61 +175,46 @@ export async function POST(request: NextRequest) {
         servings, image_url, ingredients, instructions, tags,
         moderation_status, is_published, rating, review_count, view_count
       ) VALUES (
-        ${recipeData.id}, 
-        ${recipeData.title}, 
-        ${recipeData.description || null}, 
-        ${recipeData.author_id}, 
-        ${recipeData.author_username},
-        ${recipeData.category}, 
-        ${recipeData.difficulty}, 
-        ${recipeData.prep_time_minutes || 0}, 
-        ${recipeData.cook_time_minutes || 0}, 
-        ${recipeData.servings || 1}, 
-        ${recipeData.image_url || null},
-        ${JSON.stringify(recipeData.ingredients)}::jsonb, 
-        ${JSON.stringify(recipeData.instructions)}::jsonb, 
-        ${JSON.stringify(recipeData.tags)}::jsonb,
-        ${recipeData.moderation_status}, 
-        ${recipeData.is_published}, 
-        ${recipeData.rating}, 
-        ${recipeData.review_count}, 
-        ${recipeData.view_count}
+        ${recipeData.id}, ${recipeData.title}, ${recipeData.description}, 
+        ${recipeData.author_id}, ${recipeData.author_username},
+        ${recipeData.category}, ${recipeData.difficulty}, 
+        ${recipeData.prep_time_minutes}, ${recipeData.cook_time_minutes}, 
+        ${recipeData.servings}, ${recipeData.image_url},
+        ${recipeData.ingredients}::jsonb, ${recipeData.instructions}::jsonb, 
+        ${recipeData.tags}::jsonb, ${recipeData.moderation_status}, 
+        ${recipeData.is_published}, ${recipeData.rating}, 
+        ${recipeData.review_count}, ${recipeData.view_count}
       )
       RETURNING id, title, moderation_status, created_at
     `
 
     if (result.length === 0) {
-      throw new Error("Failed to insert recipe")
+      throw new Error("Failed to insert recipe - no result returned")
     }
 
     const insertedRecipe = result[0]
-    console.log("✅ [API] Recipe created successfully:", {
+    console.log("✅ [RECIPES-API] Recipe created successfully:", {
       id: insertedRecipe.id,
       title: insertedRecipe.title,
       status: insertedRecipe.moderation_status,
+      created_at: insertedRecipe.created_at,
     })
 
     return NextResponse.json({
       success: true,
       message: "Recipe submitted successfully and is pending moderation",
-      recipe: {
-        id: insertedRecipe.id,
-        title: insertedRecipe.title,
-        status: insertedRecipe.moderation_status,
-        created_at: insertedRecipe.created_at,
-      },
+      recipeId: insertedRecipe.id,
+      recipe: insertedRecipe,
     })
   } catch (error) {
-    console.error("❌ [API] Recipe submission error:", error)
-
-    // Ensure we always return valid JSON
-    const errorResponse = {
-      success: false,
-      error: `Server error: ${error instanceof Error ? error.message : "Unknown error"}`,
-      timestamp: new Date().toISOString(),
-    }
-
-    console.log("📤 [API] Sending error response:", errorResponse)
-    return NextResponse.json(errorResponse, { status: 500 })
+    console.error("❌ [RECIPES-API] Error creating recipe:", error)
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Failed to create recipe",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    )
   }
 }

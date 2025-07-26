@@ -57,33 +57,63 @@ export async function POST(request: NextRequest) {
       currentStatus: recipe.moderation_status,
     })
 
-    // Prepare moderation data
-    const moderationStatus = action === "approve" ? "approved" : "rejected"
-    const isPublished = action === "approve"
-    const moderationNotes = notes || null
+    if (action === "reject") {
+      console.log("🔄 [ADMIN-MODERATE] Processing rejection - moving to rejected_recipes table")
 
-    console.log("🔄 [ADMIN-MODERATE] Updating recipe with:", {
-      status: moderationStatus,
-      published: isPublished,
-      notes: moderationNotes,
-    })
+      // First, insert into rejected_recipes table
+      await sql`
+        INSERT INTO rejected_recipes (
+          original_recipe_id, title, description, author_id, author_username,
+          category, difficulty, prep_time_minutes, cook_time_minutes, servings,
+          image_url, ingredients, instructions, tags, rejection_reason,
+          rejected_by, rejected_at, original_created_at
+        )
+        VALUES (
+          ${recipe.id}, ${recipe.title}, ${recipe.description}, ${recipe.author_id}, 
+          ${recipe.author_username}, ${recipe.category}, ${recipe.difficulty},
+          ${recipe.prep_time_minutes}, ${recipe.cook_time_minutes}, ${recipe.servings},
+          ${recipe.image_url}, ${recipe.ingredients}, ${recipe.instructions}, 
+          ${recipe.tags}, ${notes || "No reason provided"}, ${user.id}, NOW(), ${recipe.created_at}
+        )
+      `
 
-    // Start with base update data
-    const updateData: any = {
-      moderation_status: moderationStatus,
-      moderation_notes: moderationNotes,
-      is_published: isPublished,
-      updated_at: new Date().toISOString(),
+      // Then delete from recipes table
+      await sql`
+        DELETE FROM recipes WHERE id = ${recipeId}
+      `
+
+      console.log("✅ [ADMIN-MODERATE] Recipe rejected and moved to rejected_recipes table")
+
+      return NextResponse.json({
+        success: true,
+        message: `Recipe "${recipe.title}" has been rejected and archived`,
+      })
     }
 
-    // If approving with edits, include the edits
-    if (action === "approve" && edits) {
+    // Handle approval
+    console.log("🔄 [ADMIN-MODERATE] Processing approval")
+
+    // Prepare moderation data
+    const moderationStatus = "approved"
+    const isPublished = true
+    const moderationNotes = notes || null
+
+    // Start with base update data
+    let updateTitle = recipe.title
+    let updateDescription = recipe.description
+    let updateCategory = recipe.category
+    let updateDifficulty = recipe.difficulty
+    let updateIngredients = recipe.ingredients
+    let updateInstructions = recipe.instructions
+
+    // If approving with edits, apply the edits
+    if (edits) {
       console.log("📝 [ADMIN-MODERATE] Applying edits to recipe")
 
-      if (edits.title) updateData.title = edits.title
-      if (edits.description) updateData.description = edits.description
-      if (edits.category) updateData.category = edits.category
-      if (edits.difficulty) updateData.difficulty = edits.difficulty
+      if (edits.title) updateTitle = edits.title
+      if (edits.description) updateDescription = edits.description
+      if (edits.category) updateCategory = edits.category
+      if (edits.difficulty) updateDifficulty = edits.difficulty
 
       // Handle ingredients and instructions
       if (edits.ingredients) {
@@ -91,7 +121,7 @@ export async function POST(request: NextRequest) {
           typeof edits.ingredients === "string"
             ? edits.ingredients.split("\n").filter((i) => i.trim())
             : edits.ingredients
-        updateData.ingredients = JSON.stringify(ingredientsArray)
+        updateIngredients = JSON.stringify(ingredientsArray)
       }
 
       if (edits.instructions) {
@@ -99,32 +129,32 @@ export async function POST(request: NextRequest) {
           typeof edits.instructions === "string"
             ? edits.instructions.split("\n").filter((i) => i.trim())
             : edits.instructions
-        updateData.instructions = JSON.stringify(instructionsArray)
+        updateInstructions = JSON.stringify(instructionsArray)
       }
 
       console.log("📝 [ADMIN-MODERATE] Edit data prepared:", {
-        title: updateData.title,
-        category: updateData.category,
-        difficulty: updateData.difficulty,
-        hasIngredients: !!updateData.ingredients,
-        hasInstructions: !!updateData.instructions,
+        title: updateTitle,
+        category: updateCategory,
+        difficulty: updateDifficulty,
+        hasIngredients: !!updateIngredients,
+        hasInstructions: !!updateInstructions,
       })
     }
 
-    // Update recipe using dynamic SQL
+    // Update recipe
     const result = await sql`
       UPDATE recipes 
       SET 
-        moderation_status = ${updateData.moderation_status},
-        moderation_notes = ${updateData.moderation_notes},
-        is_published = ${updateData.is_published},
-        title = ${updateData.title || recipe.title},
-        description = ${updateData.description || recipe.description},
-        category = ${updateData.category || recipe.category},
-        difficulty = ${updateData.difficulty || recipe.difficulty},
-        ingredients = ${updateData.ingredients ? updateData.ingredients + "::jsonb" : recipe.ingredients},
-        instructions = ${updateData.instructions ? updateData.instructions + "::jsonb" : recipe.instructions},
-        updated_at = ${updateData.updated_at}
+        moderation_status = ${moderationStatus},
+        moderation_notes = ${moderationNotes},
+        is_published = ${isPublished},
+        title = ${updateTitle},
+        description = ${updateDescription},
+        category = ${updateCategory},
+        difficulty = ${updateDifficulty},
+        ingredients = ${updateIngredients}::jsonb,
+        instructions = ${updateInstructions}::jsonb,
+        updated_at = NOW()
       WHERE id = ${recipeId}
       RETURNING id, title, moderation_status, is_published, updated_at
     `
@@ -135,7 +165,7 @@ export async function POST(request: NextRequest) {
     }
 
     const updatedRecipe = result[0]
-    console.log("✅ [ADMIN-MODERATE] Recipe moderated successfully:", {
+    console.log("✅ [ADMIN-MODERATE] Recipe approved successfully:", {
       id: updatedRecipe.id,
       title: updatedRecipe.title,
       status: updatedRecipe.moderation_status,
@@ -152,7 +182,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Recipe "${updatedRecipe.title}" has been ${action}ed successfully`,
+      message: `Recipe "${updatedRecipe.title}" has been approved successfully`,
       recipe: updatedRecipe,
     })
   } catch (error) {
