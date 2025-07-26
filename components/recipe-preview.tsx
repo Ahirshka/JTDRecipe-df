@@ -99,7 +99,7 @@ export function RecipePreview({ recipe, showApprovalBadge = false }: RecipePrevi
           {/* Time and Servings */}
           <div className="flex items-center justify-between text-sm text-gray-500">
             <div className="flex items-center gap-1">
-              <Clock className="w-4 h-4" />
+              <Clock className="w-4 w-4" />
               <span>{totalTime}m</span>
             </div>
             <div className="flex items-center gap-1">

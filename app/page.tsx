@@ -62,6 +62,7 @@ export default function HomePage() {
   const [loadingRecipes, setLoadingRecipes] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
   const [refreshing, setRefreshing] = useState(false)
+  const [debugInfo, setDebugInfo] = useState<any>(null)
 
   const loadData = async (showRefreshing = false) => {
     try {
@@ -69,7 +70,7 @@ export default function HomePage() {
 
       console.log("🔄 [HOMEPAGE] Loading recipes from API...")
       const response = await fetch("/api/recipes?limit=50", {
-        cache: "no-store", // Ensure fresh data
+        cache: "no-store",
         headers: {
           "Cache-Control": "no-cache",
         },
@@ -93,6 +94,9 @@ export default function HomePage() {
 
       const data = await response.json()
       console.log("📋 [HOMEPAGE] API Response:", data)
+
+      // Store debug info for troubleshooting
+      setDebugInfo(data.debug)
 
       if (!data.success) {
         console.error("❌ [HOMEPAGE] API returned error:", data.error)
@@ -288,16 +292,25 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-2xl font-bold text-gray-900">Browse Categories</h2>
-            <Button
-              onClick={handleRefresh}
-              variant="outline"
-              size="sm"
-              disabled={refreshing}
-              className="flex items-center gap-2 bg-transparent"
-            >
-              <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-              {refreshing ? "Refreshing..." : "Refresh"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={handleRefresh}
+                variant="outline"
+                size="sm"
+                disabled={refreshing}
+                className="flex items-center gap-2 bg-transparent"
+              >
+                <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+                {refreshing ? "Refreshing..." : "Refresh"}
+              </Button>
+              {(user?.role === "owner" || user?.role === "admin") && (
+                <Link href="/test-homepage">
+                  <Button variant="outline" size="sm">
+                    Debug Homepage
+                  </Button>
+                </Link>
+              )}
+            </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {categoryData.map((category) => (
@@ -345,6 +358,11 @@ export default function HomePage() {
               <p className="text-gray-600 mt-1">
                 {categoryData.find((cat) => cat.key === activeCategory)?.description}
               </p>
+              {debugInfo && (
+                <p className="text-xs text-gray-400 mt-1">
+                  API returned {debugInfo.total_found} recipes, {debugInfo.recently_approved_count} recently approved
+                </p>
+              )}
             </div>
             <Link href="/search">
               <Button variant="outline">View All</Button>
@@ -389,9 +407,16 @@ export default function HomePage() {
                       Check the admin panel for pending recipes
                     </Link>
                   </p>
-                  <Button onClick={handleRefresh} variant="outline" size="sm">
-                    Refresh to check for new recipes
-                  </Button>
+                  <div className="flex justify-center gap-2">
+                    <Button onClick={handleRefresh} variant="outline" size="sm">
+                      Refresh to check for new recipes
+                    </Button>
+                    <Link href="/test-homepage">
+                      <Button variant="outline" size="sm">
+                        Debug Homepage
+                      </Button>
+                    </Link>
+                  </div>
                 </div>
               ) : (
                 <Button onClick={handleRefresh} variant="outline" size="sm" className="mt-4 bg-transparent">
