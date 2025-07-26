@@ -1,111 +1,107 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { sql, initializeDatabase } from "@/lib/neon"
-import jwt from "jsonwebtoken"
+import { sql } from "@/lib/neon"
+import { getCurrentUserFromRequest } from "@/lib/server-auth"
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
-
-// Get user's rating for a recipe
-export async function GET(request: NextRequest) {
-  try {
-    await initializeDatabase()
-
-    const token = request.cookies.get("auth-token")?.value
-    if (!token) {
-      return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
-    }
-
-    let userId: number
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET) as any
-      userId = decoded.userId
-    } catch (error) {
-      return NextResponse.json({ success: false, error: "Invalid token" }, { status: 401 })
-    }
-
-    const { searchParams } = new URL(request.url)
-    const recipeId = searchParams.get("recipeId")
-
-    if (!recipeId) {
-      return NextResponse.json({ success: false, error: "Recipe ID required" }, { status: 400 })
-    }
-
-    const rating = await sql`
-      SELECT rating FROM ratings 
-      WHERE user_id = ${userId} AND recipe_id = ${recipeId}
-    `
-
-    return NextResponse.json({
-      success: true,
-      rating: rating.length > 0 ? rating[0].rating : null,
-    })
-  } catch (error) {
-    console.error("Get rating error:", error)
-    return NextResponse.json({ success: false, error: "Failed to get rating" }, { status: 500 })
-  }
-}
-
-// Submit or update a rating
+// POST - Submit a rating
 export async function POST(request: NextRequest) {
   try {
-    await initializeDatabase()
+    console.log("🔄 [RATINGS-API] Rating submission request received")
 
-    const token = request.cookies.get("auth-token")?.value
-    if (!token) {
-      return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
+    // Get user from session
+    const user = await getCurrentUserFromRequest(request)
+    if (!user) {
+      console.log("❌ [RATINGS-API] No authenticated user found")
+      return NextResponse.json({ success: false, message: "Authentication required" }, { status: 401 })
     }
 
-    let userId: number
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET) as any
-      userId = decoded.userId
-    } catch (error) {
-      return NextResponse.json({ success: false, error: "Invalid token" }, { status: 401 })
+    console.log("✅ [RATINGS-API] User authenticated:", user.username)
+
+    // Parse request body
+    const body = await request.json()
+    const { recipe_id, rating } = body
+
+    console.log("📝 [RATINGS-API] Rating data received:", { recipe_id, rating, user_id: user.id })
+
+    // Validate input
+    if (!recipe_id || !rating) {
+      return NextResponse.json({ success: false, message: "Recipe ID and rating are required" }, { status: 400 })
     }
 
-    const { recipeId, rating } = await request.json()
-
-    if (!recipeId || !rating || rating < 1 || rating > 5) {
-      return NextResponse.json({ success: false, error: "Valid recipe ID and rating (1-5) required" }, { status: 400 })
+    if (rating < 1 || rating > 5) {
+      return NextResponse.json({ success: false, message: "Rating must be between 1 and 5" }, { status: 400 })
     }
+
+    // Check if recipe exists
+    const recipeCheck = await sql`
+      SELECT id FROM recipes WHERE id = ${recipe_id} AND moderation_status = 'approved' AND is_published = true
+    `
+
+    if (recipeCheck.length === 0) {
+      return NextResponse.json({ success: false, message: "Recipe not found or not published" }, { status: 404 })
+    }
+
+    // Create ratings table if it doesn't exist
+    await sql`
+      CREATE TABLE IF NOT EXISTS ratings (
+        id SERIAL PRIMARY KEY,
+        recipe_id VARCHAR(255) NOT NULL,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE(recipe_id, user_id)
+      );
+    `
 
     // Insert or update rating
     await sql`
-      INSERT INTO ratings (user_id, recipe_id, rating, created_at, updated_at)
-      VALUES (${userId}, ${recipeId}, ${rating}, NOW(), NOW())
-      ON CONFLICT (user_id, recipe_id) 
+      INSERT INTO ratings (recipe_id, user_id, rating, created_at, updated_at)
+      VALUES (${recipe_id}, ${user.id}, ${rating}, NOW(), NOW())
+      ON CONFLICT (recipe_id, user_id)
       DO UPDATE SET rating = ${rating}, updated_at = NOW()
     `
 
-    // Calculate new average rating for the recipe
-    const avgResult = await sql`
+    console.log("✅ [RATINGS-API] Rating saved successfully")
+
+    // Calculate new average rating and review count
+    const ratingStats = await sql`
       SELECT 
-        AVG(rating)::DECIMAL(3,2) as avg_rating,
-        COUNT(*) as total_ratings
+        AVG(rating)::NUMERIC(3,2) as avg_rating,
+        COUNT(*)::INTEGER as review_count
       FROM ratings 
-      WHERE recipe_id = ${recipeId}
+      WHERE recipe_id = ${recipe_id}
     `
 
-    const avgRating = Number.parseFloat(avgResult[0].avg_rating) || 0
-    const totalRatings = Number.parseInt(avgResult[0].total_ratings) || 0
+    const newAverageRating = Number(ratingStats[0].avg_rating) || 0
+    const newReviewCount = Number(ratingStats[0].review_count) || 0
 
-    // Update recipe with new average
+    console.log("📊 [RATINGS-API] New rating stats:", { newAverageRating, newReviewCount })
+
+    // Update recipe with new rating stats
     await sql`
       UPDATE recipes 
-      SET 
-        rating = ${avgRating},
-        review_count = ${totalRatings},
-        updated_at = NOW()
-      WHERE id = ${recipeId}
+      SET rating = ${newAverageRating}, review_count = ${newReviewCount}, updated_at = NOW()
+      WHERE id = ${recipe_id}
     `
+
+    console.log("✅ [RATINGS-API] Recipe rating stats updated")
 
     return NextResponse.json({
       success: true,
       message: "Rating submitted successfully",
-      avgRating,
-      totalRatings,
+      newAverageRating,
+      newReviewCount,
+      userRating: rating,
     })
   } catch (error) {
-    console.error("Submit rating error:", error)
-    return NextResponse.json({ success: false, error: "Failed to submit rating" }, { status: 500 })
+    console.error("❌ [RATINGS-API] Error submitting rating:", error)
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Internal server error",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    )
   }
 }
