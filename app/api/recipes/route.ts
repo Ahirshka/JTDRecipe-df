@@ -5,7 +5,7 @@ import { getCurrentUserFromRequest } from "@/lib/server-auth"
 // GET - Fetch published recipes
 export async function GET(request: NextRequest) {
   try {
-    console.log("🔄 [RECIPES-API] Fetching recipes")
+    console.log("🔄 [RECIPES-API] Starting recipe fetch")
 
     const { searchParams } = new URL(request.url)
     const limit = searchParams.get("limit") ? Number.parseInt(searchParams.get("limit")!) : 50
@@ -14,8 +14,26 @@ export async function GET(request: NextRequest) {
 
     console.log("📋 [RECIPES-API] Query parameters:", { limit, search, category })
 
+    // Test database connection first
+    try {
+      await sql`SELECT 1`
+      console.log("✅ [RECIPES-API] Database connection successful")
+    } catch (dbError) {
+      console.error("❌ [RECIPES-API] Database connection failed:", dbError)
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Database connection failed",
+          details: dbError instanceof Error ? dbError.message : "Unknown database error",
+          recipes: [],
+          count: 0,
+        },
+        { status: 500 },
+      )
+    }
+
     // Build the query - only get approved and published recipes
-    let query = `
+    let baseQuery = `
       SELECT 
         id, title, description, author_id, author_username, category, difficulty,
         prep_time_minutes, cook_time_minutes, servings, image_url, 
@@ -28,79 +46,169 @@ export async function GET(request: NextRequest) {
     const queryParams: any[] = []
     let paramIndex = 1
 
-    if (search) {
-      query += ` AND (title ILIKE $${paramIndex} OR description ILIKE $${paramIndex})`
-      queryParams.push(`%${search}%`)
+    if (search && search.trim()) {
+      baseQuery += ` AND (title ILIKE $${paramIndex} OR description ILIKE $${paramIndex})`
+      queryParams.push(`%${search.trim()}%`)
       paramIndex++
     }
 
-    if (category) {
-      query += ` AND category = $${paramIndex}`
-      queryParams.push(category)
+    if (category && category.trim() && category !== "all-categories") {
+      baseQuery += ` AND category = $${paramIndex}`
+      queryParams.push(category.trim())
       paramIndex++
     }
 
-    query += ` ORDER BY updated_at DESC, created_at DESC LIMIT $${paramIndex}`
+    baseQuery += ` ORDER BY updated_at DESC, created_at DESC LIMIT $${paramIndex}`
     queryParams.push(limit)
 
-    console.log("🔍 [RECIPES-API] Executing query:", query)
+    console.log("🔍 [RECIPES-API] Executing query:", baseQuery)
     console.log("📋 [RECIPES-API] Query params:", queryParams)
 
     // Execute the query
-    const recipes = await sql.unsafe(query, queryParams)
+    let recipes
+    try {
+      if (queryParams.length === 1) {
+        // Only limit parameter
+        recipes = await sql`
+          SELECT 
+            id, title, description, author_id, author_username, category, difficulty,
+            prep_time_minutes, cook_time_minutes, servings, image_url, 
+            rating, review_count, view_count, moderation_status, is_published,
+            created_at, updated_at
+          FROM recipes 
+          WHERE moderation_status = 'approved' AND is_published = true
+          ORDER BY updated_at DESC, created_at DESC 
+          LIMIT ${limit}
+        `
+      } else {
+        // Use unsafe query for dynamic parameters
+        recipes = await sql.unsafe(baseQuery, queryParams)
+      }
 
-    console.log(`✅ [RECIPES-API] Found ${recipes.length} recipes`)
+      console.log(`✅ [RECIPES-API] Query executed successfully, found ${recipes.length} recipes`)
+    } catch (queryError) {
+      console.error("❌ [RECIPES-API] Query execution failed:", queryError)
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Query execution failed",
+          details: queryError instanceof Error ? queryError.message : "Unknown query error",
+          recipes: [],
+          count: 0,
+        },
+        { status: 500 },
+      )
+    }
 
     // Process recipes and calculate approval timing
     const processedRecipes = recipes.map((recipe: any) => {
-      const createdDate = new Date(recipe.created_at)
-      const updatedDate = new Date(recipe.updated_at)
+      try {
+        const createdDate = new Date(recipe.created_at)
+        const updatedDate = new Date(recipe.updated_at)
 
-      // If updated_at is significantly later than created_at, it's likely the approval time
-      const approvalDate = updatedDate > createdDate ? updatedDate : createdDate
-      const daysSinceApproval = Math.floor((Date.now() - approvalDate.getTime()) / (1000 * 60 * 60 * 24))
-      const isRecentlyApproved = daysSinceApproval <= 30
+        // If updated_at is significantly later than created_at, it's likely the approval time
+        const approvalDate = updatedDate > createdDate ? updatedDate : createdDate
+        const daysSinceApproval = Math.floor((Date.now() - approvalDate.getTime()) / (1000 * 60 * 60 * 24))
+        const isRecentlyApproved = daysSinceApproval <= 30
 
-      console.log(`📋 [RECIPES-API] Recipe "${recipe.title}":`, {
-        id: recipe.id,
-        author: recipe.author_username,
-        status: recipe.moderation_status,
-        published: recipe.is_published,
-        created: recipe.created_at,
-        updated: recipe.updated_at,
-        approvalDate: approvalDate.toISOString(),
-        daysSinceApproval,
-        isRecentlyApproved,
-      })
+        console.log(`📋 [RECIPES-API] Processing recipe "${recipe.title}":`, {
+          id: recipe.id,
+          author: recipe.author_username,
+          status: recipe.moderation_status,
+          published: recipe.is_published,
+          created: recipe.created_at,
+          updated: recipe.updated_at,
+          daysSinceApproval,
+          isRecentlyApproved,
+        })
 
-      return {
-        ...recipe,
-        rating: Number(recipe.rating) || 0,
-        review_count: Number(recipe.review_count) || 0,
-        view_count: Number(recipe.view_count) || 0,
-        prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
-        cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
-        servings: Number(recipe.servings) || 1,
-        approval_date: approvalDate.toISOString(),
-        days_since_approval: daysSinceApproval,
-        is_recently_approved: isRecentlyApproved,
+        return {
+          id: recipe.id || "",
+          title: recipe.title || "Untitled Recipe",
+          description: recipe.description || "",
+          author_id: recipe.author_id || "",
+          author_username: recipe.author_username || "Unknown Author",
+          category: recipe.category || "Other",
+          difficulty: recipe.difficulty || "Medium",
+          prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
+          cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
+          servings: Number(recipe.servings) || 1,
+          image_url: recipe.image_url || "/placeholder.svg?height=200&width=300",
+          rating: Number(recipe.rating) || 0,
+          review_count: Number(recipe.review_count) || 0,
+          view_count: Number(recipe.view_count) || 0,
+          moderation_status: recipe.moderation_status || "pending",
+          is_published: Boolean(recipe.is_published),
+          created_at: recipe.created_at || new Date().toISOString(),
+          updated_at: recipe.updated_at || new Date().toISOString(),
+          approval_date: approvalDate.toISOString(),
+          days_since_approval: daysSinceApproval,
+          is_recently_approved: isRecentlyApproved,
+        }
+      } catch (processingError) {
+        console.error("❌ [RECIPES-API] Error processing recipe:", processingError)
+        // Return a safe default recipe object
+        return {
+          id: recipe.id || `error_${Date.now()}`,
+          title: recipe.title || "Error Loading Recipe",
+          description: "There was an error loading this recipe",
+          author_id: recipe.author_id || "",
+          author_username: recipe.author_username || "Unknown",
+          category: "Other",
+          difficulty: "Medium",
+          prep_time_minutes: 0,
+          cook_time_minutes: 0,
+          servings: 1,
+          image_url: "/placeholder.svg?height=200&width=300",
+          rating: 0,
+          review_count: 0,
+          view_count: 0,
+          moderation_status: "approved",
+          is_published: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          approval_date: new Date().toISOString(),
+          days_since_approval: 0,
+          is_recently_approved: false,
+        }
       }
     })
+
+    console.log(`✅ [RECIPES-API] Successfully processed ${processedRecipes.length} recipes`)
 
     return NextResponse.json({
       success: true,
       recipes: processedRecipes,
       count: processedRecipes.length,
+      debug: {
+        query_params: { limit, search, category },
+        total_found: recipes.length,
+        recently_approved_count: processedRecipes.filter((r) => r.is_recently_approved).length,
+        timestamp: new Date().toISOString(),
+      },
     })
   } catch (error) {
-    console.error("❌ [RECIPES-API] Error fetching recipes:", error)
+    console.error("❌ [RECIPES-API] Unexpected error fetching recipes:", error)
+
+    // Log the full error details
+    if (error instanceof Error) {
+      console.error("❌ [RECIPES-API] Error name:", error.name)
+      console.error("❌ [RECIPES-API] Error message:", error.message)
+      console.error("❌ [RECIPES-API] Error stack:", error.stack)
+    }
+
     return NextResponse.json(
       {
         success: false,
         error: "Internal server error",
-        details: error instanceof Error ? error.message : "Unknown error",
+        details: error instanceof Error ? error.message : "Unknown error occurred",
         recipes: [],
         count: 0,
+        debug: {
+          timestamp: new Date().toISOString(),
+          error_type: error instanceof Error ? error.name : "Unknown",
+          error_message: error instanceof Error ? error.message : "Unknown error",
+        },
       },
       { status: 500 },
     )
@@ -148,7 +256,7 @@ export async function POST(request: NextRequest) {
       instructionsCount: instructions?.length || 0,
     })
 
-    // Validate required fields - allow empty arrays for testing
+    // Validate required fields
     if (!title || !category || !difficulty) {
       return NextResponse.json(
         { success: false, error: "Missing required fields: title, category, difficulty" },

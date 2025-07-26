@@ -22,9 +22,9 @@ interface DebugAnalysis {
   steps: AnalysisStep[]
   issues: string[]
   summary: {
-    total_recipes: number
-    approved_published: number
-    recently_approved: number
+    total_steps: number
+    successful_steps: number
+    error_steps: number
     issues_found: number
     overall_status: string
   }
@@ -273,19 +273,19 @@ export default function TestHomepage() {
               <CardContent>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-blue-600">{analysis.summary.total_recipes}</div>
-                    <div className="text-sm text-gray-600">Total Recipes</div>
+                    <div className="text-2xl font-bold text-blue-600">{analysis.summary.total_steps}</div>
+                    <div className="text-sm text-gray-600">Total Steps</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-green-600">{analysis.summary.approved_published}</div>
-                    <div className="text-sm text-gray-600">Approved & Published</div>
+                    <div className="text-2xl font-bold text-green-600">{analysis.summary.successful_steps}</div>
+                    <div className="text-sm text-gray-600">Successful</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-orange-600">{analysis.summary.recently_approved}</div>
-                    <div className="text-sm text-gray-600">Recently Approved</div>
+                    <div className="text-2xl font-bold text-red-600">{analysis.summary.error_steps}</div>
+                    <div className="text-sm text-gray-600">Errors</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-red-600">{analysis.summary.issues_found}</div>
+                    <div className="text-2xl font-bold text-orange-600">{analysis.summary.issues_found}</div>
                     <div className="text-sm text-gray-600">Issues Found</div>
                   </div>
                 </div>
@@ -392,6 +392,7 @@ export default function TestHomepage() {
             <CardContent>
               <p className="text-gray-600">This tool will check:</p>
               <ul className="list-disc list-inside mt-2 space-y-1 text-gray-600">
+                <li>Database connection</li>
                 <li>Total recipes in database</li>
                 <li>Approved and published recipes</li>
                 <li>Recently approved recipes (last 30 days)</li>

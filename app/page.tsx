@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -75,6 +74,7 @@ export default function HomePage() {
       } else {
         setError(data.error || "Failed to load recipes")
         console.error("❌ [HOMEPAGE] API Error:", data.error)
+        console.error("❌ [HOMEPAGE] API Details:", data.details)
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to load recipes"
@@ -211,7 +211,16 @@ export default function HomePage() {
         {/* Error Display */}
         {error && (
           <Alert variant="destructive" className="mb-8">
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription>
+              {error}
+              {(user?.role === "admin" || user?.role === "owner") && (
+                <div className="mt-2">
+                  <Button onClick={() => router.push("/test-homepage")} variant="outline" size="sm">
+                    Debug This Issue
+                  </Button>
+                </div>
+              )}
+            </AlertDescription>
           </Alert>
         )}
 
@@ -236,7 +245,7 @@ export default function HomePage() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
               {recentlyApproved.slice(0, 8).map((recipe) => (
-                <RecipePreview key={recipe.id} recipe={recipe} />
+                <RecipePreview key={recipe.id} recipe={recipe} showApprovalBadge={true} />
               ))}
             </div>
           </div>
@@ -271,12 +280,20 @@ export default function HomePage() {
                 ? "Try adjusting your search terms or filters"
                 : "Be the first to share a delicious recipe with our community!"}
             </p>
-            {isAuthenticated && (
-              <Button onClick={() => router.push("/add-recipe")}>
-                <Plus className="mr-2 h-4 w-4" />
-                Add Your Recipe
-              </Button>
-            )}
+            <div className="flex justify-center gap-4">
+              {isAuthenticated && (
+                <Button onClick={() => router.push("/add-recipe")}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Your Recipe
+                </Button>
+              )}
+              {(user?.role === "admin" || user?.role === "owner") && (
+                <Button onClick={() => router.push("/test-homepage")} variant="outline">
+                  <Settings className="mr-2 h-4 w-4" />
+                  Debug Homepage
+                </Button>
+              )}
+            </div>
           </div>
         )}
       </div>
