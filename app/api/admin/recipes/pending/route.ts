@@ -1,33 +1,35 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { sql } from "@/lib/neon"
-import jwt from "jsonwebtoken"
+import { getCurrentUserFromRequest } from "@/lib/server-auth"
 
 export async function GET(request: NextRequest) {
   try {
-    // Check authentication
-    const token = request.cookies.get("auth-token")?.value
-    if (!token) {
+    console.log("🔄 [ADMIN-API] Getting pending recipes")
+
+    // Check authentication using the correct cookie name
+    const user = await getCurrentUserFromRequest(request)
+    if (!user) {
+      console.log("❌ [ADMIN-API] No authenticated user found")
       return NextResponse.json({ success: false, error: "Not authenticated" }, { status: 401 })
     }
 
-    let adminUserId: number
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || "fallback-secret") as { userId: number }
-      adminUserId = decoded.userId
-    } catch {
-      return NextResponse.json({ success: false, error: "Invalid token" }, { status: 401 })
-    }
+    console.log("✅ [ADMIN-API] User authenticated:", {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+    })
 
     // Check if user is admin/owner
-    const adminUser = await sql`
-      SELECT role FROM users WHERE id = ${adminUserId}
-    `
-
-    if (!adminUser[0] || (adminUser[0].role !== "admin" && adminUser[0].role !== "owner")) {
+    if (user.role !== "admin" && user.role !== "owner") {
+      console.log("❌ [ADMIN-API] User lacks admin permissions:", { role: user.role })
       return NextResponse.json({ success: false, error: "Insufficient permissions" }, { status: 403 })
     }
 
-    // Get pending recipes
+    console.log("✅ [ADMIN-API] Admin permissions verified")
+
+    // Get pending recipes with detailed logging
+    console.log("🔍 [ADMIN-API] Querying pending recipes from database...")
+
     const recipes = await sql`
       SELECT r.*, u.username as author_username
       FROM recipes r
@@ -36,12 +38,41 @@ export async function GET(request: NextRequest) {
       ORDER BY r.created_at ASC
     `
 
-    return NextResponse.json({
+    console.log(`📋 [ADMIN-API] Found ${recipes.length} pending recipes`)
+
+    // Log each recipe for debugging
+    recipes.forEach((recipe, index) => {
+      console.log(`📝 [ADMIN-API] Recipe ${index + 1}:`, {
+        id: recipe.id,
+        title: recipe.title,
+        author: recipe.author_username,
+        status: recipe.moderation_status,
+        created_at: recipe.created_at,
+      })
+    })
+
+    const response = {
       success: true,
       recipes: recipes,
+      count: recipes.length,
+      timestamp: new Date().toISOString(),
+    }
+
+    console.log("📤 [ADMIN-API] Sending response:", {
+      success: response.success,
+      count: response.count,
     })
+
+    return NextResponse.json(response)
   } catch (error) {
-    console.error("Get pending recipes error:", error)
-    return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 })
+    console.error("❌ [ADMIN-API] Get pending recipes error:", error)
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Internal server error",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
+    )
   }
 }

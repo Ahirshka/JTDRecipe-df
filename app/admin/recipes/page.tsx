@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { CheckCircle, XCircle, Edit, ArrowLeft, ChefHat } from "lucide-react"
+import { CheckCircle, XCircle, Edit, ArrowLeft, ChefHat, RefreshCw } from "lucide-react"
 
 interface Recipe {
   id: number
@@ -56,21 +56,39 @@ export default function RecipeModerationPage() {
   }, [])
 
   const loadPendingRecipes = async () => {
+    console.log("🔄 [ADMIN-UI] Loading pending recipes...")
+    setLoading(true)
+    setMessage("")
+
     try {
       const response = await fetch("/api/admin/recipes/pending", {
+        method: "GET",
         credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
       })
 
+      console.log("📡 [ADMIN-UI] Response status:", response.status)
+      console.log("📡 [ADMIN-UI] Response ok:", response.ok)
+
       const data = await response.json()
+      console.log("📋 [ADMIN-UI] Response data:", data)
 
       if (data.success) {
+        console.log(`✅ [ADMIN-UI] Loaded ${data.recipes.length} pending recipes`)
         setRecipes(data.recipes)
+
+        if (data.recipes.length === 0) {
+          setMessage("No pending recipes found")
+        }
       } else {
+        console.log("❌ [ADMIN-UI] Failed to load recipes:", data.error)
         setMessage(data.error || "Failed to load pending recipes")
       }
     } catch (error) {
-      console.error("Failed to load pending recipes:", error)
-      setMessage("Failed to load pending recipes")
+      console.error("❌ [ADMIN-UI] Failed to load pending recipes:", error)
+      setMessage("Failed to load pending recipes - network error")
     } finally {
       setLoading(false)
     }
@@ -85,11 +103,32 @@ export default function RecipeModerationPage() {
 
   const handleEdit = (recipe: Recipe) => {
     setSelectedRecipe(recipe)
+
+    // Parse ingredients and instructions if they're JSON strings
+    let ingredients = recipe.ingredients
+    let instructions = recipe.instructions
+
+    try {
+      if (typeof recipe.ingredients === "string" && recipe.ingredients.startsWith("[")) {
+        ingredients = JSON.parse(recipe.ingredients).join("\n")
+      }
+    } catch (e) {
+      console.log("Could not parse ingredients as JSON, using as string")
+    }
+
+    try {
+      if (typeof recipe.instructions === "string" && recipe.instructions.startsWith("[")) {
+        instructions = JSON.parse(recipe.instructions).join("\n")
+      }
+    } catch (e) {
+      console.log("Could not parse instructions as JSON, using as string")
+    }
+
     setEditForm({
       title: recipe.title,
       description: recipe.description || "",
-      ingredients: recipe.ingredients,
-      instructions: recipe.instructions,
+      ingredients: ingredients,
+      instructions: instructions,
       category: recipe.category,
       difficulty: recipe.difficulty,
     })
@@ -100,6 +139,12 @@ export default function RecipeModerationPage() {
     if (!selectedRecipe) return
 
     setProcessing(true)
+    console.log("🔄 [ADMIN-UI] Executing moderation:", {
+      recipeId: selectedRecipe.id,
+      action: actionType,
+      notes: moderationNotes,
+    })
+
     try {
       const response = await fetch("/api/admin/recipes/moderate", {
         method: "POST",
@@ -116,6 +161,7 @@ export default function RecipeModerationPage() {
       })
 
       const data = await response.json()
+      console.log("📡 [ADMIN-UI] Moderation response:", data)
 
       if (data.success) {
         setMessage(`Recipe ${actionType}ed successfully`)
@@ -126,8 +172,8 @@ export default function RecipeModerationPage() {
         setMessage(data.error || "Moderation failed")
       }
     } catch (error) {
-      console.error("Moderation failed:", error)
-      setMessage("Moderation failed")
+      console.error("❌ [ADMIN-UI] Moderation failed:", error)
+      setMessage("Moderation failed - network error")
     } finally {
       setProcessing(false)
     }
@@ -137,6 +183,11 @@ export default function RecipeModerationPage() {
     if (!selectedRecipe) return
 
     setProcessing(true)
+    console.log("🔄 [ADMIN-UI] Saving edits and approving:", {
+      recipeId: selectedRecipe.id,
+      edits: editForm,
+    })
+
     try {
       const response = await fetch("/api/admin/recipes/moderate", {
         method: "POST",
@@ -153,6 +204,7 @@ export default function RecipeModerationPage() {
       })
 
       const data = await response.json()
+      console.log("📡 [ADMIN-UI] Edit and approve response:", data)
 
       if (data.success) {
         setMessage("Recipe approved with edits successfully")
@@ -162,8 +214,8 @@ export default function RecipeModerationPage() {
         setMessage(data.error || "Failed to save edits")
       }
     } catch (error) {
-      console.error("Failed to save edits:", error)
-      setMessage("Failed to save edits")
+      console.error("❌ [ADMIN-UI] Failed to save edits:", error)
+      setMessage("Failed to save edits - network error")
     } finally {
       setProcessing(false)
     }
@@ -189,6 +241,10 @@ export default function RecipeModerationPage() {
             <Button variant="outline" onClick={() => router.push("/admin")}>
               <ArrowLeft className="w-4 h-4 mr-2" />
               Back to Admin
+            </Button>
+            <Button variant="outline" onClick={loadPendingRecipes} disabled={loading}>
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Refresh
             </Button>
           </div>
           <div className="flex items-center space-x-3 mb-2">
@@ -240,13 +296,17 @@ export default function RecipeModerationPage() {
                           <div>
                             <h4 className="font-medium mb-2">Ingredients:</h4>
                             <div className="text-sm text-gray-700 whitespace-pre-line bg-gray-50 p-3 rounded">
-                              {recipe.ingredients}
+                              {typeof recipe.ingredients === "string" && recipe.ingredients.startsWith("[")
+                                ? JSON.parse(recipe.ingredients).join("\n")
+                                : recipe.ingredients}
                             </div>
                           </div>
                           <div>
                             <h4 className="font-medium mb-2">Instructions:</h4>
                             <div className="text-sm text-gray-700 whitespace-pre-line bg-gray-50 p-3 rounded">
-                              {recipe.instructions}
+                              {typeof recipe.instructions === "string" && recipe.instructions.startsWith("[")
+                                ? JSON.parse(recipe.instructions).join("\n")
+                                : recipe.instructions}
                             </div>
                           </div>
                         </div>
