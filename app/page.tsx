@@ -31,10 +31,13 @@ interface Recipe {
   is_published: boolean
   created_at: string
   updated_at: string
+  approval_date?: string
+  days_since_approval?: number
+  is_recently_approved?: boolean
 }
 
 const categories = [
-  { name: "Recently Added", icon: Clock, count: 0, description: "Last 30 days", key: "recent" },
+  { name: "Recently Added", icon: Clock, count: 0, description: "Approved in last 30 days", key: "recent" },
   { name: "Top Rated", icon: Star, count: 0, description: "Best in 60 days", key: "rated" },
   { name: "Most Viewed", icon: Eye, count: 0, description: "Popular in 15 days", key: "viewed" },
   { name: "Trending", icon: TrendingUp, count: 0, description: "Hot in 10 days", key: "trending" },
@@ -107,7 +110,7 @@ export default function HomePage() {
       const allRecipes = Array.isArray(data.recipes) ? data.recipes : []
       console.log(`📋 [HOMEPAGE] Processing ${allRecipes.length} recipes`)
 
-      // Log each recipe for debugging
+      // Log each recipe for debugging with approval timing
       allRecipes.forEach((recipe: any, index: number) => {
         console.log(`📋 [HOMEPAGE] Recipe ${index + 1}:`, {
           id: recipe.id,
@@ -117,6 +120,9 @@ export default function HomePage() {
           published: recipe.is_published,
           created: recipe.created_at,
           updated: recipe.updated_at,
+          approval_date: recipe.approval_date,
+          days_since_approval: recipe.days_since_approval,
+          is_recently_approved: recipe.is_recently_approved,
         })
       })
 
@@ -135,15 +141,36 @@ export default function HomePage() {
       const now = new Date()
       const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
 
-      // Filter and sort recipes for different categories
-      const recentlyAdded = processedRecipes
-        .filter((recipe: Recipe) => new Date(recipe.created_at) >= thirtyDaysAgo)
-        .sort(
-          (a: Recipe, b: Recipe) =>
-            new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime(),
-        )
+      // Filter recipes based on approval date for "Recently Added"
+      const recentlyApproved = processedRecipes
+        .filter((recipe: Recipe) => {
+          // Use the approval date (updated_at when approved) or fall back to created_at
+          const approvalDate = recipe.approval_date ? new Date(recipe.approval_date) : new Date(recipe.updated_at)
+          const isRecentlyApproved = approvalDate >= thirtyDaysAgo
+
+          console.log(`🔍 [HOMEPAGE] Recipe "${recipe.title}":`, {
+            approvalDate: approvalDate.toISOString(),
+            thirtyDaysAgo: thirtyDaysAgo.toISOString(),
+            isRecentlyApproved,
+            daysSinceApproval: recipe.days_since_approval,
+          })
+
+          return isRecentlyApproved
+        })
+        .sort((a: Recipe, b: Recipe) => {
+          // Sort by approval date (updated_at) descending - most recently approved first
+          const aApprovalDate = new Date(a.approval_date || a.updated_at)
+          const bApprovalDate = new Date(b.approval_date || b.updated_at)
+          return bApprovalDate.getTime() - aApprovalDate.getTime()
+        })
         .slice(0, 12)
 
+      console.log(`📊 [HOMEPAGE] Recently approved recipes (last 30 days): ${recentlyApproved.length}`)
+      recentlyApproved.forEach((recipe, index) => {
+        console.log(`  ${index + 1}. "${recipe.title}" - approved ${recipe.days_since_approval} days ago`)
+      })
+
+      // Other categories use different sorting
       const topRated = [...processedRecipes].sort((a: Recipe, b: Recipe) => b.rating - a.rating).slice(0, 12)
 
       const mostViewed = [...processedRecipes].sort((a: Recipe, b: Recipe) => b.view_count - a.view_count).slice(0, 12)
@@ -157,7 +184,7 @@ export default function HomePage() {
         .slice(0, 12)
 
       console.log("📊 [HOMEPAGE] Categorized recipes:", {
-        recent: recentlyAdded.length,
+        recent: recentlyApproved.length,
         rated: topRated.length,
         viewed: mostViewed.length,
         trending: trending.length,
@@ -165,7 +192,7 @@ export default function HomePage() {
 
       // Store all categories of recipes
       const categorizedRecipes = {
-        recent: recentlyAdded,
+        recent: recentlyApproved,
         rated: topRated,
         viewed: mostViewed,
         trending: trending,
@@ -179,7 +206,7 @@ export default function HomePage() {
 
       // Update category counts
       setCategoryData([
-        { ...categories[0], count: recentlyAdded.length },
+        { ...categories[0], count: recentlyApproved.length },
         { ...categories[1], count: topRated.length },
         { ...categories[2], count: mostViewed.length },
         { ...categories[3], count: trending.length },
@@ -360,10 +387,17 @@ export default function HomePage() {
                         className="w-full h-48 object-cover rounded-t-lg"
                       />
                       <Badge className="absolute top-2 right-2 bg-white text-gray-900">{recipe.category}</Badge>
+                      {recipe.is_recently_approved && (
+                        <Badge className="absolute top-2 left-2 bg-green-500 text-white">Recently Approved</Badge>
+                      )}
                     </div>
                     <CardContent className="p-4">
                       <h3 className="font-semibold text-lg mb-2 line-clamp-2">{recipe.title}</h3>
                       <p className="text-sm text-gray-600 mb-3">by {recipe.author_username}</p>
+
+                      {recipe.days_since_approval !== undefined && (
+                        <p className="text-xs text-green-600 mb-2">Approved {recipe.days_since_approval} days ago</p>
+                      )}
 
                       <div className="flex items-center justify-between text-sm text-gray-500">
                         <div className="flex items-center gap-1">
@@ -391,7 +425,11 @@ export default function HomePage() {
 
           {displayedRecipes.length === 0 && !loadingRecipes && (
             <div className="text-center py-12">
-              <p className="text-gray-500 text-lg">No approved recipes found in this category.</p>
+              <p className="text-gray-500 text-lg">
+                {activeCategory === "recent"
+                  ? "No recipes approved in the last 30 days."
+                  : "No approved recipes found in this category."}
+              </p>
               {user?.role === "owner" || user?.role === "admin" ? (
                 <div className="mt-4 space-y-2">
                   <p className="text-orange-600">

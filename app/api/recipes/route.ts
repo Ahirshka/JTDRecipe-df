@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
       paramIndex++
     }
 
-    query += ` ORDER BY created_at DESC LIMIT $${paramIndex}`
+    query += ` ORDER BY updated_at DESC, created_at DESC LIMIT $${paramIndex}`
     queryParams.push(limit)
 
     console.log("🔍 [RECIPES-API] Executing query:", query)
@@ -51,8 +51,13 @@ export async function GET(request: NextRequest) {
 
     console.log(`✅ [RECIPES-API] Found ${recipes.length} recipes`)
 
-    // Log each recipe for debugging
+    // Log each recipe for debugging with approval timing
     recipes.forEach((recipe: any, index: number) => {
+      const createdDate = new Date(recipe.created_at)
+      const updatedDate = new Date(recipe.updated_at)
+      const approvalDate = updatedDate > createdDate ? updatedDate : createdDate
+      const daysSinceApproval = Math.floor((Date.now() - approvalDate.getTime()) / (1000 * 60 * 60 * 24))
+
       console.log(`📋 [RECIPES-API] Recipe ${index + 1}:`, {
         id: recipe.id,
         title: recipe.title,
@@ -61,19 +66,32 @@ export async function GET(request: NextRequest) {
         published: recipe.is_published,
         created: recipe.created_at,
         updated: recipe.updated_at,
+        approvalDate: approvalDate.toISOString(),
+        daysSinceApproval,
+        isRecentlyApproved: daysSinceApproval <= 30,
       })
     })
 
-    // Process recipes to ensure proper data format
-    const processedRecipes = recipes.map((recipe: any) => ({
-      ...recipe,
-      rating: Number(recipe.rating) || 0,
-      review_count: Number(recipe.review_count) || 0,
-      view_count: Number(recipe.view_count) || 0,
-      prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
-      cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
-      servings: Number(recipe.servings) || 1,
-    }))
+    // Process recipes to ensure proper data format and add approval timing
+    const processedRecipes = recipes.map((recipe: any) => {
+      const createdDate = new Date(recipe.created_at)
+      const updatedDate = new Date(recipe.updated_at)
+      const approvalDate = updatedDate > createdDate ? updatedDate : createdDate
+      const daysSinceApproval = Math.floor((Date.now() - approvalDate.getTime()) / (1000 * 60 * 60 * 24))
+
+      return {
+        ...recipe,
+        rating: Number(recipe.rating) || 0,
+        review_count: Number(recipe.review_count) || 0,
+        view_count: Number(recipe.view_count) || 0,
+        prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
+        cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
+        servings: Number(recipe.servings) || 1,
+        approval_date: approvalDate.toISOString(),
+        days_since_approval: daysSinceApproval,
+        is_recently_approved: daysSinceApproval <= 30,
+      }
+    })
 
     return NextResponse.json({
       success: true,
