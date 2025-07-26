@@ -42,7 +42,7 @@ export interface SessionResult {
   error?: string
 }
 
-// Cookie configuration
+// Cookie configuration - ensure this matches across all files
 const COOKIE_NAME = "auth_session"
 const COOKIE_OPTIONS = {
   httpOnly: true,

@@ -6,8 +6,8 @@ export async function POST(request: NextRequest) {
 
   try {
     // Get session token from cookies
-    const sessionToken = request.cookies.get("session_token")?.value
-    console.log("🔍 [API] Session token:", sessionToken ? `${sessionToken.substring(0, 10)}...` : "Not found")
+    const sessionToken = request.cookies.get("auth_session")?.value
+    console.log("🔍 [API] Auth session token:", sessionToken ? `${sessionToken.substring(0, 10)}...` : "Not found")
 
     if (!sessionToken) {
       console.log("❌ [API] No session token provided")

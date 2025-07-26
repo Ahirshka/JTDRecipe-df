@@ -2,13 +2,17 @@ import { cookies } from "next/headers"
 import { findSessionByToken, findUserById } from "@/lib/neon"
 import type { User } from "@/lib/neon"
 import type { NextRequest } from "next/server"
+import { crypto } from "crypto"
+
+// Change the cookie name to match what auth-system.ts uses
+const COOKIE_NAME = "auth_session"
 
 export async function getCurrentUser(): Promise<User | null> {
   try {
     console.log("🔄 [SERVER-AUTH] Getting current user from cookies")
 
     const cookieStore = await cookies()
-    const sessionToken = cookieStore.get("session_token")?.value
+    const sessionToken = cookieStore.get(COOKIE_NAME)?.value
 
     if (!sessionToken) {
       console.log("❌ [SERVER-AUTH] No session token found in cookies")
@@ -52,7 +56,7 @@ export async function getCurrentUserFromRequest(request: NextRequest): Promise<U
     console.log("🔄 [SERVER-AUTH] Getting current user from request")
 
     // Try to get session token from cookies
-    const sessionToken = request.cookies.get("session_token")?.value
+    const sessionToken = request.cookies.get(COOKIE_NAME)?.value
 
     if (!sessionToken) {
       console.log("❌ [SERVER-AUTH] No session token found in request cookies")
@@ -291,11 +295,11 @@ export function createSessionCookie(token: string): string {
   const expires = new Date()
   expires.setDate(expires.getDate() + 7) // 7 days
 
-  return `session_token=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Expires=${expires.toUTCString()}`
+  return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Expires=${expires.toUTCString()}`
 }
 
 export function clearSessionCookie(): string {
-  return "session_token=; Path=/; HttpOnly; Secure; SameSite=Strict; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+  return `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Strict; Expires=Thu, 01 Jan 1970 00:00:00 GMT`
 }
 
 export async function setAuthCookie(token: string): Promise<void> {
@@ -303,7 +307,7 @@ export async function setAuthCookie(token: string): Promise<void> {
     console.log("🔍 [SERVER-AUTH] Setting authentication cookie")
 
     const cookieStore = await cookies()
-    cookieStore.set("session_token", token, {
+    cookieStore.set(COOKIE_NAME, token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
@@ -323,7 +327,7 @@ export async function clearAuthCookie(): Promise<void> {
     console.log("🔍 [SERVER-AUTH] Clearing authentication cookie")
 
     const cookieStore = await cookies()
-    cookieStore.delete("session_token")
+    cookieStore.delete(COOKIE_NAME)
     cookieStore.delete("auth-token") // Clear any legacy auth tokens
 
     console.log("✅ [SERVER-AUTH] Authentication cookies cleared successfully")
