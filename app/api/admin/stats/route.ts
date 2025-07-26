@@ -4,7 +4,7 @@ import { getCurrentUserFromRequest } from "@/lib/server-auth"
 
 export async function GET(request: NextRequest) {
   try {
-    console.log("🔄 [ADMIN-STATS] Getting admin statistics")
+    console.log("🔄 [ADMIN-STATS] Fetching admin statistics")
 
     // Check authentication
     const user = await getCurrentUserFromRequest(request)
@@ -21,78 +21,131 @@ export async function GET(request: NextRequest) {
 
     console.log("✅ [ADMIN-STATS] Admin permissions verified for user:", user.username)
 
-    // Get user statistics
-    const userStats = await sql`
-      SELECT 
-        COUNT(*) as total_users,
-        COUNT(*) FILTER (WHERE status = 'active' OR status IS NULL) as active_users,
-        COUNT(*) FILTER (WHERE status = 'suspended') as suspended_users,
-        COUNT(*) FILTER (WHERE status = 'banned') as banned_users
-      FROM users
-    `
-
-    // Get recipe statistics
-    const recipeStats = await sql`
-      SELECT 
-        COUNT(*) as total_recipes,
-        COUNT(*) FILTER (WHERE moderation_status = 'pending') as pending_recipes,
-        COUNT(*) FILTER (WHERE moderation_status = 'approved') as approved_recipes,
-        COUNT(*) FILTER (WHERE moderation_status = 'rejected') as rejected_recipes,
-        COUNT(*) FILTER (WHERE is_published = true) as published_recipes
-      FROM recipes
-    `
-
-    // Get rejected recipes count (handle if table doesn't exist)
-    let rejectedStats = [{ rejected_count: 0 }]
-    try {
-      rejectedStats = await sql`
-        SELECT COUNT(*) as rejected_count FROM rejected_recipes
-      `
-    } catch (error) {
-      console.log("⚠️ [ADMIN-STATS] Rejected recipes table not found, using default count")
-    }
-
-    // Get recent activity
-    const recentActivity = await sql`
-      SELECT 
-        'recipe_submitted' as activity_type,
-        r.title as description,
-        r.created_at as timestamp,
-        u.username as user_name,
-        r.moderation_status
-      FROM recipes r
-      JOIN users u ON r.author_id = u.id
-      WHERE r.created_at > NOW() - INTERVAL '7 days'
-      ORDER BY r.created_at DESC
-      LIMIT 10
-    `
-
+    // Initialize stats object
     const stats = {
-      totalUsers: Number(userStats[0]?.total_users || 0),
-      activeUsers: Number(userStats[0]?.active_users || 0),
-      suspendedUsers: Number(userStats[0]?.suspended_users || 0),
-      bannedUsers: Number(userStats[0]?.banned_users || 0),
-      totalRecipes: Number(recipeStats[0]?.total_recipes || 0),
-      pendingRecipes: Number(recipeStats[0]?.pending_recipes || 0),
-      approvedRecipes: Number(recipeStats[0]?.approved_recipes || 0),
-      rejectedRecipes: Number(recipeStats[0]?.rejected_recipes || 0) + Number(rejectedStats[0]?.rejected_count || 0),
-      publishedRecipes: Number(recipeStats[0]?.published_recipes || 0),
-      recentActivity: recentActivity.map((activity: any) => ({
-        type: activity.activity_type,
-        description: activity.description,
-        timestamp: activity.timestamp,
-        userName: activity.user_name,
-        status: activity.moderation_status,
-      })),
+      totalUsers: 0,
+      totalRecipes: 0,
+      pendingRecipes: 0,
+      approvedRecipes: 0,
+      rejectedRecipes: 0,
+      totalComments: 0,
+      flaggedComments: 0,
+      recentActivity: [],
     }
 
-    console.log("📊 [ADMIN-STATS] Statistics compiled:", {
+    try {
+      // Get total users
+      const userCount = await sql`SELECT COUNT(*) as count FROM users`
+      stats.totalUsers = Number.parseInt(userCount[0]?.count || "0")
+      console.log("📊 [ADMIN-STATS] Total users:", stats.totalUsers)
+    } catch (error) {
+      console.log("⚠️ [ADMIN-STATS] Error fetching user count:", error)
+    }
+
+    try {
+      // Get total recipes
+      const recipeCount = await sql`SELECT COUNT(*) as count FROM recipes`
+      stats.totalRecipes = Number.parseInt(recipeCount[0]?.count || "0")
+      console.log("📊 [ADMIN-STATS] Total recipes:", stats.totalRecipes)
+    } catch (error) {
+      console.log("⚠️ [ADMIN-STATS] Error fetching recipe count:", error)
+    }
+
+    try {
+      // Get pending recipes
+      const pendingCount = await sql`
+        SELECT COUNT(*) as count 
+        FROM recipes 
+        WHERE moderation_status = 'pending' OR moderation_status IS NULL
+      `
+      stats.pendingRecipes = Number.parseInt(pendingCount[0]?.count || "0")
+      console.log("📊 [ADMIN-STATS] Pending recipes:", stats.pendingRecipes)
+    } catch (error) {
+      console.log("⚠️ [ADMIN-STATS] Error fetching pending recipe count:", error)
+    }
+
+    try {
+      // Get approved recipes
+      const approvedCount = await sql`
+        SELECT COUNT(*) as count 
+        FROM recipes 
+        WHERE moderation_status = 'approved' AND is_published = true
+      `
+      stats.approvedRecipes = Number.parseInt(approvedCount[0]?.count || "0")
+      console.log("📊 [ADMIN-STATS] Approved recipes:", stats.approvedRecipes)
+    } catch (error) {
+      console.log("⚠️ [ADMIN-STATS] Error fetching approved recipe count:", error)
+    }
+
+    try {
+      // Get rejected recipes (from rejected_recipes table)
+      const rejectedCount = await sql`
+        SELECT COUNT(*) as count FROM rejected_recipes
+      `
+      stats.rejectedRecipes = Number.parseInt(rejectedCount[0]?.count || "0")
+      console.log("📊 [ADMIN-STATS] Rejected recipes:", stats.rejectedRecipes)
+    } catch (error) {
+      console.log("⚠️ [ADMIN-STATS] Error fetching rejected recipe count (table may not exist):", error)
+      // If rejected_recipes table doesn't exist, keep count as 0
+    }
+
+    try {
+      // Get total comments
+      const commentCount = await sql`SELECT COUNT(*) as count FROM comments`
+      stats.totalComments = Number.parseInt(commentCount[0]?.count || "0")
+      console.log("📊 [ADMIN-STATS] Total comments:", stats.totalComments)
+    } catch (error) {
+      console.log("⚠️ [ADMIN-STATS] Error fetching comment count (table may not exist):", error)
+    }
+
+    try {
+      // Get flagged comments
+      const flaggedCount = await sql`
+        SELECT COUNT(*) as count 
+        FROM comments 
+        WHERE is_flagged = true
+      `
+      stats.flaggedComments = Number.parseInt(flaggedCount[0]?.count || "0")
+      console.log("📊 [ADMIN-STATS] Flagged comments:", stats.flaggedComments)
+    } catch (error) {
+      console.log("⚠️ [ADMIN-STATS] Error fetching flagged comment count (table may not exist):", error)
+    }
+
+    try {
+      // Get recent activity (last 10 recipes)
+      const recentActivity = await sql`
+        SELECT 
+          id,
+          title,
+          author_username,
+          moderation_status,
+          is_published,
+          created_at,
+          updated_at
+        FROM recipes 
+        ORDER BY created_at DESC 
+        LIMIT 10
+      `
+      stats.recentActivity = recentActivity.map((recipe) => ({
+        id: recipe.id,
+        title: recipe.title,
+        author: recipe.author_username,
+        status: recipe.moderation_status || "pending",
+        published: recipe.is_published || false,
+        createdAt: recipe.created_at,
+        updatedAt: recipe.updated_at,
+      }))
+      console.log("📊 [ADMIN-STATS] Recent activity items:", stats.recentActivity.length)
+    } catch (error) {
+      console.log("⚠️ [ADMIN-STATS] Error fetching recent activity:", error)
+    }
+
+    console.log("✅ [ADMIN-STATS] Statistics compiled successfully:", {
       totalUsers: stats.totalUsers,
       totalRecipes: stats.totalRecipes,
       pendingRecipes: stats.pendingRecipes,
       approvedRecipes: stats.approvedRecipes,
       rejectedRecipes: stats.rejectedRecipes,
-      publishedRecipes: stats.publishedRecipes,
     })
 
     return NextResponse.json({
@@ -100,24 +153,12 @@ export async function GET(request: NextRequest) {
       stats,
     })
   } catch (error) {
-    console.error("❌ [ADMIN-STATS] Error getting admin statistics:", error)
+    console.error("❌ [ADMIN-STATS] Error fetching admin statistics:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Internal server error",
+        error: "Failed to fetch admin statistics",
         details: error instanceof Error ? error.message : "Unknown error",
-        stats: {
-          totalUsers: 0,
-          activeUsers: 0,
-          suspendedUsers: 0,
-          bannedUsers: 0,
-          totalRecipes: 0,
-          pendingRecipes: 0,
-          approvedRecipes: 0,
-          rejectedRecipes: 0,
-          publishedRecipes: 0,
-          recentActivity: [],
-        },
       },
       { status: 500 },
     )

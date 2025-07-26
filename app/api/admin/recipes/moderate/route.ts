@@ -58,10 +58,11 @@ export async function POST(request: NextRequest) {
     })
 
     if (action === "reject") {
-      console.log("🔄 [ADMIN-MODERATE] Processing rejection - moving to rejected_recipes table")
+      console.log("🔄 [ADMIN-MODERATE] Processing rejection")
 
       try {
-        // Ensure rejected_recipes table exists
+        // First, ensure the rejected_recipes table exists
+        console.log("🔄 [ADMIN-MODERATE] Creating rejected_recipes table if not exists")
         await sql`
           CREATE TABLE IF NOT EXISTS rejected_recipes (
             id SERIAL PRIMARY KEY,
@@ -76,8 +77,8 @@ export async function POST(request: NextRequest) {
             cook_time_minutes INTEGER DEFAULT 0,
             servings INTEGER DEFAULT 1,
             image_url TEXT,
-            ingredients JSONB NOT NULL,
-            instructions JSONB NOT NULL,
+            ingredients JSONB NOT NULL DEFAULT '[]'::jsonb,
+            instructions JSONB NOT NULL DEFAULT '[]'::jsonb,
             tags JSONB DEFAULT '[]'::jsonb,
             rejection_reason TEXT,
             rejected_by INTEGER NOT NULL,
@@ -87,8 +88,64 @@ export async function POST(request: NextRequest) {
           )
         `
 
+        console.log("✅ [ADMIN-MODERATE] Table creation completed")
+
+        // Prepare ingredients and instructions as JSONB
+        let ingredientsJson = "[]"
+        let instructionsJson = "[]"
+
+        try {
+          if (recipe.ingredients) {
+            if (typeof recipe.ingredients === "string") {
+              // Try to parse if it's a JSON string
+              try {
+                const parsed = JSON.parse(recipe.ingredients)
+                ingredientsJson = JSON.stringify(Array.isArray(parsed) ? parsed : [recipe.ingredients])
+              } catch {
+                // If parsing fails, treat as single ingredient
+                ingredientsJson = JSON.stringify([recipe.ingredients])
+              }
+            } else if (Array.isArray(recipe.ingredients)) {
+              ingredientsJson = JSON.stringify(recipe.ingredients)
+            } else {
+              ingredientsJson = JSON.stringify([String(recipe.ingredients)])
+            }
+          }
+        } catch (error) {
+          console.log("⚠️ [ADMIN-MODERATE] Error processing ingredients, using empty array:", error)
+          ingredientsJson = "[]"
+        }
+
+        try {
+          if (recipe.instructions) {
+            if (typeof recipe.instructions === "string") {
+              // Try to parse if it's a JSON string
+              try {
+                const parsed = JSON.parse(recipe.instructions)
+                instructionsJson = JSON.stringify(Array.isArray(parsed) ? parsed : [recipe.instructions])
+              } catch {
+                // If parsing fails, treat as single instruction
+                instructionsJson = JSON.stringify([recipe.instructions])
+              }
+            } else if (Array.isArray(recipe.instructions)) {
+              instructionsJson = JSON.stringify(recipe.instructions)
+            } else {
+              instructionsJson = JSON.stringify([String(recipe.instructions)])
+            }
+          }
+        } catch (error) {
+          console.log("⚠️ [ADMIN-MODERATE] Error processing instructions, using empty array:", error)
+          instructionsJson = "[]"
+        }
+
+        console.log("📝 [ADMIN-MODERATE] Prepared data for rejection:", {
+          ingredientsJson: ingredientsJson.substring(0, 100) + "...",
+          instructionsJson: instructionsJson.substring(0, 100) + "...",
+        })
+
         // Insert into rejected_recipes table
-        await sql`
+        console.log("🔄 [ADMIN-MODERATE] Inserting into rejected_recipes table")
+        const insertResult = await sql`
           INSERT INTO rejected_recipes (
             original_recipe_id, title, description, author_id, author_username,
             category, difficulty, prep_time_minutes, cook_time_minutes, servings,
@@ -97,34 +154,37 @@ export async function POST(request: NextRequest) {
           )
           VALUES (
             ${recipe.id}, 
-            ${recipe.title}, 
+            ${recipe.title || "Untitled Recipe"}, 
             ${recipe.description || ""}, 
-            ${recipe.author_id}, 
-            ${recipe.author_username}, 
-            ${recipe.category}, 
-            ${recipe.difficulty},
+            ${recipe.author_id || 0}, 
+            ${recipe.author_username || "Unknown"}, 
+            ${recipe.category || "Other"}, 
+            ${recipe.difficulty || "Easy"},
             ${recipe.prep_time_minutes || 0}, 
             ${recipe.cook_time_minutes || 0}, 
             ${recipe.servings || 1},
             ${recipe.image_url || ""}, 
-            ${recipe.ingredients}::jsonb, 
-            ${recipe.instructions}::jsonb, 
+            ${ingredientsJson}::jsonb, 
+            ${instructionsJson}::jsonb, 
             ${recipe.tags || "[]"}::jsonb, 
             ${notes || "No reason provided"}, 
             ${user.id}, 
             NOW(), 
-            ${recipe.created_at}
+            ${recipe.created_at || "NOW()"}
           )
+          RETURNING id
         `
 
-        console.log("✅ [ADMIN-MODERATE] Recipe inserted into rejected_recipes table")
+        console.log("✅ [ADMIN-MODERATE] Recipe inserted into rejected_recipes table:", insertResult[0]?.id)
 
         // Delete from recipes table
-        await sql`
+        console.log("🔄 [ADMIN-MODERATE] Deleting from recipes table")
+        const deleteResult = await sql`
           DELETE FROM recipes WHERE id = ${recipeId}
+          RETURNING id
         `
 
-        console.log("✅ [ADMIN-MODERATE] Recipe deleted from recipes table")
+        console.log("✅ [ADMIN-MODERATE] Recipe deleted from recipes table:", deleteResult[0]?.id)
 
         return NextResponse.json({
           success: true,
@@ -132,10 +192,18 @@ export async function POST(request: NextRequest) {
         })
       } catch (rejectionError) {
         console.error("❌ [ADMIN-MODERATE] Error during rejection process:", rejectionError)
+
+        // Provide more detailed error information
+        let errorMessage = "Failed to reject recipe"
+        if (rejectionError instanceof Error) {
+          errorMessage += `: ${rejectionError.message}`
+          console.error("❌ [ADMIN-MODERATE] Error stack:", rejectionError.stack)
+        }
+
         return NextResponse.json(
           {
             success: false,
-            error: "Failed to reject recipe",
+            error: errorMessage,
             details: rejectionError instanceof Error ? rejectionError.message : "Unknown error",
           },
           { status: 500 },
