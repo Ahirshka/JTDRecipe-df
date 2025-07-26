@@ -121,19 +121,6 @@ export default function LoginPage() {
                 </Button>
               </div>
             </div>
-
-            {/* Quick login credentials for testing */}
-            <div className="bg-blue-50 p-3 rounded-md text-sm">
-              <p className="font-medium text-blue-800 mb-2">Test Credentials:</p>
-              <div className="space-y-1 text-blue-700">
-                <p>
-                  <strong>Owner:</strong> aaronhirshka@gmail.com / Morton2121
-                </p>
-                <p>
-                  <strong>Test User:</strong> test@example.com / testpass123
-                </p>
-              </div>
-            </div>
           </CardContent>
 
           <CardFooter className="flex flex-col space-y-4">
