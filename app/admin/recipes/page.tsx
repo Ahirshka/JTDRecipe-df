@@ -143,7 +143,10 @@ export default function RecipeModerationPage() {
   }
 
   const executeModeration = async () => {
-    if (!selectedRecipe) return
+    if (!selectedRecipe) {
+      console.log("❌ [ADMIN-UI] No selected recipe for moderation")
+      return
+    }
 
     setProcessing(true)
     console.log("🔄 [ADMIN-UI] Executing moderation:", {
@@ -166,28 +169,37 @@ export default function RecipeModerationPage() {
         }),
       })
 
+      console.log("📡 [ADMIN-UI] Moderation response status:", response.status)
+
       const data = await response.json()
-      console.log("📡 [ADMIN-UI] Moderation response:", data)
+      console.log("📡 [ADMIN-UI] Moderation response data:", data)
 
       if (data.success) {
-        setMessage(`Recipe ${actionType}ed successfully`)
+        console.log(`✅ [ADMIN-UI] Recipe ${actionType}ed successfully`)
+        setMessage(`Recipe ${actionType}ed successfully: ${data.message}`)
         setModerationDialogOpen(false)
         setSelectedRecipe(null)
         setModerationNotes("")
-        loadPendingRecipes() // Reload recipes
+
+        // Reload recipes to update the list
+        await loadPendingRecipes()
       } else {
-        setMessage(data.error || "Moderation failed")
+        console.log(`❌ [ADMIN-UI] Failed to ${actionType} recipe:`, data.error)
+        setMessage(data.error || `Failed to ${actionType} recipe`)
       }
     } catch (error) {
-      console.error("❌ [ADMIN-UI] Moderation failed:", error)
-      setMessage("Moderation failed - network error")
+      console.error(`❌ [ADMIN-UI] ${actionType} failed:`, error)
+      setMessage(`${actionType} failed - network error`)
     } finally {
       setProcessing(false)
     }
   }
 
   const saveEditsAndApprove = async () => {
-    if (!selectedRecipe) return
+    if (!selectedRecipe) {
+      console.log("❌ [ADMIN-UI] No selected recipe for edit and approve")
+      return
+    }
 
     setProcessing(true)
     console.log("🔄 [ADMIN-UI] Saving edits and approving:", {
@@ -210,11 +222,14 @@ export default function RecipeModerationPage() {
         }),
       })
 
+      console.log("📡 [ADMIN-UI] Edit and approve response status:", response.status)
+
       const data = await response.json()
-      console.log("📡 [ADMIN-UI] Edit and approve response:", data)
+      console.log("📡 [ADMIN-UI] Edit and approve response data:", data)
 
       if (data.success) {
-        setMessage("Recipe approved with edits successfully")
+        console.log("✅ [ADMIN-UI] Recipe approved with edits successfully")
+        setMessage(`Recipe approved with edits successfully: ${data.message}`)
         setEditDialogOpen(false)
         setSelectedRecipe(null)
         setEditForm({
@@ -225,8 +240,11 @@ export default function RecipeModerationPage() {
           category: "",
           difficulty: "",
         })
-        loadPendingRecipes()
+
+        // Reload recipes to update the list
+        await loadPendingRecipes()
       } else {
+        console.log("❌ [ADMIN-UI] Failed to save edits:", data.error)
         setMessage(data.error || "Failed to save edits")
       }
     } catch (error) {
@@ -349,13 +367,19 @@ export default function RecipeModerationPage() {
                       <Button
                         onClick={() => handleModerate(recipe, "approve")}
                         className="bg-green-600 hover:bg-green-700 flex-1"
+                        disabled={processing}
                       >
                         <CheckCircle className="w-4 h-4 mr-2" />
-                        Approve
+                        {processing ? "Processing..." : "Approve"}
                       </Button>
-                      <Button onClick={() => handleModerate(recipe, "reject")} variant="destructive" className="flex-1">
+                      <Button
+                        onClick={() => handleModerate(recipe, "reject")}
+                        variant="destructive"
+                        className="flex-1"
+                        disabled={processing}
+                      >
                         <XCircle className="w-4 h-4 mr-2" />
-                        Reject
+                        {processing ? "Processing..." : "Reject"}
                       </Button>
                     </div>
                   </div>
@@ -399,10 +423,16 @@ export default function RecipeModerationPage() {
                   setSelectedRecipe(null)
                   setModerationNotes("")
                 }}
+                disabled={processing}
               >
                 Cancel
               </Button>
-              <Button onClick={executeModeration} disabled={processing}>
+              <Button
+                onClick={executeModeration}
+                disabled={processing}
+                className={actionType === "approve" ? "bg-green-600 hover:bg-green-700" : ""}
+                variant={actionType === "reject" ? "destructive" : "default"}
+              >
                 {processing ? "Processing..." : `${actionType === "approve" ? "Approve" : "Reject"}`}
               </Button>
             </DialogFooter>
@@ -505,10 +535,11 @@ export default function RecipeModerationPage() {
                     difficulty: "",
                   })
                 }}
+                disabled={processing}
               >
                 Cancel
               </Button>
-              <Button onClick={saveEditsAndApprove} disabled={processing}>
+              <Button onClick={saveEditsAndApprove} disabled={processing} className="bg-green-600 hover:bg-green-700">
                 {processing ? "Saving..." : "Save & Approve"}
               </Button>
             </DialogFooter>

@@ -220,13 +220,50 @@ export async function POST(request: NextRequest) {
       const isPublished = true
       const moderationNotes = notes || null
 
-      // Start with base update data
-      let updateTitle = recipe.title
+      // Start with base update data - ensure we have valid data
+      let updateTitle = recipe.title || "Untitled Recipe"
       let updateDescription = recipe.description || ""
-      let updateCategory = recipe.category
-      let updateDifficulty = recipe.difficulty
+      let updateCategory = recipe.category || "Other"
+      let updateDifficulty = recipe.difficulty || "Easy"
       let updateIngredients = recipe.ingredients
       let updateInstructions = recipe.instructions
+
+      // Ensure ingredients and instructions are properly formatted JSON
+      try {
+        if (typeof updateIngredients === "string") {
+          try {
+            const parsed = JSON.parse(updateIngredients)
+            updateIngredients = JSON.stringify(Array.isArray(parsed) ? parsed : [updateIngredients])
+          } catch {
+            updateIngredients = JSON.stringify([updateIngredients])
+          }
+        } else if (Array.isArray(updateIngredients)) {
+          updateIngredients = JSON.stringify(updateIngredients)
+        } else {
+          updateIngredients = JSON.stringify(updateIngredients ? [String(updateIngredients)] : [])
+        }
+      } catch (error) {
+        console.log("⚠️ [ADMIN-MODERATE] Error processing ingredients for approval, using empty array:", error)
+        updateIngredients = "[]"
+      }
+
+      try {
+        if (typeof updateInstructions === "string") {
+          try {
+            const parsed = JSON.parse(updateInstructions)
+            updateInstructions = JSON.stringify(Array.isArray(parsed) ? parsed : [updateInstructions])
+          } catch {
+            updateInstructions = JSON.stringify([updateInstructions])
+          }
+        } else if (Array.isArray(updateInstructions)) {
+          updateInstructions = JSON.stringify(updateInstructions)
+        } else {
+          updateInstructions = JSON.stringify(updateInstructions ? [String(updateInstructions)] : [])
+        }
+      } catch (error) {
+        console.log("⚠️ [ADMIN-MODERATE] Error processing instructions for approval, using empty array:", error)
+        updateInstructions = "[]"
+      }
 
       // If approving with edits, apply the edits
       if (edits) {
@@ -237,7 +274,7 @@ export async function POST(request: NextRequest) {
         if (edits.category && edits.category.trim()) updateCategory = edits.category.trim()
         if (edits.difficulty && edits.difficulty.trim()) updateDifficulty = edits.difficulty.trim()
 
-        // Handle ingredients and instructions
+        // Handle ingredients and instructions from edits
         if (edits.ingredients) {
           const ingredientsArray =
             typeof edits.ingredients === "string"
@@ -267,6 +304,15 @@ export async function POST(request: NextRequest) {
         })
       }
 
+      console.log("📝 [ADMIN-MODERATE] Final approval data:", {
+        title: updateTitle,
+        category: updateCategory,
+        difficulty: updateDifficulty,
+        status: moderationStatus,
+        published: isPublished,
+        hasNotes: !!moderationNotes,
+      })
+
       // Update recipe with proper JSONB casting
       const result = await sql`
         UPDATE recipes 
@@ -286,8 +332,11 @@ export async function POST(request: NextRequest) {
       `
 
       if (result.length === 0) {
-        console.log("❌ [ADMIN-MODERATE] Failed to update recipe")
-        return NextResponse.json({ success: false, error: "Failed to update recipe" }, { status: 500 })
+        console.log("❌ [ADMIN-MODERATE] Failed to update recipe - no rows affected")
+        return NextResponse.json(
+          { success: false, error: "Failed to update recipe - recipe may not exist" },
+          { status: 500 },
+        )
       }
 
       const updatedRecipe = result[0]
@@ -299,10 +348,15 @@ export async function POST(request: NextRequest) {
         updated: updatedRecipe.updated_at,
       })
 
-      // Verify the update worked
+      // Verify the update worked by checking the database
       const verifyResult = await sql`
-        SELECT id, title, moderation_status, is_published FROM recipes WHERE id = ${recipeId}
+        SELECT id, title, moderation_status, is_published, updated_at FROM recipes WHERE id = ${recipeId}
       `
+
+      if (verifyResult.length === 0) {
+        console.log("❌ [ADMIN-MODERATE] Recipe not found after update")
+        return NextResponse.json({ success: false, error: "Recipe disappeared after update" }, { status: 500 })
+      }
 
       console.log("🔍 [ADMIN-MODERATE] Final verification:", verifyResult[0])
 
@@ -313,10 +367,17 @@ export async function POST(request: NextRequest) {
       })
     } catch (approvalError) {
       console.error("❌ [ADMIN-MODERATE] Error during approval process:", approvalError)
+
+      let errorMessage = "Failed to approve recipe"
+      if (approvalError instanceof Error) {
+        errorMessage += `: ${approvalError.message}`
+        console.error("❌ [ADMIN-MODERATE] Approval error stack:", approvalError.stack)
+      }
+
       return NextResponse.json(
         {
           success: false,
-          error: "Failed to approve recipe",
+          error: errorMessage,
           details: approvalError instanceof Error ? approvalError.message : "Unknown error",
         },
         { status: 500 },
@@ -324,10 +385,17 @@ export async function POST(request: NextRequest) {
     }
   } catch (error) {
     console.error("❌ [ADMIN-MODERATE] Recipe moderation error:", error)
+
+    let errorMessage = "Internal server error"
+    if (error instanceof Error) {
+      errorMessage += `: ${error.message}`
+      console.error("❌ [ADMIN-MODERATE] Main error stack:", error.stack)
+    }
+
     return NextResponse.json(
       {
         success: false,
-        error: "Internal server error",
+        error: errorMessage,
         details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
