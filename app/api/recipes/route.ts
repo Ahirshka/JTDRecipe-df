@@ -1,138 +1,184 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { findSessionByToken, findUserById, createRecipe } from "@/lib/neon"
+import { sql } from "@/lib/neon"
+import { getCurrentUserFromRequest } from "@/lib/server-auth"
 
+// GET - Fetch published recipes
+export async function GET(request: NextRequest) {
+  try {
+    console.log("🔄 [RECIPES-API] Fetching published recipes...")
+
+    const { searchParams } = new URL(request.url)
+    const limit = Number.parseInt(searchParams.get("limit") || "20")
+    const offset = Number.parseInt(searchParams.get("offset") || "0")
+    const category = searchParams.get("category")
+    const search = searchParams.get("search")
+
+    console.log("📋 [RECIPES-API] Query parameters:", { limit, offset, category, search })
+
+    // Build query conditions
+    const whereConditions = ["r.moderation_status = 'approved'", "r.is_published = true"]
+    const queryParams: any[] = []
+    let paramIndex = 1
+
+    if (category) {
+      whereConditions.push(`r.category = $${paramIndex}`)
+      queryParams.push(category)
+      paramIndex++
+    }
+
+    if (search) {
+      whereConditions.push(`(r.title ILIKE $${paramIndex} OR r.description ILIKE $${paramIndex})`)
+      queryParams.push(`%${search}%`)
+      paramIndex++
+    }
+
+    // Add limit and offset
+    queryParams.push(limit, offset)
+
+    const whereClause = whereConditions.join(" AND ")
+
+    console.log("🔍 [RECIPES-API] Query conditions:", whereClause)
+
+    const result = await sql`
+      SELECT 
+        r.id,
+        r.title,
+        r.description,
+        r.category,
+        r.difficulty,
+        r.prep_time_minutes,
+        r.cook_time_minutes,
+        r.servings,
+        r.ingredients,
+        r.instructions,
+        r.tags,
+        r.image_url,
+        r.rating,
+        r.review_count,
+        r.view_count,
+        r.created_at,
+        r.updated_at,
+        u.username as author_username
+      FROM recipes r
+      JOIN users u ON r.author_id = u.id
+      WHERE ${sql.raw(whereClause)}
+      ORDER BY r.created_at DESC
+      LIMIT ${limit}
+      OFFSET ${offset}
+    `
+
+    console.log(`✅ [RECIPES-API] Found ${result.length} published recipes`)
+
+    const recipes = result.map((recipe: any) => ({
+      id: recipe.id,
+      title: recipe.title,
+      description: recipe.description,
+      author_username: recipe.author_username,
+      category: recipe.category,
+      difficulty: recipe.difficulty,
+      prep_time_minutes: recipe.prep_time_minutes,
+      cook_time_minutes: recipe.cook_time_minutes,
+      servings: recipe.servings,
+      ingredients: recipe.ingredients,
+      instructions: recipe.instructions,
+      tags: recipe.tags,
+      image_url: recipe.image_url,
+      rating: recipe.rating,
+      review_count: recipe.review_count,
+      view_count: recipe.view_count,
+      created_at: recipe.created_at,
+      updated_at: recipe.updated_at,
+    }))
+
+    return NextResponse.json({
+      success: true,
+      recipes,
+      count: recipes.length,
+    })
+  } catch (error) {
+    console.error("❌ [RECIPES-API] Error fetching recipes:", error)
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Failed to fetch recipes",
+        details: error instanceof Error ? error.message : "Unknown error",
+        recipes: [],
+      },
+      { status: 500 },
+    )
+  }
+}
+
+// POST - Create new recipe
 export async function POST(request: NextRequest) {
   console.log("🔄 [API] Recipe submission started")
 
   try {
-    // Get session token from cookies
-    const sessionToken = request.cookies.get("auth_session")?.value
-    console.log("🔍 [API] Auth session token:", sessionToken ? `${sessionToken.substring(0, 10)}...` : "Not found")
-
-    if (!sessionToken) {
-      console.log("❌ [API] No session token provided")
+    // Check authentication
+    const user = await getCurrentUserFromRequest(request)
+    if (!user) {
+      console.log("❌ [API] No authenticated user found")
       return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
     }
 
-    // Verify session
-    const session = await findSessionByToken(sessionToken)
-    if (!session) {
-      console.log("❌ [API] Invalid or expired session")
-      return NextResponse.json({ success: false, error: "Invalid or expired session" }, { status: 401 })
-    }
+    console.log("✅ [API] User authenticated:", user.username)
 
-    // Get user details
-    const user = await findUserById(session.user_id)
-    if (!user) {
-      console.log("❌ [API] User not found for session")
-      return NextResponse.json({ success: false, error: "User not found" }, { status: 401 })
-    }
+    // Parse request body
+    const body = await request.json()
+    const {
+      title,
+      description,
+      category,
+      difficulty,
+      prep_time_minutes,
+      cook_time_minutes,
+      servings,
+      ingredients,
+      instructions,
+      tags,
+      image_url,
+    } = body
 
-    console.log("✅ [API] User authenticated:", {
-      id: user.id,
-      username: user.username,
-      role: user.role,
+    console.log("📝 [API] Recipe data received:", {
+      title,
+      category,
+      difficulty,
+      prep_time_minutes,
+      cook_time_minutes,
+      servings,
+      ingredients_count: ingredients?.length,
+      instructions_count: instructions?.length,
+      tags_count: tags?.length,
     })
-
-    // Parse request body with proper error handling
-    let body
-    try {
-      const rawBody = await request.text()
-      console.log("📝 [API] Raw request body:", rawBody.substring(0, 200) + "...")
-
-      if (!rawBody.trim()) {
-        throw new Error("Empty request body")
-      }
-
-      body = JSON.parse(rawBody)
-      console.log("📝 [API] Parsed request body:", {
-        title: body.title,
-        category: body.category,
-        difficulty: body.difficulty,
-        ingredientsCount: Array.isArray(body.ingredients) ? body.ingredients.length : 0,
-        instructionsCount: Array.isArray(body.instructions) ? body.instructions.length : 0,
-        tagsCount: Array.isArray(body.tags) ? body.tags.length : 0,
-      })
-    } catch (parseError) {
-      console.error("❌ [API] JSON parsing error:", parseError)
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid JSON in request body",
-          details: parseError instanceof Error ? parseError.message : "Unknown parsing error",
-        },
-        { status: 400 },
-      )
-    }
 
     // Validate required fields
-    const requiredFields = [
-      "title",
-      "category",
-      "difficulty",
-      "prep_time_minutes",
-      "cook_time_minutes",
-      "servings",
-      "ingredients",
-      "instructions",
-    ]
-
-    const missingFields = requiredFields.filter((field) => {
-      const value = body[field]
-      if (field === "ingredients" || field === "instructions") {
-        return !Array.isArray(value) || value.length === 0
-      }
-      return !value && value !== 0
-    })
-
-    if (missingFields.length > 0) {
-      console.log("❌ [API] Missing required fields:", missingFields)
+    if (!title || !category || !difficulty || !ingredients || !instructions) {
       return NextResponse.json(
-        {
-          success: false,
-          error: `Missing required fields: ${missingFields.join(", ")}`,
-          received: Object.keys(body),
-        },
+        { success: false, error: "Missing required fields: title, category, difficulty, ingredients, instructions" },
         { status: 400 },
       )
     }
 
-    // Validate and process arrays
-    if (!Array.isArray(body.ingredients) || body.ingredients.length === 0) {
-      console.log("❌ [API] Invalid ingredients array")
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Ingredients must be a non-empty array",
-          received: typeof body.ingredients,
-        },
-        { status: 400 },
-      )
+    // Validate arrays
+    if (!Array.isArray(ingredients) || ingredients.length === 0) {
+      return NextResponse.json({ success: false, error: "Ingredients must be a non-empty array" }, { status: 400 })
     }
 
-    if (!Array.isArray(body.instructions) || body.instructions.length === 0) {
-      console.log("❌ [API] Invalid instructions array")
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Instructions must be a non-empty array",
-          received: typeof body.instructions,
-        },
-        { status: 400 },
-      )
+    if (!Array.isArray(instructions) || instructions.length === 0) {
+      return NextResponse.json({ success: false, error: "Instructions must be a non-empty array" }, { status: 400 })
     }
 
     // Process arrays to remove empty items and ensure strings
-    const processedIngredients = body.ingredients
+    const processedIngredients = ingredients
       .filter((item: any) => item && typeof item === "string" && item.trim().length > 0)
       .map((item: string) => item.trim())
 
-    const processedInstructions = body.instructions
+    const processedInstructions = instructions
       .filter((item: any) => item && typeof item === "string" && item.trim().length > 0)
       .map((item: string) => item.trim())
 
-    const processedTags = Array.isArray(body.tags)
-      ? body.tags
+    const processedTags = Array.isArray(tags)
+      ? tags
           .filter((item: any) => item && typeof item === "string" && item.trim().length > 0)
           .map((item: string) => item.trim())
       : []
@@ -165,9 +211,9 @@ export async function POST(request: NextRequest) {
     })
 
     // Validate numeric fields
-    const prepTime = Number.parseInt(body.prep_time_minutes)
-    const cookTime = Number.parseInt(body.cook_time_minutes)
-    const servings = Number.parseInt(body.servings)
+    const prepTime = Number.parseInt(prep_time_minutes)
+    const cookTime = Number.parseInt(cook_time_minutes)
+    const servingsCount = Number.parseInt(servings)
 
     if (isNaN(prepTime) || prepTime < 0) {
       return NextResponse.json(
@@ -189,7 +235,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    if (isNaN(servings) || servings < 1) {
+    if (isNaN(servingsCount) || servingsCount < 1) {
       return NextResponse.json(
         {
           success: false,
@@ -201,19 +247,24 @@ export async function POST(request: NextRequest) {
 
     // Prepare recipe data matching database schema exactly
     const recipeData = {
-      title: String(body.title).trim(),
-      description: body.description ? String(body.description).trim() : null,
+      title: String(title).trim(),
+      description: description ? String(description).trim() : null,
       author_id: user.id,
       author_username: user.username,
-      category: String(body.category).trim(),
-      difficulty: String(body.difficulty).trim(),
+      category: String(category).trim(),
+      difficulty: String(difficulty).trim(),
       prep_time_minutes: prepTime,
       cook_time_minutes: cookTime,
-      servings: servings,
-      image_url: body.image_url ? String(body.image_url).trim() : null,
+      servings: servingsCount,
+      image_url: image_url ? String(image_url).trim() : null,
       ingredients: processedIngredients,
       instructions: processedInstructions,
       tags: processedTags,
+      moderation_status: "pending",
+      is_published: false,
+      rating: 0,
+      review_count: 0,
+      view_count: 0,
     }
 
     console.log("📝 [API] Final recipe data prepared:", {
@@ -232,38 +283,57 @@ export async function POST(request: NextRequest) {
     })
 
     // Create recipe in database
-    const result = await createRecipe(recipeData)
-
-    if (!result || !result.success) {
-      console.log("❌ [API] Failed to create recipe in database:", result)
-      return NextResponse.json(
-        {
-          success: false,
-          error: result?.error || "Failed to create recipe in database",
-          details: result,
-        },
-        { status: 500 },
+    const result = await sql`
+      INSERT INTO recipes (
+        id, title, description, author_id, author_username, 
+        category, difficulty, prep_time_minutes, cook_time_minutes, 
+        servings, image_url, ingredients, instructions, tags,
+        moderation_status, is_published, rating, review_count, view_count
+      ) VALUES (
+        ${recipeData.id}, 
+        ${recipeData.title}, 
+        ${recipeData.description || null}, 
+        ${recipeData.author_id}, 
+        ${recipeData.author_username},
+        ${recipeData.category}, 
+        ${recipeData.difficulty}, 
+        ${recipeData.prep_time_minutes || 0}, 
+        ${recipeData.cook_time_minutes || 0}, 
+        ${recipeData.servings || 1}, 
+        ${recipeData.image_url || null},
+        ${JSON.stringify(recipeData.ingredients)}::jsonb, 
+        ${JSON.stringify(recipeData.instructions)}::jsonb, 
+        ${JSON.stringify(recipeData.tags)}::jsonb,
+        ${recipeData.moderation_status}, 
+        ${recipeData.is_published}, 
+        ${recipeData.rating}, 
+        ${recipeData.review_count}, 
+        ${recipeData.view_count}
       )
+      RETURNING id, title, moderation_status, created_at
+    `
+
+    if (result.length === 0) {
+      throw new Error("Failed to insert recipe")
     }
 
-    console.log("✅ [API] Recipe created successfully:", result.recipeId)
+    const insertedRecipe = result[0]
+    console.log("✅ [API] Recipe created successfully:", {
+      id: insertedRecipe.id,
+      title: insertedRecipe.title,
+      status: insertedRecipe.moderation_status,
+    })
 
-    // Return success response matching expected format
-    const successResponse = {
+    return NextResponse.json({
       success: true,
       message: "Recipe submitted successfully and is pending moderation",
-      recipeId: result.recipeId,
-      data: {
-        id: result.recipeId,
-        title: recipeData.title,
-        author: recipeData.author_username,
-        status: "pending_moderation",
-        created_at: new Date().toISOString(),
+      recipe: {
+        id: insertedRecipe.id,
+        title: insertedRecipe.title,
+        status: insertedRecipe.moderation_status,
+        created_at: insertedRecipe.created_at,
       },
-    }
-
-    console.log("📤 [API] Sending success response:", successResponse)
-    return NextResponse.json(successResponse)
+    })
   } catch (error) {
     console.error("❌ [API] Recipe submission error:", error)
 
@@ -275,49 +345,6 @@ export async function POST(request: NextRequest) {
     }
 
     console.log("📤 [API] Sending error response:", errorResponse)
-    return NextResponse.json(errorResponse, { status: 500 })
-  }
-}
-
-export async function GET(request: NextRequest) {
-  console.log("🔄 [API] Getting recipes")
-
-  try {
-    // Get query parameters
-    const { searchParams } = new URL(request.url)
-    const limit = Math.min(Number.parseInt(searchParams.get("limit") || "20"), 100) // Cap at 100
-    const offset = Math.max(Number.parseInt(searchParams.get("offset") || "0"), 0) // Ensure non-negative
-
-    console.log("📋 [API] Query params:", { limit, offset })
-
-    // Get recipes from database
-    const { getRecipes } = await import("@/lib/neon")
-    const recipes = await getRecipes(limit, offset)
-
-    console.log(`✅ [API] Retrieved ${recipes.length} recipes`)
-
-    const response = {
-      success: true,
-      data: recipes,
-      pagination: {
-        limit,
-        offset,
-        count: recipes.length,
-        hasMore: recipes.length === limit,
-      },
-      timestamp: new Date().toISOString(),
-    }
-
-    return NextResponse.json(response)
-  } catch (error) {
-    console.error("❌ [API] Get recipes error:", error)
-
-    const errorResponse = {
-      success: false,
-      error: `Failed to get recipes: ${error instanceof Error ? error.message : "Unknown error"}`,
-      timestamp: new Date().toISOString(),
-    }
-
     return NextResponse.json(errorResponse, { status: 500 })
   }
 }
