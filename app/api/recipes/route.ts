@@ -1,177 +1,227 @@
-import { NextResponse } from "next/server"
+import { type NextRequest, NextResponse } from "next/server"
 import { sql } from "@/lib/neon"
-import { addLog } from "../test/server-logs/route"
+import { getCurrentUserFromRequest } from "@/lib/server-auth"
 
-export async function GET(request: Request) {
+// GET - Fetch published recipes
+export async function GET(request: NextRequest) {
   try {
+    console.log("🔄 [RECIPES-API] Fetching recipes")
+
     const { searchParams } = new URL(request.url)
-    const limit = Number.parseInt(searchParams.get("limit") || "20")
-    const offset = Number.parseInt(searchParams.get("offset") || "0")
-    const category = searchParams.get("category")
-    const search = searchParams.get("search")
+    const limit = searchParams.get("limit") ? Number.parseInt(searchParams.get("limit")!) : 50
+    const search = searchParams.get("search") || ""
+    const category = searchParams.get("category") || ""
 
-    addLog("info", `📡 [RECIPES-API] Fetching recipes with params:`, {
-      limit,
-      offset,
-      category,
-      search,
-    })
+    console.log("📋 [RECIPES-API] Query parameters:", { limit, search, category })
 
-    // Build the query with filters
+    // Build the query - only get approved and published recipes
     let query = `
       SELECT 
-        r.id, r.title, r.description, r.author_id, r.author_username,
-        r.category, r.difficulty, r.prep_time_minutes, r.cook_time_minutes,
-        r.servings, r.image_url, r.ingredients, r.instructions, r.tags,
-        r.moderation_status, r.is_published, r.rating, r.review_count,
-        r.view_count, r.created_at, r.updated_at,
-        -- Calculate days since approval and recently approved status
-        EXTRACT(DAY FROM (NOW() - r.updated_at)) as days_since_approval,
-        CASE 
-          WHEN EXTRACT(DAY FROM (NOW() - r.updated_at)) <= 30 THEN true 
-          ELSE false 
-        END as is_recently_approved,
-        r.updated_at as approval_date
-      FROM recipes r
-      WHERE r.moderation_status = 'approved' 
-        AND r.is_published = true
+        id, title, description, author_id, author_username, category, difficulty,
+        prep_time_minutes, cook_time_minutes, servings, image_url, 
+        rating, review_count, view_count, moderation_status, is_published,
+        created_at, updated_at
+      FROM recipes 
+      WHERE moderation_status = 'approved' AND is_published = true
     `
 
-    const params: any[] = []
+    const queryParams: any[] = []
     let paramIndex = 1
 
-    if (category) {
-      query += ` AND r.category = $${paramIndex}`
-      params.push(category)
-      paramIndex++
-    }
-
     if (search) {
-      query += ` AND (r.title ILIKE $${paramIndex} OR r.description ILIKE $${paramIndex})`
-      params.push(`%${search}%`)
+      query += ` AND (title ILIKE $${paramIndex} OR description ILIKE $${paramIndex})`
+      queryParams.push(`%${search}%`)
       paramIndex++
     }
 
-    query += ` ORDER BY r.updated_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`
-    params.push(limit, offset)
+    if (category) {
+      query += ` AND category = $${paramIndex}`
+      queryParams.push(category)
+      paramIndex++
+    }
 
-    addLog("info", `🔍 [RECIPES-API] Executing query with ${params.length} parameters`)
+    query += ` ORDER BY updated_at DESC, created_at DESC LIMIT $${paramIndex}`
+    queryParams.push(limit)
+
+    console.log("🔍 [RECIPES-API] Executing query:", query)
+    console.log("📋 [RECIPES-API] Query params:", queryParams)
 
     // Execute the query
-    const recipes = await sql.unsafe(query, params)
+    const recipes = await sql.unsafe(query, queryParams)
 
-    addLog("info", `📊 [RECIPES-API] Found ${recipes.length} recipes`)
+    console.log(`✅ [RECIPES-API] Found ${recipes.length} recipes`)
 
-    // Process each recipe to ensure proper data types and add debugging info
-    const processedRecipes = recipes.map((recipe, index) => {
-      const processedRecipe = {
+    // Process recipes and calculate approval timing
+    const processedRecipes = recipes.map((recipe: any) => {
+      const createdDate = new Date(recipe.created_at)
+      const updatedDate = new Date(recipe.updated_at)
+
+      // If updated_at is significantly later than created_at, it's likely the approval time
+      const approvalDate = updatedDate > createdDate ? updatedDate : createdDate
+      const daysSinceApproval = Math.floor((Date.now() - approvalDate.getTime()) / (1000 * 60 * 60 * 24))
+      const isRecentlyApproved = daysSinceApproval <= 30
+
+      console.log(`📋 [RECIPES-API] Recipe "${recipe.title}":`, {
         id: recipe.id,
-        title: recipe.title || "Untitled Recipe",
-        description: recipe.description || "",
-        author_id: recipe.author_id,
-        author_username: recipe.author_username || "Unknown Author",
-        category: recipe.category || "Other",
-        difficulty: recipe.difficulty || "Medium",
-        prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
-        cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
-        servings: Number(recipe.servings) || 1,
-        image_url: recipe.image_url || "",
-        ingredients: recipe.ingredients,
-        instructions: recipe.instructions,
-        tags: recipe.tags,
-        moderation_status: recipe.moderation_status,
-        is_published: recipe.is_published,
+        author: recipe.author_username,
+        status: recipe.moderation_status,
+        published: recipe.is_published,
+        created: recipe.created_at,
+        updated: recipe.updated_at,
+        approvalDate: approvalDate.toISOString(),
+        daysSinceApproval,
+        isRecentlyApproved,
+      })
+
+      return {
+        ...recipe,
         rating: Number(recipe.rating) || 0,
         review_count: Number(recipe.review_count) || 0,
         view_count: Number(recipe.view_count) || 0,
-        created_at: recipe.created_at,
-        updated_at: recipe.updated_at,
-        days_since_approval: Number(recipe.days_since_approval) || 0,
-        is_recently_approved: recipe.is_recently_approved === true,
-        approval_date: recipe.approval_date,
+        prep_time_minutes: Number(recipe.prep_time_minutes) || 0,
+        cook_time_minutes: Number(recipe.cook_time_minutes) || 0,
+        servings: Number(recipe.servings) || 1,
+        approval_date: approvalDate.toISOString(),
+        days_since_approval: daysSinceApproval,
+        is_recently_approved: isRecentlyApproved,
       }
-
-      // Log details for recently approved recipes
-      if (processedRecipe.is_recently_approved) {
-        addLog("info", `🆕 [RECIPES-API] Recently approved recipe ${index + 1}:`, {
-          id: processedRecipe.id,
-          title: processedRecipe.title,
-          days_since_approval: processedRecipe.days_since_approval,
-          approval_date: processedRecipe.approval_date,
-        })
-      }
-
-      return processedRecipe
     })
 
-    // Count recently approved recipes for debugging
-    const recentlyApprovedCount = processedRecipes.filter((r) => r.is_recently_approved).length
-
-    addLog(
-      "info",
-      `✅ [RECIPES-API] Processed ${processedRecipes.length} recipes, ${recentlyApprovedCount} recently approved`,
-    )
-
-    // Get total count for pagination
-    let countQuery = `
-      SELECT COUNT(*) as total
-      FROM recipes r
-      WHERE r.moderation_status = 'approved' 
-        AND r.is_published = true
-    `
-
-    const countParams: any[] = []
-    let countParamIndex = 1
-
-    if (category) {
-      countQuery += ` AND r.category = $${countParamIndex}`
-      countParams.push(category)
-      countParamIndex++
-    }
-
-    if (search) {
-      countQuery += ` AND (r.title ILIKE $${countParamIndex} OR r.description ILIKE $${countParamIndex})`
-      countParams.push(`%${search}%`)
-    }
-
-    const totalResult = await sql.unsafe(countQuery, countParams)
-    const total = Number(totalResult[0]?.total) || 0
-
-    const response = {
+    return NextResponse.json({
       success: true,
       recipes: processedRecipes,
-      pagination: {
-        total,
-        limit,
-        offset,
-        has_more: offset + limit < total,
-      },
-      debug: {
-        query_params: { limit, offset, category, search },
-        total_found: recipes.length,
-        recently_approved_count: recentlyApprovedCount,
-        timestamp: new Date().toISOString(),
-      },
-    }
-
-    addLog("info", `📤 [RECIPES-API] Returning response with ${processedRecipes.length} recipes`)
-
-    return NextResponse.json(response)
+      count: processedRecipes.length,
+    })
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error"
-    addLog("error", `❌ [RECIPES-API] Error fetching recipes: ${errorMessage}`)
-
-    console.error("Error fetching recipes:", error)
-
+    console.error("❌ [RECIPES-API] Error fetching recipes:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Failed to fetch recipes",
-        details: errorMessage,
-        debug: {
-          timestamp: new Date().toISOString(),
-          error: errorMessage,
-        },
+        error: "Internal server error",
+        details: error instanceof Error ? error.message : "Unknown error",
+        recipes: [],
+        count: 0,
+      },
+      { status: 500 },
+    )
+  }
+}
+
+// POST - Create new recipe
+export async function POST(request: NextRequest) {
+  try {
+    console.log("🔄 [RECIPES-API] Creating new recipe")
+
+    // Get user from session
+    const user = await getCurrentUserFromRequest(request)
+    if (!user) {
+      console.log("❌ [RECIPES-API] No authenticated user found")
+      return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
+    }
+
+    console.log("✅ [RECIPES-API] User authenticated:", user.username)
+
+    // Parse request body
+    const body = await request.json()
+    const {
+      title,
+      description,
+      category,
+      difficulty,
+      prep_time_minutes,
+      cook_time_minutes,
+      servings,
+      ingredients,
+      instructions,
+      image_url,
+      tags,
+    } = body
+
+    console.log("📝 [RECIPES-API] Recipe data received:", {
+      title,
+      category,
+      difficulty,
+      prep_time_minutes,
+      cook_time_minutes,
+      servings,
+      ingredientsCount: ingredients?.length || 0,
+      instructionsCount: instructions?.length || 0,
+    })
+
+    // Validate required fields - allow empty arrays for testing
+    if (!title || !category || !difficulty) {
+      return NextResponse.json(
+        { success: false, error: "Missing required fields: title, category, difficulty" },
+        { status: 400 },
+      )
+    }
+
+    // Generate unique recipe ID
+    const recipeId = `recipe_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
+
+    // Prepare ingredients and instructions - handle empty arrays
+    const processedIngredients = Array.isArray(ingredients) ? ingredients.filter((i) => i && i.trim()) : []
+    const processedInstructions = Array.isArray(instructions) ? instructions.filter((i) => i && i.trim()) : []
+    const processedTags = Array.isArray(tags) ? tags.filter((t) => t && t.trim()) : []
+
+    // If arrays are empty, add placeholder content for testing
+    if (processedIngredients.length === 0) {
+      processedIngredients.push("No ingredients specified")
+    }
+    if (processedInstructions.length === 0) {
+      processedInstructions.push("No instructions specified")
+    }
+
+    console.log("📝 [RECIPES-API] Processed data:", {
+      recipeId,
+      ingredientsCount: processedIngredients.length,
+      instructionsCount: processedInstructions.length,
+      tagsCount: processedTags.length,
+    })
+
+    // Insert recipe into database
+    const result = await sql`
+      INSERT INTO recipes (
+        id, title, description, author_id, author_username, category, difficulty,
+        prep_time_minutes, cook_time_minutes, servings, image_url, ingredients, 
+        instructions, tags, moderation_status, is_published, rating, review_count, 
+        view_count, created_at, updated_at
+      )
+      VALUES (
+        ${recipeId}, ${title}, ${description || ""}, ${user.id}, ${user.username},
+        ${category}, ${difficulty}, ${prep_time_minutes || 0}, ${cook_time_minutes || 0},
+        ${servings || 1}, ${image_url || ""}, ${JSON.stringify(processedIngredients)}::jsonb,
+        ${JSON.stringify(processedInstructions)}::jsonb, ${JSON.stringify(processedTags)}::jsonb,
+        'pending', false, 0, 0, 0, NOW(), NOW()
+      )
+      RETURNING id, title, moderation_status, created_at
+    `
+
+    if (result.length === 0) {
+      console.log("❌ [RECIPES-API] Failed to create recipe")
+      return NextResponse.json({ success: false, error: "Failed to create recipe" }, { status: 500 })
+    }
+
+    const newRecipe = result[0]
+    console.log("✅ [RECIPES-API] Recipe created successfully:", {
+      id: newRecipe.id,
+      title: newRecipe.title,
+      status: newRecipe.moderation_status,
+    })
+
+    return NextResponse.json({
+      success: true,
+      message: "Recipe submitted successfully and is pending moderation",
+      recipeId: newRecipe.id,
+      recipe: newRecipe,
+    })
+  } catch (error) {
+    console.error("❌ [RECIPES-API] Error creating recipe:", error)
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Internal server error",
+        details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )

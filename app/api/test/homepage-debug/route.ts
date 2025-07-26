@@ -1,310 +1,292 @@
-import { NextResponse } from "next/server"
+import { type NextRequest, NextResponse } from "next/server"
 import { sql } from "@/lib/neon"
-import { addLog } from "../server-logs/route"
+import { getCurrentUserFromRequest } from "@/lib/server-auth"
 
-export async function GET() {
+// GET - Debug homepage recipe display
+export async function GET(request: NextRequest) {
   try {
-    addLog("info", "🔍 [HOMEPAGE-DEBUG] Starting homepage debug analysis")
+    console.log("🔄 [HOMEPAGE-DEBUG] Starting homepage debug analysis")
 
-    // Step 1: Check all recipes in database
-    const allRecipesResult = await sql`
-      SELECT 
-        id, title, author_username, moderation_status, is_published, 
-        created_at, updated_at, rating, review_count, view_count,
-        prep_time_minutes, cook_time_minutes, servings, category, difficulty
+    // Check if user is admin/owner
+    const user = await getCurrentUserFromRequest(request)
+    if (!user || (user.role !== "admin" && user.role !== "owner")) {
+      return NextResponse.json({ success: false, error: "Admin access required" }, { status: 403 })
+    }
+
+    const analysis = {
+      timestamp: new Date().toISOString(),
+      steps: [],
+      issues: [],
+      summary: {},
+    }
+
+    // Step 1: Check total recipes in database
+    console.log("📊 [HOMEPAGE-DEBUG] Step 1: Checking total recipes")
+    const totalRecipes = await sql`SELECT COUNT(*) as count FROM recipes`
+    const totalCount = Number(totalRecipes[0]?.count) || 0
+
+    analysis.steps.push({
+      step: 1,
+      name: "Total Recipes in Database",
+      result: `${totalCount} recipes found`,
+      status: totalCount > 0 ? "success" : "warning",
+      data: { total_recipes: totalCount },
+    })
+
+    if (totalCount === 0) {
+      analysis.issues.push("No recipes found in database")
+    }
+
+    // Step 2: Check approved and published recipes
+    console.log("📊 [HOMEPAGE-DEBUG] Step 2: Checking approved & published recipes")
+    const approvedRecipes = await sql`
+      SELECT COUNT(*) as count 
       FROM recipes 
+      WHERE moderation_status = 'approved' AND is_published = true
+    `
+    const approvedCount = Number(approvedRecipes[0]?.count) || 0
+
+    analysis.steps.push({
+      step: 2,
+      name: "Approved & Published Recipes",
+      result: `${approvedCount} recipes ready for display`,
+      status: approvedCount > 0 ? "success" : "error",
+      data: { approved_published: approvedCount },
+    })
+
+    if (approvedCount === 0) {
+      analysis.issues.push("No approved and published recipes available for homepage")
+    }
+
+    // Step 3: Check recently approved recipes (last 30 days)
+    console.log("📊 [HOMEPAGE-DEBUG] Step 3: Checking recently approved recipes")
+    const recentlyApproved = await sql`
+      SELECT 
+        COUNT(*) as count,
+        MIN(updated_at) as oldest_approval,
+        MAX(updated_at) as newest_approval
+      FROM recipes 
+      WHERE moderation_status = 'approved' 
+        AND is_published = true
+        AND updated_at >= NOW() - INTERVAL '30 days'
+    `
+    const recentCount = Number(recentlyApproved[0]?.count) || 0
+
+    analysis.steps.push({
+      step: 3,
+      name: "Recently Approved (Last 30 Days)",
+      result: `${recentCount} recently approved recipes`,
+      status: recentCount > 0 ? "success" : "warning",
+      data: {
+        recent_count: recentCount,
+        oldest_approval: recentlyApproved[0]?.oldest_approval,
+        newest_approval: recentlyApproved[0]?.newest_approval,
+      },
+    })
+
+    if (recentCount === 0 && approvedCount > 0) {
+      analysis.issues.push(
+        "No recently approved recipes (last 30 days) - older recipes won't show 'Recently Approved' badge",
+      )
+    }
+
+    // Step 4: Test API endpoint
+    console.log("📊 [HOMEPAGE-DEBUG] Step 4: Testing recipes API endpoint")
+    try {
+      const apiUrl = new URL("/api/recipes", request.url)
+      const apiResponse = await fetch(apiUrl.toString())
+      const apiData = await apiResponse.json()
+
+      analysis.steps.push({
+        step: 4,
+        name: "Recipes API Endpoint Test",
+        result: `API returned ${apiData.recipes?.length || 0} recipes`,
+        status: apiData.success ? "success" : "error",
+        data: {
+          api_success: apiData.success,
+          api_recipe_count: apiData.recipes?.length || 0,
+          api_error: apiData.error || null,
+        },
+      })
+
+      if (!apiData.success) {
+        analysis.issues.push(`API endpoint error: ${apiData.error}`)
+      }
+    } catch (apiError) {
+      analysis.steps.push({
+        step: 4,
+        name: "Recipes API Endpoint Test",
+        result: "API test failed",
+        status: "error",
+        data: { error: apiError instanceof Error ? apiError.message : "Unknown API error" },
+      })
+      analysis.issues.push("API endpoint is not responding correctly")
+    }
+
+    // Step 5: Sample recipe data
+    console.log("📊 [HOMEPAGE-DEBUG] Step 5: Getting sample recipe data")
+    const sampleRecipes = await sql`
+      SELECT 
+        id, title, author_username, moderation_status, is_published,
+        created_at, updated_at,
+        EXTRACT(DAY FROM (NOW() - updated_at)) as days_since_approval
+      FROM recipes 
+      WHERE moderation_status = 'approved' AND is_published = true
       ORDER BY updated_at DESC
+      LIMIT 5
     `
 
-    addLog("info", `📊 [HOMEPAGE-DEBUG] Found ${allRecipesResult.length} total recipes in database`)
-
-    // Step 2: Filter approved and published recipes
-    const approvedRecipes = allRecipesResult.filter(
-      (recipe) => recipe.moderation_status === "approved" && recipe.is_published === true,
-    )
-
-    addLog("info", `✅ [HOMEPAGE-DEBUG] Found ${approvedRecipes.length} approved & published recipes`)
-
-    // Step 3: Calculate days since approval for each recipe
-    const recipesWithApprovalData = approvedRecipes.map((recipe) => {
-      const now = new Date()
-      const updatedDate = new Date(recipe.updated_at)
-      const daysSinceApproval = Math.floor((now.getTime() - updatedDate.getTime()) / (1000 * 60 * 60 * 24))
-      const isRecentlyApproved = daysSinceApproval <= 30
-
-      return {
-        ...recipe,
-        days_since_approval: daysSinceApproval,
-        is_recently_approved: isRecentlyApproved,
-        approval_date: recipe.updated_at,
-      }
+    analysis.steps.push({
+      step: 5,
+      name: "Sample Recipe Data",
+      result: `Retrieved ${sampleRecipes.length} sample recipes`,
+      status: sampleRecipes.length > 0 ? "success" : "warning",
+      data: { sample_recipes: sampleRecipes },
     })
 
-    // Step 4: Filter recently approved recipes (last 30 days)
-    const recentlyApproved = recipesWithApprovalData.filter((recipe) => recipe.is_recently_approved)
-
-    addLog("info", `🕒 [HOMEPAGE-DEBUG] Found ${recentlyApproved.length} recently approved recipes (last 30 days)`)
-
-    // Step 5: Sort by approval date
-    const sortedRecentRecipes = recentlyApproved.sort((a, b) => {
-      const aDate = new Date(a.approval_date)
-      const bDate = new Date(b.approval_date)
-      return bDate.getTime() - aDate.getTime()
-    })
-
-    // Step 6: Test API endpoint response format
-    const apiTestResponse = await fetch(
-      `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/recipes?limit=50`,
-      {
-        headers: { "Cache-Control": "no-cache" },
-      },
-    )
-
-    let apiData = null
-    let apiError = null
-
-    try {
-      apiData = await apiTestResponse.json()
-      addLog("info", `📡 [HOMEPAGE-DEBUG] API endpoint returned ${apiData?.recipes?.length || 0} recipes`)
-    } catch (error) {
-      apiError = error instanceof Error ? error.message : "Unknown API error"
-      addLog("error", `❌ [HOMEPAGE-DEBUG] API endpoint error: ${apiError}`)
+    // Summary
+    analysis.summary = {
+      total_recipes: totalCount,
+      approved_published: approvedCount,
+      recently_approved: recentCount,
+      issues_found: analysis.issues.length,
+      overall_status: analysis.issues.length === 0 ? "healthy" : "issues_detected",
     }
 
-    // Step 7: Detailed recipe analysis
-    const recipeAnalysis = sortedRecentRecipes.slice(0, 10).map((recipe) => ({
-      id: recipe.id,
-      title: recipe.title,
-      author: recipe.author_username,
-      status: recipe.moderation_status,
-      published: recipe.is_published,
-      created_at: recipe.created_at,
-      updated_at: recipe.updated_at,
-      days_since_approval: recipe.days_since_approval,
-      is_recently_approved: recipe.is_recently_approved,
-      rating: Number(recipe.rating) || 0,
-      review_count: Number(recipe.review_count) || 0,
-      view_count: Number(recipe.view_count) || 0,
-      prep_time: Number(recipe.prep_time_minutes) || 0,
-      cook_time: Number(recipe.cook_time_minutes) || 0,
-      servings: Number(recipe.servings) || 1,
-      category: recipe.category,
-      difficulty: recipe.difficulty,
-      should_appear_on_homepage: recipe.is_recently_approved && recipe.days_since_approval <= 30,
-    }))
-
-    // Step 8: Check for common issues
-    const issues = []
-
-    if (allRecipesResult.length === 0) {
-      issues.push("No recipes found in database")
-    }
-
-    if (approvedRecipes.length === 0) {
-      issues.push("No approved recipes found")
-    }
-
-    if (recentlyApproved.length === 0) {
-      issues.push("No recently approved recipes (last 30 days)")
-    }
-
-    if (apiError) {
-      issues.push(`API endpoint error: ${apiError}`)
-    }
-
-    if (apiData && (!apiData.success || !Array.isArray(apiData.recipes))) {
-      issues.push("API response format is incorrect")
-    }
-
-    const debugReport = {
-      timestamp: new Date().toISOString(),
-      summary: {
-        total_recipes: allRecipesResult.length,
-        approved_published: approvedRecipes.length,
-        recently_approved: recentlyApproved.length,
-        api_recipes_returned: apiData?.recipes?.length || 0,
-        issues_found: issues.length,
-      },
-      issues,
-      recently_approved_recipes: recipeAnalysis,
-      api_response_sample: apiData
-        ? {
-            success: apiData.success,
-            recipes_count: apiData.recipes?.length || 0,
-            first_recipe: apiData.recipes?.[0]
-              ? {
-                  id: apiData.recipes[0].id,
-                  title: apiData.recipes[0].title,
-                  status: apiData.recipes[0].moderation_status,
-                  published: apiData.recipes[0].is_published,
-                  is_recently_approved: apiData.recipes[0].is_recently_approved,
-                }
-              : null,
-          }
-        : { error: apiError },
-      database_sample: allRecipesResult.slice(0, 5).map((recipe) => ({
-        id: recipe.id,
-        title: recipe.title,
-        status: recipe.moderation_status,
-        published: recipe.is_published,
-        updated_at: recipe.updated_at,
-      })),
-    }
-
-    addLog("info", "✅ [HOMEPAGE-DEBUG] Debug analysis completed", debugReport)
+    console.log("✅ [HOMEPAGE-DEBUG] Analysis complete:", analysis.summary)
 
     return NextResponse.json({
       success: true,
-      debug: debugReport,
+      analysis,
+      recommendations:
+        analysis.issues.length > 0
+          ? [
+              "Check if recipes are being properly approved in admin panel",
+              "Verify recipe moderation_status and is_published fields",
+              "Ensure API endpoint is working correctly",
+              "Check if recently approved recipes exist",
+            ]
+          : ["System appears to be working correctly", "Recipes should be displaying on homepage"],
     })
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error"
-    addLog("error", `❌ [HOMEPAGE-DEBUG] Debug analysis failed: ${errorMessage}`)
-
+    console.error("❌ [HOMEPAGE-DEBUG] Analysis error:", error)
     return NextResponse.json(
       {
         success: false,
-        error: errorMessage,
-        debug: {
-          timestamp: new Date().toISOString(),
-          error: "Failed to complete debug analysis",
-        },
+        error: "Debug analysis failed",
+        details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )
   }
 }
 
-export async function POST() {
+// POST - Create test recipe for homepage testing
+export async function POST(request: NextRequest) {
   try {
-    addLog("info", "🧪 [HOMEPAGE-DEBUG] Creating test recipe for homepage testing")
+    console.log("🔄 [HOMEPAGE-DEBUG] Creating test recipe")
 
-    // Create a test recipe that should appear on homepage
-    const testRecipe = {
-      id: `test_recipe_${Date.now()}`,
-      title: `Test Recipe for Homepage - ${new Date().toLocaleString()}`,
-      description: "This is a test recipe created to verify homepage functionality",
-      author_id: "test_user",
-      author_username: "Test User",
-      category: "Test",
-      difficulty: "Easy",
-      prep_time_minutes: 10,
-      cook_time_minutes: 15,
-      servings: 4,
-      image_url: "/placeholder.svg?height=200&width=300",
-      ingredients: JSON.stringify(["1 cup test ingredient", "2 tbsp test spice", "3 test items"]),
-      instructions: JSON.stringify(["Mix test ingredients", "Cook for test time", "Serve test recipe"]),
-      tags: JSON.stringify(["test", "homepage", "debug"]),
-      moderation_status: "approved",
-      is_published: true,
-      rating: 4.5,
-      review_count: 10,
-      view_count: 25,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+    // Check if user is admin/owner
+    const user = await getCurrentUserFromRequest(request)
+    if (!user || (user.role !== "admin" && user.role !== "owner")) {
+      return NextResponse.json({ success: false, error: "Admin access required" }, { status: 403 })
     }
 
-    // Insert test recipe
-    await sql`
+    // Generate test recipe data
+    const testRecipeId = `test_recipe_${Date.now()}`
+    const testTitle = `Test Recipe ${new Date().toLocaleTimeString()}`
+
+    console.log("📝 [HOMEPAGE-DEBUG] Creating test recipe:", testRecipeId)
+
+    // Create test recipe
+    const createResult = await sql`
       INSERT INTO recipes (
         id, title, description, author_id, author_username, category, difficulty,
-        prep_time_minutes, cook_time_minutes, servings, image_url, ingredients,
-        instructions, tags, moderation_status, is_published, rating, review_count,
+        prep_time_minutes, cook_time_minutes, servings, image_url, ingredients, 
+        instructions, tags, moderation_status, is_published, rating, review_count, 
         view_count, created_at, updated_at
-      ) VALUES (
-        ${testRecipe.id}, ${testRecipe.title}, ${testRecipe.description},
-        ${testRecipe.author_id}, ${testRecipe.author_username}, ${testRecipe.category},
-        ${testRecipe.difficulty}, ${testRecipe.prep_time_minutes}, ${testRecipe.cook_time_minutes},
-        ${testRecipe.servings}, ${testRecipe.image_url}, ${testRecipe.ingredients}::jsonb,
-        ${testRecipe.instructions}::jsonb, ${testRecipe.tags}::jsonb,
-        ${testRecipe.moderation_status}, ${testRecipe.is_published}, ${testRecipe.rating},
-        ${testRecipe.review_count}, ${testRecipe.view_count}, ${testRecipe.created_at},
-        ${testRecipe.updated_at}
       )
+      VALUES (
+        ${testRecipeId}, ${testTitle}, 'This is a test recipe for homepage debugging',
+        ${user.id}, ${user.username}, 'test', 'easy', 15, 30, 4,
+        '/placeholder.svg?height=300&width=400&text=Test+Recipe',
+        ${JSON.stringify(["Test ingredient 1", "Test ingredient 2", "Test ingredient 3"])}::jsonb,
+        ${JSON.stringify(["Step 1: Test instruction", "Step 2: Another test step", "Step 3: Final step"])}::jsonb,
+        ${JSON.stringify(["test", "debug", "homepage"])}::jsonb,
+        'approved', true, 4.5, 10, 25, NOW() - INTERVAL '1 day', NOW()
+      )
+      RETURNING id, title, moderation_status, is_published, created_at, updated_at
     `
 
-    addLog("info", `✅ [HOMEPAGE-DEBUG] Test recipe created: ${testRecipe.id}`)
-
-    // Verify the recipe was created and should appear on homepage
-    const verifyResult = await sql`
-      SELECT id, title, moderation_status, is_published, updated_at
-      FROM recipes 
-      WHERE id = ${testRecipe.id}
-    `
-
-    if (verifyResult.length === 0) {
-      throw new Error("Test recipe was not created successfully")
+    if (createResult.length === 0) {
+      throw new Error("Failed to create test recipe")
     }
 
-    const createdRecipe = verifyResult[0]
-    const daysSinceApproval = 0 // Just created
-    const shouldAppearOnHomepage = daysSinceApproval <= 30
+    const testRecipe = createResult[0]
+    console.log("✅ [HOMEPAGE-DEBUG] Test recipe created:", testRecipe)
 
-    addLog("info", "✅ [HOMEPAGE-DEBUG] Test recipe verified", {
-      id: createdRecipe.id,
-      title: createdRecipe.title,
-      status: createdRecipe.moderation_status,
-      published: createdRecipe.is_published,
-      days_since_approval: daysSinceApproval,
-      should_appear_on_homepage: shouldAppearOnHomepage,
-    })
+    // Verify it appears in API
+    const apiUrl = new URL("/api/recipes", request.url)
+    const apiResponse = await fetch(apiUrl.toString())
+    const apiData = await apiResponse.json()
+
+    const testRecipeInApi = apiData.recipes?.find((r: any) => r.id === testRecipeId)
 
     return NextResponse.json({
       success: true,
       message: "Test recipe created successfully",
-      test_recipe: {
-        id: testRecipe.id,
-        title: testRecipe.title,
-        status: createdRecipe.moderation_status,
-        published: createdRecipe.is_published,
-        days_since_approval: daysSinceApproval,
-        should_appear_on_homepage: shouldAppearOnHomepage,
-        created_at: createdRecipe.updated_at,
+      test_recipe: testRecipe,
+      verification: {
+        appears_in_api: !!testRecipeInApi,
+        api_recipe_count: apiData.recipes?.length || 0,
+        test_recipe_data: testRecipeInApi || null,
       },
     })
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error"
-    addLog("error", `❌ [HOMEPAGE-DEBUG] Failed to create test recipe: ${errorMessage}`)
-
+    console.error("❌ [HOMEPAGE-DEBUG] Error creating test recipe:", error)
     return NextResponse.json(
       {
         success: false,
-        error: errorMessage,
+        error: "Failed to create test recipe",
+        details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )
   }
 }
 
-export async function DELETE() {
+// DELETE - Clean up test recipes
+export async function DELETE(request: NextRequest) {
   try {
-    addLog("info", "🧹 [HOMEPAGE-DEBUG] Cleaning up test recipes")
+    console.log("🔄 [HOMEPAGE-DEBUG] Cleaning up test recipes")
 
-    // Delete all test recipes
+    // Check if user is admin/owner
+    const user = await getCurrentUserFromRequest(request)
+    if (!user || (user.role !== "admin" && user.role !== "owner")) {
+      return NextResponse.json({ success: false, error: "Admin access required" }, { status: 403 })
+    }
+
+    // Delete test recipes
     const deleteResult = await sql`
       DELETE FROM recipes 
-      WHERE title LIKE 'Test Recipe for Homepage%' OR id LIKE 'test_recipe_%'
+      WHERE id LIKE 'test_recipe_%' OR category = 'test'
       RETURNING id, title
     `
 
-    addLog("info", `✅ [HOMEPAGE-DEBUG] Deleted ${deleteResult.length} test recipes`)
+    console.log(`✅ [HOMEPAGE-DEBUG] Deleted ${deleteResult.length} test recipes`)
 
     return NextResponse.json({
       success: true,
       message: `Deleted ${deleteResult.length} test recipes`,
-      deleted_recipes: deleteResult.map((recipe) => ({
-        id: recipe.id,
-        title: recipe.title,
-      })),
+      deleted_recipes: deleteResult,
     })
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error"
-    addLog("error", `❌ [HOMEPAGE-DEBUG] Failed to clean up test recipes: ${errorMessage}`)
-
+    console.error("❌ [HOMEPAGE-DEBUG] Error cleaning up test recipes:", error)
     return NextResponse.json(
       {
         success: false,
-        error: errorMessage,
+        error: "Failed to clean up test recipes",
+        details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )

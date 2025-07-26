@@ -1,333 +1,407 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { RefreshCw, Play, Trash2, CheckCircle, XCircle, AlertTriangle, Home, Database, Eye } from "lucide-react"
-import Link from "next/link"
+import { Badge } from "@/components/ui/badge"
+import { Loader2, CheckCircle, XCircle, AlertTriangle, ExternalLink, Trash2, Plus } from "lucide-react"
+import { useAuth } from "@/contexts/auth-context"
 
-interface DebugReport {
+interface AnalysisStep {
+  step: number
+  name: string
+  result: string
+  status: "success" | "warning" | "error"
+  data: any
+}
+
+interface DebugAnalysis {
   timestamp: string
+  steps: AnalysisStep[]
+  issues: string[]
   summary: {
     total_recipes: number
     approved_published: number
     recently_approved: number
-    api_recipes_returned: number
     issues_found: number
+    overall_status: string
   }
-  issues: string[]
-  recently_approved_recipes: any[]
-  api_response_sample: any
-  database_sample: any[]
 }
 
-interface TestRecipe {
-  id: string
-  title: string
-  status: string
-  published: boolean
-  days_since_approval: number
-  should_appear_on_homepage: boolean
-  created_at: string
-}
+export default function TestHomepage() {
+  const { user, isAuthenticated, isLoading } = useAuth()
+  const router = useRouter()
+  const [analysis, setAnalysis] = useState<DebugAnalysis | null>(null)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [isCreatingTest, setIsCreatingTest] = useState(false)
+  const [isCleaning, setIsCleaning] = useState(false)
+  const [error, setError] = useState("")
+  const [success, setSuccess] = useState("")
 
-export default function TestHomepagePage() {
-  const [debugReport, setDebugReport] = useState<DebugReport | null>(null)
-  const [testRecipe, setTestRecipe] = useState<TestRecipe | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [testLoading, setTestLoading] = useState(false)
-  const [cleanupLoading, setCleanupLoading] = useState(false)
+  // Redirect if not admin/owner
+  useEffect(() => {
+    if (!isLoading && (!isAuthenticated || (user?.role !== "admin" && user?.role !== "owner"))) {
+      router.push("/login")
+    }
+  }, [isAuthenticated, isLoading, user, router])
 
-  const runDebugAnalysis = async () => {
+  const runAnalysis = async () => {
+    setIsAnalyzing(true)
+    setError("")
+    setSuccess("")
+
     try {
-      setLoading(true)
-      const response = await fetch("/api/test/homepage-debug")
+      const response = await fetch("/api/test/homepage-debug", {
+        method: "GET",
+        credentials: "include",
+      })
+
       const data = await response.json()
 
       if (data.success) {
-        setDebugReport(data.debug)
+        setAnalysis(data.analysis)
+        setSuccess("Analysis completed successfully")
       } else {
-        console.error("Debug analysis failed:", data.error)
+        setError(data.error || "Analysis failed")
       }
-    } catch (error) {
-      console.error("Error running debug analysis:", error)
+    } catch (err) {
+      setError("Failed to run analysis")
+      console.error("Analysis error:", err)
     } finally {
-      setLoading(false)
+      setIsAnalyzing(false)
     }
   }
 
   const createTestRecipe = async () => {
+    setIsCreatingTest(true)
+    setError("")
+    setSuccess("")
+
     try {
-      setTestLoading(true)
       const response = await fetch("/api/test/homepage-debug", {
         method: "POST",
+        credentials: "include",
       })
+
       const data = await response.json()
 
       if (data.success) {
-        setTestRecipe(data.test_recipe)
-        // Refresh debug analysis after creating test recipe
-        setTimeout(() => {
-          runDebugAnalysis()
-        }, 1000)
+        setSuccess(`Test recipe created: ${data.test_recipe.title}`)
+        // Re-run analysis to show updated results
+        setTimeout(runAnalysis, 1000)
       } else {
-        console.error("Failed to create test recipe:", data.error)
+        setError(data.error || "Failed to create test recipe")
       }
-    } catch (error) {
-      console.error("Error creating test recipe:", error)
+    } catch (err) {
+      setError("Failed to create test recipe")
+      console.error("Create test recipe error:", err)
     } finally {
-      setTestLoading(false)
+      setIsCreatingTest(false)
     }
   }
 
   const cleanupTestRecipes = async () => {
+    setIsCleaning(true)
+    setError("")
+    setSuccess("")
+
     try {
-      setCleanupLoading(true)
       const response = await fetch("/api/test/homepage-debug", {
         method: "DELETE",
+        credentials: "include",
       })
+
       const data = await response.json()
 
       if (data.success) {
-        setTestRecipe(null)
-        // Refresh debug analysis after cleanup
-        setTimeout(() => {
-          runDebugAnalysis()
-        }, 1000)
+        setSuccess(data.message)
+        // Re-run analysis to show updated results
+        setTimeout(runAnalysis, 1000)
       } else {
-        console.error("Failed to cleanup test recipes:", data.error)
+        setError(data.error || "Failed to cleanup test recipes")
       }
-    } catch (error) {
-      console.error("Error cleaning up test recipes:", error)
+    } catch (err) {
+      setError("Failed to cleanup test recipes")
+      console.error("Cleanup error:", err)
     } finally {
-      setCleanupLoading(false)
+      setIsCleaning(false)
     }
   }
 
-  useEffect(() => {
-    runDebugAnalysis()
-  }, [])
-
-  const getStatusIcon = (hasIssues: boolean) => {
-    return hasIssues ? <XCircle className="h-5 w-5 text-red-500" /> : <CheckCircle className="h-5 w-5 text-green-500" />
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case "success":
+        return <CheckCircle className="w-5 h-5 text-green-500" />
+      case "warning":
+        return <AlertTriangle className="w-5 h-5 text-yellow-500" />
+      case "error":
+        return <XCircle className="w-5 h-5 text-red-500" />
+      default:
+        return null
+    }
   }
 
-  const getStatusColor = (hasIssues: boolean) => {
-    return hasIssues ? "border-red-200 bg-red-50" : "border-green-200 bg-green-50"
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "success":
+        return "bg-green-50 border-green-200"
+      case "warning":
+        return "bg-yellow-50 border-yellow-200"
+      case "error":
+        return "bg-red-50 border-red-200"
+      default:
+        return "bg-gray-50 border-gray-200"
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="flex items-center space-x-2">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span>Loading...</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (!isAuthenticated || (user?.role !== "admin" && user?.role !== "owner")) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle>Access Denied</CardTitle>
+            <CardDescription>Admin access required for homepage testing.</CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+    )
   }
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Homepage Testing & Debug</h1>
-          <p className="text-muted-foreground">Test and debug recipe display on homepage</p>
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900">Homepage Debug Dashboard</h1>
+          <p className="text-gray-600 mt-2">Debug why approved recipes aren't showing on the homepage</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Link href="/">
-            <Button variant="outline" size="sm">
-              <Home className="h-4 w-4 mr-2" />
-              View Homepage
-            </Button>
-          </Link>
-          <Button onClick={runDebugAnalysis} disabled={loading} size="sm">
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
-            Run Analysis
+
+        {/* Action Buttons */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <Button onClick={runAnalysis} disabled={isAnalyzing} className="w-full">
+            {isAnalyzing ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Analyzing...
+              </>
+            ) : (
+              "Run Analysis"
+            )}
+          </Button>
+
+          <Button
+            onClick={createTestRecipe}
+            disabled={isCreatingTest}
+            variant="outline"
+            className="w-full bg-transparent"
+          >
+            {isCreatingTest ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Creating...
+              </>
+            ) : (
+              <>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Test Recipe
+              </>
+            )}
+          </Button>
+
+          <Button
+            onClick={cleanupTestRecipes}
+            disabled={isCleaning}
+            variant="outline"
+            className="w-full bg-transparent"
+          >
+            {isCleaning ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Cleaning...
+              </>
+            ) : (
+              <>
+                <Trash2 className="mr-2 h-4 w-4" />
+                Cleanup Test Recipes
+              </>
+            )}
+          </Button>
+
+          <Button onClick={() => router.push("/")} variant="outline" className="w-full">
+            <ExternalLink className="mr-2 h-4 w-4" />
+            View Homepage
           </Button>
         </div>
-      </div>
 
-      {/* Test Actions */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Play className="h-5 w-5" />
-            Test Actions
-          </CardTitle>
-          <CardDescription>Create test recipes and analyze homepage behavior</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-4">
-            <Button onClick={createTestRecipe} disabled={testLoading} className="flex items-center gap-2">
-              <Play className={`h-4 w-4 ${testLoading ? "animate-spin" : ""}`} />
-              {testLoading ? "Creating Test Recipe..." : "Create Test Recipe"}
-            </Button>
+        {/* Status Messages */}
+        {error && (
+          <Alert variant="destructive" className="mb-6">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
 
-            <Button
-              onClick={cleanupTestRecipes}
-              disabled={cleanupLoading}
-              variant="outline"
-              className="flex items-center gap-2 bg-transparent"
-            >
-              <Trash2 className={`h-4 w-4 ${cleanupLoading ? "animate-spin" : ""}`} />
-              {cleanupLoading ? "Cleaning Up..." : "Cleanup Test Recipes"}
-            </Button>
+        {success && (
+          <Alert className="mb-6">
+            <AlertDescription>{success}</AlertDescription>
+          </Alert>
+        )}
 
-            <Link href="/server-logs">
-              <Button variant="outline" size="sm">
-                <Eye className="h-4 w-4 mr-2" />
-                View Server Logs
-              </Button>
-            </Link>
-          </div>
-
-          {testRecipe && (
-            <Alert className="border-green-200 bg-green-50">
-              <CheckCircle className="h-4 w-4" />
-              <AlertDescription>
-                <strong>Test Recipe Created:</strong> "{testRecipe.title}" (ID: {testRecipe.id})
-                <br />
-                <strong>Status:</strong> {testRecipe.status} | <strong>Published:</strong>{" "}
-                {testRecipe.published ? "Yes" : "No"}
-                <br />
-                <strong>Should appear on homepage:</strong> {testRecipe.should_appear_on_homepage ? "Yes" : "No"}
-              </AlertDescription>
-            </Alert>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Debug Report */}
-      {debugReport && (
-        <>
-          {/* Summary */}
-          <Card className={getStatusColor(debugReport.issues.length > 0)}>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                {getStatusIcon(debugReport.issues.length > 0)}
-                Debug Summary
-              </CardTitle>
-              <CardDescription>
-                Analysis completed at {new Date(debugReport.timestamp).toLocaleString()}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-blue-600">{debugReport.summary.total_recipes}</div>
-                  <div className="text-sm text-muted-foreground">Total Recipes</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-green-600">{debugReport.summary.approved_published}</div>
-                  <div className="text-sm text-muted-foreground">Approved & Published</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-orange-600">{debugReport.summary.recently_approved}</div>
-                  <div className="text-sm text-muted-foreground">Recently Approved</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-purple-600">{debugReport.summary.api_recipes_returned}</div>
-                  <div className="text-sm text-muted-foreground">API Returned</div>
-                </div>
-                <div className="text-center">
-                  <div
-                    className={`text-2xl font-bold ${debugReport.summary.issues_found > 0 ? "text-red-600" : "text-green-600"}`}
-                  >
-                    {debugReport.summary.issues_found}
-                  </div>
-                  <div className="text-sm text-muted-foreground">Issues Found</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Issues */}
-          {debugReport.issues.length > 0 && (
-            <Card className="border-red-200 bg-red-50">
+        {/* Analysis Results */}
+        {analysis && (
+          <div className="space-y-6">
+            {/* Summary Card */}
+            <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-red-700">
-                  <AlertTriangle className="h-5 w-5" />
-                  Issues Found ({debugReport.issues.length})
+                <CardTitle className="flex items-center gap-2">
+                  {getStatusIcon(analysis.summary.overall_status === "healthy" ? "success" : "error")}
+                  Analysis Summary
                 </CardTitle>
+                <CardDescription>Analysis completed at {new Date(analysis.timestamp).toLocaleString()}</CardDescription>
               </CardHeader>
               <CardContent>
-                <ul className="space-y-2">
-                  {debugReport.issues.map((issue, index) => (
-                    <li key={index} className="flex items-center gap-2 text-red-700">
-                      <XCircle className="h-4 w-4" />
-                      {issue}
-                    </li>
-                  ))}
-                </ul>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-blue-600">{analysis.summary.total_recipes}</div>
+                    <div className="text-sm text-gray-600">Total Recipes</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-green-600">{analysis.summary.approved_published}</div>
+                    <div className="text-sm text-gray-600">Approved & Published</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-orange-600">{analysis.summary.recently_approved}</div>
+                    <div className="text-sm text-gray-600">Recently Approved</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-red-600">{analysis.summary.issues_found}</div>
+                    <div className="text-sm text-gray-600">Issues Found</div>
+                  </div>
+                </div>
               </CardContent>
             </Card>
-          )}
 
-          {/* Recently Approved Recipes */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Database className="h-5 w-5" />
-                Recently Approved Recipes ({debugReport.recently_approved_recipes.length})
-              </CardTitle>
-              <CardDescription>Recipes approved in the last 30 days that should appear on homepage</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {debugReport.recently_approved_recipes.length === 0 ? (
-                <p className="text-muted-foreground text-center py-4">No recently approved recipes found</p>
-              ) : (
-                <div className="space-y-3">
-                  {debugReport.recently_approved_recipes.map((recipe, index) => (
-                    <div key={recipe.id} className="border rounded-lg p-4">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <h4 className="font-medium">{recipe.title}</h4>
-                          <p className="text-sm text-muted-foreground">by {recipe.author}</p>
-                          <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-                            <span>ID: {recipe.id}</span>
-                            <span>Days since approval: {recipe.days_since_approval}</span>
-                            <span>Category: {recipe.category}</span>
-                            <span>Rating: {recipe.rating}</span>
-                          </div>
+            {/* Issues */}
+            {analysis.issues.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <XCircle className="w-5 h-5 text-red-500" />
+                    Issues Detected
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {analysis.issues.map((issue, index) => (
+                      <Alert key={index} variant="destructive">
+                        <AlertDescription>{issue}</AlertDescription>
+                      </Alert>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Analysis Steps */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Detailed Analysis Steps</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {analysis.steps.map((step) => (
+                    <div key={step.step} className={`p-4 rounded-lg border ${getStatusColor(step.status)}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          {getStatusIcon(step.status)}
+                          <span className="font-medium">
+                            Step {step.step}: {step.name}
+                          </span>
                         </div>
-                        <div className="flex flex-col items-end gap-2">
-                          <Badge variant={recipe.should_appear_on_homepage ? "default" : "secondary"}>
-                            {recipe.should_appear_on_homepage ? "Should Show" : "Won't Show"}
-                          </Badge>
-                          <Badge variant={recipe.published ? "default" : "destructive"}>
-                            {recipe.published ? "Published" : "Not Published"}
-                          </Badge>
-                          <Badge variant={recipe.status === "approved" ? "default" : "secondary"}>
-                            {recipe.status}
-                          </Badge>
-                        </div>
+                        <Badge
+                          variant={
+                            step.status === "success"
+                              ? "default"
+                              : step.status === "warning"
+                                ? "secondary"
+                                : "destructive"
+                          }
+                        >
+                          {step.status}
+                        </Badge>
                       </div>
+                      <p className="text-sm text-gray-700 mb-2">{step.result}</p>
+                      {step.data && (
+                        <details className="text-xs text-gray-600">
+                          <summary className="cursor-pointer hover:text-gray-800">View Details</summary>
+                          <pre className="mt-2 p-2 bg-gray-100 rounded overflow-auto">
+                            {JSON.stringify(step.data, null, 2)}
+                          </pre>
+                        </details>
+                      )}
                     </div>
                   ))}
                 </div>
-              )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
 
-          {/* API Response Sample */}
+            {/* Quick Links */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Quick Actions</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <Button onClick={() => router.push("/")} variant="outline" className="w-full">
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    View Homepage
+                  </Button>
+                  <Button onClick={() => router.push("/admin/recipes")} variant="outline" className="w-full">
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Admin Recipes
+                  </Button>
+                  <Button onClick={() => router.push("/server-logs")} variant="outline" className="w-full">
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    View Server Logs
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {!analysis && (
           <Card>
             <CardHeader>
-              <CardTitle>API Response Analysis</CardTitle>
-              <CardDescription>Sample data from /api/recipes endpoint</CardDescription>
+              <CardTitle>Ready to Debug</CardTitle>
+              <CardDescription>
+                Click "Run Analysis" to start debugging the homepage recipe display issue.
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <pre className="text-xs bg-muted p-4 rounded-lg overflow-auto">
-                {JSON.stringify(debugReport.api_response_sample, null, 2)}
-              </pre>
+              <p className="text-gray-600">This tool will check:</p>
+              <ul className="list-disc list-inside mt-2 space-y-1 text-gray-600">
+                <li>Total recipes in database</li>
+                <li>Approved and published recipes</li>
+                <li>Recently approved recipes (last 30 days)</li>
+                <li>API endpoint functionality</li>
+                <li>Sample recipe data</li>
+              </ul>
             </CardContent>
           </Card>
-
-          {/* Database Sample */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Database Sample</CardTitle>
-              <CardDescription>Raw data from recipes table</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <pre className="text-xs bg-muted p-4 rounded-lg overflow-auto">
-                {JSON.stringify(debugReport.database_sample, null, 2)}
-              </pre>
-            </CardContent>
-          </Card>
-        </>
-      )}
+        )}
+      </div>
     </div>
   )
 }
