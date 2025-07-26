@@ -51,16 +51,18 @@ export async function GET(request: NextRequest) {
 
     console.log(`✅ [RECIPES-API] Found ${recipes.length} recipes`)
 
-    // Log each recipe for debugging with approval timing
-    recipes.forEach((recipe: any, index: number) => {
+    // Process recipes and calculate approval timing
+    const processedRecipes = recipes.map((recipe: any) => {
       const createdDate = new Date(recipe.created_at)
       const updatedDate = new Date(recipe.updated_at)
+
+      // If updated_at is significantly later than created_at, it's likely the approval time
       const approvalDate = updatedDate > createdDate ? updatedDate : createdDate
       const daysSinceApproval = Math.floor((Date.now() - approvalDate.getTime()) / (1000 * 60 * 60 * 24))
+      const isRecentlyApproved = daysSinceApproval <= 30
 
-      console.log(`📋 [RECIPES-API] Recipe ${index + 1}:`, {
+      console.log(`📋 [RECIPES-API] Recipe "${recipe.title}":`, {
         id: recipe.id,
-        title: recipe.title,
         author: recipe.author_username,
         status: recipe.moderation_status,
         published: recipe.is_published,
@@ -68,16 +70,8 @@ export async function GET(request: NextRequest) {
         updated: recipe.updated_at,
         approvalDate: approvalDate.toISOString(),
         daysSinceApproval,
-        isRecentlyApproved: daysSinceApproval <= 30,
+        isRecentlyApproved,
       })
-    })
-
-    // Process recipes to ensure proper data format and add approval timing
-    const processedRecipes = recipes.map((recipe: any) => {
-      const createdDate = new Date(recipe.created_at)
-      const updatedDate = new Date(recipe.updated_at)
-      const approvalDate = updatedDate > createdDate ? updatedDate : createdDate
-      const daysSinceApproval = Math.floor((Date.now() - approvalDate.getTime()) / (1000 * 60 * 60 * 24))
 
       return {
         ...recipe,
@@ -89,7 +83,7 @@ export async function GET(request: NextRequest) {
         servings: Number(recipe.servings) || 1,
         approval_date: approvalDate.toISOString(),
         days_since_approval: daysSinceApproval,
-        is_recently_approved: daysSinceApproval <= 30,
+        is_recently_approved: isRecentlyApproved,
       }
     })
 

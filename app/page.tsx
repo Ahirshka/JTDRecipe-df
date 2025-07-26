@@ -137,25 +137,20 @@ export default function HomePage() {
         servings: Number(recipe.servings) || 1,
       }))
 
-      // Calculate date ranges
-      const now = new Date()
-      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-
       // Filter recipes based on approval date for "Recently Added"
+      // Only show recipes that were approved in the last 30 days
       const recentlyApproved = processedRecipes
         .filter((recipe: Recipe) => {
-          // Use the approval date (updated_at when approved) or fall back to created_at
-          const approvalDate = recipe.approval_date ? new Date(recipe.approval_date) : new Date(recipe.updated_at)
-          const isRecentlyApproved = approvalDate >= thirtyDaysAgo
+          const isRecentlyApproved = recipe.is_recently_approved === true
+          const daysSince = recipe.days_since_approval || 999
 
           console.log(`🔍 [HOMEPAGE] Recipe "${recipe.title}":`, {
-            approvalDate: approvalDate.toISOString(),
-            thirtyDaysAgo: thirtyDaysAgo.toISOString(),
+            daysSinceApproval: daysSince,
             isRecentlyApproved,
-            daysSinceApproval: recipe.days_since_approval,
+            qualifiesForRecentlyAdded: isRecentlyApproved && daysSince <= 30,
           })
 
-          return isRecentlyApproved
+          return isRecentlyApproved && daysSince <= 30
         })
         .sort((a: Recipe, b: Recipe) => {
           // Sort by approval date (updated_at) descending - most recently approved first
