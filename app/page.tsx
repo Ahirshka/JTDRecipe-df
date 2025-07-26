@@ -5,9 +5,8 @@ import { Star, Clock, Eye, TrendingUp, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
+import { RecipePreview } from "@/components/recipe-preview"
 import Link from "next/link"
-import Image from "next/image"
 import { useAuth } from "@/contexts/auth-context"
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
@@ -371,49 +370,7 @@ export default function HomePage() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {displayedRecipes.map((recipe) => (
-                <Link key={recipe.id} href={`/recipe/${recipe.id}`}>
-                  <Card className="hover:shadow-lg transition-shadow cursor-pointer">
-                    <div className="relative">
-                      <Image
-                        src={recipe.image_url || "/placeholder.svg?height=200&width=300"}
-                        alt={recipe.title}
-                        width={300}
-                        height={200}
-                        className="w-full h-48 object-cover rounded-t-lg"
-                      />
-                      <Badge className="absolute top-2 right-2 bg-white text-gray-900">{recipe.category}</Badge>
-                      {recipe.is_recently_approved && (
-                        <Badge className="absolute top-2 left-2 bg-green-500 text-white">Recently Approved</Badge>
-                      )}
-                    </div>
-                    <CardContent className="p-4">
-                      <h3 className="font-semibold text-lg mb-2 line-clamp-2">{recipe.title}</h3>
-                      <p className="text-sm text-gray-600 mb-3">by {recipe.author_username}</p>
-
-                      {recipe.days_since_approval !== undefined && (
-                        <p className="text-xs text-green-600 mb-2">Approved {recipe.days_since_approval} days ago</p>
-                      )}
-
-                      <div className="flex items-center justify-between text-sm text-gray-500">
-                        <div className="flex items-center gap-1">
-                          <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-                          <span className="font-medium">{Number(recipe.rating).toFixed(1)}</span>
-                          <span>({recipe.review_count})</span>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <div className="flex items-center gap-1">
-                            <Clock className="w-4 h-4" />
-                            <span>{recipe.prep_time_minutes + recipe.cook_time_minutes}m</span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <Eye className="w-4 h-4" />
-                            <span>{recipe.view_count}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
+                <RecipePreview key={recipe.id} recipe={recipe} showApprovalBadge={activeCategory === "recent"} />
               ))}
             </div>
           )}
