@@ -20,10 +20,16 @@ import { Search, Plus, User, Settings, LogOut, Shield, Menu, X } from "lucide-re
 import { useAuth } from "@/contexts/auth-context"
 
 export function Navigation() {
-  const { user, logout, isAuthenticated } = useAuth()
+  const { user, logout, isAuthenticated, isLoading } = useAuth()
   const router = useRouter()
   const [searchQuery, setSearchQuery] = useState("")
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+
+  console.log("🔄 [NAVIGATION] Current auth state:", {
+    isAuthenticated,
+    isLoading,
+    user: user ? { id: user.id, username: user.username, role: user.role } : null,
+  })
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
@@ -35,11 +41,35 @@ export function Navigation() {
   }
 
   const handleLogout = async () => {
+    console.log("🔄 [NAVIGATION] Logging out")
     await logout()
     router.push("/")
   }
 
   const isAdmin = user?.role === "owner" || user?.role === "admin" || user?.role === "moderator"
+
+  console.log("🔄 [NAVIGATION] Admin check:", {
+    userRole: user?.role,
+    isAdmin,
+  })
+
+  // Show loading state
+  if (isLoading) {
+    return (
+      <nav className="bg-white shadow-sm border-b sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            <Link href="/" className="flex items-center">
+              <span className="text-2xl font-bold text-orange-600">JTDRecipe</span>
+            </Link>
+            <div className="flex items-center space-x-4">
+              <div className="animate-pulse bg-gray-200 h-8 w-20 rounded"></div>
+            </div>
+          </div>
+        </div>
+      </nav>
+    )
+  }
 
   return (
     <nav className="bg-white shadow-sm border-b sticky top-0 z-50">

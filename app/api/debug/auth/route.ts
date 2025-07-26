@@ -1,117 +1,100 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { sql, getAllUsers } from "@/lib/neon"
 import { getCurrentSession } from "@/lib/auth-system"
-import { findUserByEmail, getAllUsers, testConnection } from "@/lib/neon"
-import { cookies } from "next/headers"
 
 export async function GET(request: NextRequest) {
-  console.log("🔍 [API-DEBUG] Auth debug request received")
+  console.log("🔄 [API] Debug auth info request")
 
   try {
-    const debugInfo: any = {
-      timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV,
-      database: {},
-      session: {},
-      cookies: {},
-      users: {},
-    }
+    // Check database connection
+    let databaseConnected = false
+    let tablesExist = false
+    let userCount = 0
+    let sessionCount = 0
 
-    // Test database connection
-    console.log("🔍 [API-DEBUG] Testing database connection...")
     try {
-      const dbConnected = await testConnection()
-      debugInfo.database.connected = dbConnected
-      debugInfo.database.status = dbConnected ? "Connected" : "Failed"
+      await sql`SELECT 1`
+      databaseConnected = true
+
+      // Check if tables exist
+      const tableCheck = await sql`
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name IN ('users', 'sessions', 'recipes')
+      `
+      tablesExist = tableCheck.length >= 2
+
+      if (tablesExist) {
+        // Get user count
+        const userCountResult = await sql`SELECT COUNT(*) as count FROM users`
+        userCount = Number.parseInt(userCountResult[0].count)
+
+        // Get session count
+        const sessionCountResult = await sql`SELECT COUNT(*) as count FROM sessions WHERE expires > NOW()`
+        sessionCount = Number.parseInt(sessionCountResult[0].count)
+      }
     } catch (error) {
-      debugInfo.database.connected = false
-      debugInfo.database.error = error instanceof Error ? error.message : "Unknown error"
+      console.error("Database check failed:", error)
     }
 
     // Check cookies
-    console.log("🔍 [API-DEBUG] Checking cookies...")
+    const sessionToken = request.cookies.get("auth_session")?.value || null
+    const hasAuthCookie = !!sessionToken
+
+    // Get all users
+    let users = []
     try {
-      const cookieStore = await cookies()
-      const sessionCookie = cookieStore.get("auth_session")
-      debugInfo.cookies.hasSessionCookie = !!sessionCookie
-      debugInfo.cookies.sessionToken = sessionCookie?.value?.substring(0, 10) + "..." || "None"
+      if (tablesExist) {
+        users = await getAllUsers()
+      }
     } catch (error) {
-      debugInfo.cookies.error = error instanceof Error ? error.message : "Unknown error"
+      console.error("Failed to get users:", error)
     }
 
     // Check current session
-    console.log("🔍 [API-DEBUG] Checking current session...")
+    let currentSession = { valid: false, user: null, error: null }
     try {
       const session = await getCurrentSession()
-      debugInfo.session.valid = session.success
-      debugInfo.session.error = session.error || null
-      if (session.user) {
-        debugInfo.session.user = {
-          id: session.user.id,
-          username: session.user.username,
-          email: session.user.email,
-          role: session.user.role,
-          status: session.user.status,
-        }
+      currentSession = {
+        valid: session.success,
+        user: session.user,
+        error: session.error,
       }
     } catch (error) {
-      debugInfo.session.error = error instanceof Error ? error.message : "Unknown error"
+      currentSession.error = error instanceof Error ? error.message : "Unknown error"
     }
 
-    // Check users in database
-    console.log("🔍 [API-DEBUG] Checking users in database...")
-    try {
-      const users = await getAllUsers()
-      debugInfo.users.count = users.length
-      debugInfo.users.list = users.map((user) => ({
+    const debugInfo = {
+      database: {
+        connected: databaseConnected,
+        tablesExist,
+        userCount,
+        sessionCount,
+      },
+      cookies: {
+        sessionToken,
+        hasAuthCookie,
+      },
+      users: users.map((user) => ({
         id: user.id,
         username: user.username,
         email: user.email,
         role: user.role,
         status: user.status,
         is_verified: user.is_verified,
-        created_at: user.created_at,
-      }))
-
-      // Check specific users
-      const ownerUser = await findUserByEmail("aaronhirshka@gmail.com")
-      debugInfo.users.owner = ownerUser
-        ? {
-            id: ownerUser.id,
-            username: ownerUser.username,
-            email: ownerUser.email,
-            role: ownerUser.role,
-            status: ownerUser.status,
-            hasPasswordHash: !!ownerUser.password_hash,
-          }
-        : null
-
-      const testUser = await findUserByEmail("test@example.com")
-      debugInfo.users.testUser = testUser
-        ? {
-            id: testUser.id,
-            username: testUser.username,
-            email: testUser.email,
-            role: testUser.role,
-            status: testUser.status,
-            hasPasswordHash: !!testUser.password_hash,
-          }
-        : null
-    } catch (error) {
-      debugInfo.users.error = error instanceof Error ? error.message : "Unknown error"
+      })),
+      currentSession,
     }
 
-    console.log("✅ [API-DEBUG] Debug info collected successfully")
-
-    return NextResponse.json({
-      success: true,
-      debug: debugInfo,
-    })
+    console.log("✅ [API] Debug info compiled successfully")
+    return NextResponse.json(debugInfo)
   } catch (error) {
-    console.error("❌ [API-DEBUG] Debug error:", error)
+    console.error("❌ [API] Debug auth error:", error)
     return NextResponse.json(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "Failed to get debug info",
+        message: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )

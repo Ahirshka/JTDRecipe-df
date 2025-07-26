@@ -2,79 +2,88 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2, Eye, EyeOff } from "lucide-react"
+import { useAuth } from "@/contexts/auth-context"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const [isLoading, setIsLoading] = useState(false)
+  const { login, isAuthenticated, user } = useAuth()
   const router = useRouter()
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      console.log("✅ [LOGIN] User already authenticated, redirecting...")
+      router.push("/")
+    }
+  }, [isAuthenticated, user, router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setLoading(true)
     setError("")
+    setIsLoading(true)
+
+    console.log("🔄 [LOGIN] Attempting login for:", email)
 
     try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email, password }),
-      })
+      const success = await login(email, password)
 
-      const data = await response.json()
-
-      if (data.success) {
-        // Store session token
-        localStorage.setItem("session_token", data.token)
-
-        // Redirect based on user role
-        if (data.user.role === "owner" || data.user.role === "admin") {
-          router.push("/admin")
-        } else {
-          router.push("/")
-        }
+      if (success) {
+        console.log("✅ [LOGIN] Login successful, redirecting...")
+        router.push("/")
       } else {
-        setError(data.error || "Login failed")
+        console.log("❌ [LOGIN] Login failed")
+        setError("Invalid email or password")
       }
     } catch (error) {
-      console.error("Login error:", error)
-      setError("Network error. Please try again.")
+      console.error("❌ [LOGIN] Login error:", error)
+      setError("An error occurred during login")
     } finally {
-      setLoading(false)
+      setIsLoading(false)
     }
   }
 
-  const fillOwnerCredentials = () => {
-    setEmail("aaronhirshka@gmail.com")
-    setPassword("Morton2121")
-  }
-
-  const fillTestCredentials = () => {
-    setEmail("test@example.com")
-    setPassword("password123")
+  // Show loading if already authenticated
+  if (isAuthenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="flex items-center space-x-2">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span>Redirecting...</span>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">Sign In</CardTitle>
-          <CardDescription className="text-center">Enter your credentials to access your account</CardDescription>
+          <CardTitle className="text-2xl font-bold text-center">Sign in</CardTitle>
+          <CardDescription className="text-center">
+            Enter your email and password to access your account
+          </CardDescription>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit}>
+          <CardContent className="space-y-4">
+            {error && (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input
@@ -84,7 +93,7 @@ export default function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                disabled={loading}
+                disabled={isLoading}
               />
             </div>
 
@@ -98,7 +107,7 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  disabled={loading}
+                  disabled={isLoading}
                 />
                 <Button
                   type="button"
@@ -106,77 +115,53 @@ export default function LoginPage() {
                   size="sm"
                   className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                   onClick={() => setShowPassword(!showPassword)}
-                  disabled={loading}
+                  disabled={isLoading}
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>
               </div>
             </div>
 
-            {error && (
-              <Alert variant="destructive">
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
+            {/* Quick login credentials for testing */}
+            <div className="bg-blue-50 p-3 rounded-md text-sm">
+              <p className="font-medium text-blue-800 mb-2">Test Credentials:</p>
+              <div className="space-y-1 text-blue-700">
+                <p>
+                  <strong>Owner:</strong> aaronhirshka@gmail.com / Morton2121
+                </p>
+                <p>
+                  <strong>Test User:</strong> test@example.com / testpass123
+                </p>
+              </div>
+            </div>
+          </CardContent>
 
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? (
+          <CardFooter className="flex flex-col space-y-4">
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Signing in...
                 </>
               ) : (
-                "Sign In"
+                "Sign in"
               )}
             </Button>
-          </form>
 
-          <div className="mt-6 space-y-2">
-            <div className="text-sm text-gray-600 text-center mb-3">Quick Fill Options:</div>
+            <div className="text-center text-sm">
+              <Link href="/forgot-password" className="text-blue-600 hover:underline">
+                Forgot your password?
+              </Link>
+            </div>
 
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full bg-transparent"
-              onClick={fillOwnerCredentials}
-              disabled={loading}
-            >
-              Fill Owner Credentials
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full bg-transparent"
-              onClick={fillTestCredentials}
-              disabled={loading}
-            >
-              Fill Test User Credentials
-            </Button>
-          </div>
-
-          <div className="mt-6 text-center">
-            <p className="text-sm text-gray-600">
+            <div className="text-center text-sm">
               Don't have an account?{" "}
-              <a href="/signup" className="font-medium text-blue-600 hover:text-blue-500">
+              <Link href="/signup" className="text-blue-600 hover:underline">
                 Sign up
-              </a>
-            </p>
-          </div>
-
-          <div className="mt-4 p-3 bg-gray-50 rounded-md">
-            <p className="text-xs text-gray-600 mb-2">
-              <strong>Owner Account:</strong>
-            </p>
-            <p className="text-xs text-gray-500">
-              Email: aaronhirshka@gmail.com
-              <br />
-              Password: Morton2121
-              <br />
-              Role: Owner (Full Admin Access)
-            </p>
-          </div>
-        </CardContent>
+              </Link>
+            </div>
+          </CardFooter>
+        </form>
       </Card>
     </div>
   )
