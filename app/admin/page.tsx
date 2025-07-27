@@ -48,23 +48,37 @@ export default function AdminPage() {
 
   const fetchStats = async () => {
     try {
+      console.log("🔄 [ADMIN-PAGE] Fetching admin stats...")
+
       const response = await fetch("/api/admin/stats", {
+        method: "GET",
         credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
       })
+
+      console.log("🔄 [ADMIN-PAGE] Stats response status:", response.status)
 
       if (response.ok) {
         const data = await response.json()
+        console.log("🔄 [ADMIN-PAGE] Stats response data:", data)
+
         if (data.success) {
           setStats(data.stats)
+          setError("")
         } else {
-          setError(data.message || "Failed to load stats")
+          console.error("❌ [ADMIN-PAGE] Stats API returned error:", data.error)
+          setError(data.error || "Failed to load stats")
         }
       } else {
-        setError("Failed to load admin stats")
+        const errorText = await response.text()
+        console.error("❌ [ADMIN-PAGE] Stats API failed:", response.status, errorText)
+        setError(`Failed to load admin stats (${response.status})`)
       }
     } catch (error) {
-      console.error("Error fetching admin stats:", error)
-      setError("Error loading admin stats")
+      console.error("❌ [ADMIN-PAGE] Error fetching admin stats:", error)
+      setError("Network error loading admin stats")
     } finally {
       setLoading(false)
     }
@@ -122,7 +136,12 @@ export default function AdminPage() {
         {error && (
           <Alert variant="destructive" className="mb-6">
             <AlertTriangle className="h-4 w-4" />
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription>
+              {error}
+              <Button variant="outline" size="sm" className="ml-4 bg-transparent" onClick={fetchStats}>
+                Retry
+              </Button>
+            </AlertDescription>
           </Alert>
         )}
 
@@ -308,6 +327,43 @@ export default function AdminPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Debug Information */}
+        {error && (
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle className="text-red-600">Debug Information</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2 text-sm">
+                <div>
+                  <strong>User:</strong> {user?.username} ({user?.role})
+                </div>
+                <div>
+                  <strong>Authenticated:</strong> {isAuthenticated ? "Yes" : "No"}
+                </div>
+                <div>
+                  <strong>Is Admin:</strong> {isAdmin ? "Yes" : "No"}
+                </div>
+                <div>
+                  <strong>Error:</strong> {error}
+                </div>
+              </div>
+              <Button
+                onClick={() => {
+                  console.log("Current user:", user)
+                  console.log("Is authenticated:", isAuthenticated)
+                  console.log("Is admin:", isAdmin)
+                  fetchStats()
+                }}
+                className="mt-4"
+                variant="outline"
+              >
+                Debug & Retry
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   )

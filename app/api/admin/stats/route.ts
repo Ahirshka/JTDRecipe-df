@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Check if user is admin/owner
-    if (user.role !== "admin" && user.role !== "owner") {
+    if (user.role !== "admin" && user.role !== "owner" && user.role !== "moderator") {
       console.log("❌ [ADMIN-STATS] User lacks admin permissions:", { role: user.role })
       return NextResponse.json({ success: false, error: "Insufficient permissions" }, { status: 403 })
     }

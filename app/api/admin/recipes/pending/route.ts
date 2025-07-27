@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { sql } from "@/lib/neon"
 import { getCurrentUserFromRequest } from "@/lib/server-auth"
+import { initializeDatabase } from "@/lib/database-init"
 
 export const dynamic = "force-dynamic"
 
@@ -15,31 +15,35 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Not authenticated" }, { status: 401 })
     }
 
-    // Check if user is admin/owner
-    if (user.role !== "admin" && user.role !== "owner") {
-      console.log("❌ [ADMIN-PENDING] User lacks admin permissions:", { role: user.role })
+    // Check if user is admin/moderator
+    if (!["admin", "owner", "moderator"].includes(user.role)) {
+      console.log("❌ [ADMIN-PENDING] User lacks moderation permissions:", { role: user.role })
       return NextResponse.json({ success: false, error: "Insufficient permissions" }, { status: 403 })
     }
 
-    console.log("✅ [ADMIN-PENDING] Admin permissions verified for user:", user.username)
+    console.log("✅ [ADMIN-PENDING] Moderation permissions verified for user:", user.username)
 
-    // Fetch pending recipes
-    const recipes = await sql`
+    // Initialize database to ensure tables exist
+    await initializeDatabase()
+
+    // Import sql after database initialization
+    const { sql } = await import("@/lib/neon")
+
+    // Get pending recipes
+    const pendingRecipes = await sql`
       SELECT 
         id,
         title,
         description,
-        author_id,
-        author_username,
-        category,
-        difficulty,
-        prep_time_minutes,
-        cook_time_minutes,
-        servings,
-        image_url,
         ingredients,
         instructions,
-        tags,
+        prep_time,
+        cook_time,
+        servings,
+        difficulty,
+        cuisine_type,
+        dietary_restrictions,
+        author_username,
         moderation_status,
         is_published,
         created_at,
@@ -49,81 +53,11 @@ export async function GET(request: NextRequest) {
       ORDER BY created_at ASC
     `
 
-    console.log(`📋 [ADMIN-PENDING] Found ${recipes.length} pending recipes`)
-
-    // Process recipes to ensure proper data format
-    const processedRecipes = recipes.map((recipe) => {
-      let ingredients = []
-      let instructions = []
-
-      // Process ingredients
-      try {
-        if (recipe.ingredients) {
-          if (typeof recipe.ingredients === "string") {
-            try {
-              ingredients = JSON.parse(recipe.ingredients)
-            } catch {
-              ingredients = [recipe.ingredients]
-            }
-          } else if (Array.isArray(recipe.ingredients)) {
-            ingredients = recipe.ingredients
-          } else {
-            ingredients = [String(recipe.ingredients)]
-          }
-        }
-      } catch (error) {
-        console.log("⚠️ [ADMIN-PENDING] Error processing ingredients for recipe", recipe.id, error)
-        ingredients = []
-      }
-
-      // Process instructions
-      try {
-        if (recipe.instructions) {
-          if (typeof recipe.instructions === "string") {
-            try {
-              instructions = JSON.parse(recipe.instructions)
-            } catch {
-              instructions = [recipe.instructions]
-            }
-          } else if (Array.isArray(recipe.instructions)) {
-            instructions = recipe.instructions
-          } else {
-            instructions = [String(recipe.instructions)]
-          }
-        }
-      } catch (error) {
-        console.log("⚠️ [ADMIN-PENDING] Error processing instructions for recipe", recipe.id, error)
-        instructions = []
-      }
-
-      return {
-        id: recipe.id,
-        title: recipe.title || "Untitled Recipe",
-        description: recipe.description || "",
-        author_id: recipe.author_id,
-        author_username: recipe.author_username || "Unknown",
-        category: recipe.category || "Other",
-        difficulty: recipe.difficulty || "Easy",
-        prep_time_minutes: recipe.prep_time_minutes || 0,
-        cook_time_minutes: recipe.cook_time_minutes || 0,
-        servings: recipe.servings || 1,
-        image_url: recipe.image_url || "",
-        ingredients,
-        instructions,
-        tags: recipe.tags || [],
-        moderation_status: recipe.moderation_status || "pending",
-        is_published: recipe.is_published || false,
-        created_at: recipe.created_at,
-        updated_at: recipe.updated_at,
-      }
-    })
-
-    console.log("✅ [ADMIN-PENDING] Processed pending recipes successfully")
+    console.log("✅ [ADMIN-PENDING] Found pending recipes:", pendingRecipes.length)
 
     return NextResponse.json({
       success: true,
-      recipes: processedRecipes,
-      count: processedRecipes.length,
+      recipes: pendingRecipes,
     })
   } catch (error) {
     console.error("❌ [ADMIN-PENDING] Error fetching pending recipes:", error)
