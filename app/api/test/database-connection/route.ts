@@ -1,61 +1,43 @@
-import { type NextRequest, NextResponse } from "next/server"
+import { NextResponse } from "next/server"
 import { neon } from "@neondatabase/serverless"
 
 const sql = neon(process.env.DATABASE_URL!)
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   console.log("🔍 [DB-TEST] Starting database connection test")
 
   try {
-    const testResults = {
+    const testResult = {
       success: true,
       timestamp: new Date().toISOString(),
       environment: {
-        databaseUrl: !!process.env.DATABASE_URL,
+        databaseUrl: process.env.DATABASE_URL ? "Present" : "Missing",
         nodeEnv: process.env.NODE_ENV,
       },
       connection: null,
       tables: [],
       tablesExist: false,
-      recipeCount: 0,
       userCount: 0,
+      recipeCount: 0,
       sampleData: null,
     }
 
-    // Test 1: Check environment variables
-    if (!process.env.DATABASE_URL) {
-      console.log("❌ [DB-TEST] DATABASE_URL not found")
-      return NextResponse.json({
-        success: false,
-        error: "DATABASE_URL environment variable not set",
-        testResults,
-      })
-    }
-
-    console.log("✅ [DB-TEST] DATABASE_URL found")
-
-    // Test 2: Test basic connection
+    // Test 1: Basic connection
     try {
-      const connectionTest = await sql`SELECT 1 as test`
-      testResults.connection = {
-        success: true,
-        result: connectionTest,
-      }
+      await sql`SELECT 1 as test`
+      testResult.connection = { success: true, message: "Database connection successful" }
       console.log("✅ [DB-TEST] Database connection successful")
-    } catch (connectionError) {
-      console.log("❌ [DB-TEST] Database connection failed:", connectionError)
-      testResults.connection = {
+    } catch (error) {
+      testResult.connection = {
         success: false,
-        error: connectionError instanceof Error ? connectionError.message : "Unknown connection error",
+        error: error instanceof Error ? error.message : "Unknown connection error",
       }
-      return NextResponse.json({
-        success: false,
-        error: "Database connection failed",
-        testResults,
-      })
+      testResult.success = false
+      console.error("❌ [DB-TEST] Database connection failed:", error)
+      return NextResponse.json(testResult, { status: 500 })
     }
 
-    // Test 3: Check if required tables exist
+    // Test 2: Check if required tables exist
     try {
       const tableCheck = await sql`
         SELECT table_name 
@@ -65,53 +47,75 @@ export async function GET(request: NextRequest) {
         ORDER BY table_name
       `
 
-      testResults.tables = tableCheck.map((row: any) => row.table_name)
-      testResults.tablesExist = testResults.tables.includes("users") && testResults.tables.includes("recipes")
+      testResult.tables = tableCheck.map((row: any) => row.table_name)
+      testResult.tablesExist = testResult.tables.includes("users") && testResult.tables.includes("recipes")
 
-      console.log("✅ [DB-TEST] Tables found:", testResults.tables)
-    } catch (tableError) {
-      console.log("❌ [DB-TEST] Table check failed:", tableError)
-      testResults.tables = []
-      testResults.tablesExist = false
+      console.log("✅ [DB-TEST] Tables found:", testResult.tables)
+    } catch (error) {
+      console.error("❌ [DB-TEST] Table check failed:", error)
+      testResult.tables = []
+      testResult.tablesExist = false
     }
 
-    // Test 4: Get record counts
-    if (testResults.tablesExist) {
+    // Test 3: Get counts if tables exist
+    if (testResult.tablesExist) {
       try {
         // Get user count
         const userCountResult = await sql`SELECT COUNT(*) as count FROM users`
-        testResults.userCount = Number.parseInt(userCountResult[0].count)
+        testResult.userCount = Number.parseInt(userCountResult[0].count)
 
         // Get recipe count
         const recipeCountResult = await sql`SELECT COUNT(*) as count FROM recipes`
-        testResults.recipeCount = Number.parseInt(recipeCountResult[0].count)
+        testResult.recipeCount = Number.parseInt(recipeCountResult[0].count)
 
-        console.log("✅ [DB-TEST] Record counts - Users:", testResults.userCount, "Recipes:", testResults.recipeCount)
-      } catch (countError) {
-        console.log("⚠️ [DB-TEST] Count queries failed:", countError)
+        console.log(`✅ [DB-TEST] Data counts - Users: ${testResult.userCount}, Recipes: ${testResult.recipeCount}`)
+      } catch (error) {
+        console.error("❌ [DB-TEST] Count queries failed:", error)
       }
-    }
 
-    // Test 5: Get sample data
-    if (testResults.recipeCount > 0) {
+      // Test 4: Get sample data
       try {
+        const sampleUsers = await sql`
+          SELECT id, username, email, role, status, created_at 
+          FROM users 
+          ORDER BY created_at DESC 
+          LIMIT 3
+        `
+
         const sampleRecipes = await sql`
-          SELECT id, title, author_username, moderation_status, created_at
+          SELECT id, title, author_username, moderation_status, created_at 
           FROM recipes 
           ORDER BY created_at DESC 
-          LIMIT 5
+          LIMIT 3
         `
-        testResults.sampleData = {
-          recipes: sampleRecipes,
+
+        testResult.sampleData = {
+          users: sampleUsers.map((user: any) => ({
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            role: user.role,
+            status: user.status,
+            created_at: user.created_at,
+          })),
+          recipes: sampleRecipes.map((recipe: any) => ({
+            id: recipe.id,
+            title: recipe.title,
+            author_username: recipe.author_username,
+            moderation_status: recipe.moderation_status,
+            created_at: recipe.created_at,
+          })),
         }
-        console.log("✅ [DB-TEST] Sample data retrieved")
-      } catch (sampleError) {
-        console.log("⚠️ [DB-TEST] Sample data query failed:", sampleError)
+
+        console.log("✅ [DB-TEST] Sample data retrieved successfully")
+      } catch (error) {
+        console.error("❌ [DB-TEST] Sample data query failed:", error)
+        testResult.sampleData = { error: "Failed to retrieve sample data" }
       }
     }
 
     console.log("✅ [DB-TEST] Database test completed successfully")
-    return NextResponse.json(testResults)
+    return NextResponse.json(testResult)
   } catch (error) {
     console.error("❌ [DB-TEST] Database test failed:", error)
     return NextResponse.json(
@@ -119,6 +123,7 @@ export async function GET(request: NextRequest) {
         success: false,
         error: "Database test failed",
         details: error instanceof Error ? error.message : "Unknown error",
+        stack: error instanceof Error ? error.stack : undefined,
       },
       { status: 500 },
     )
