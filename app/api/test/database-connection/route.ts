@@ -1,66 +1,142 @@
-import { NextResponse } from "next/server"
+import { type NextRequest, NextResponse } from "next/server"
 import { neon } from "@neondatabase/serverless"
 
-export const dynamic = "force-dynamic"
+const sql = neon(process.env.DATABASE_URL!)
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  console.log("🔍 [DB-CONNECTION-TEST] Starting database connection test...")
+
   try {
-    // Check if DATABASE_URL is configured
+    const testResults: any = {
+      timestamp: new Date().toISOString(),
+      databaseUrl: !!process.env.DATABASE_URL,
+      tests: [],
+    }
+
+    // Test 1: Check if DATABASE_URL exists
     if (!process.env.DATABASE_URL) {
-      return NextResponse.json({
-        success: false,
-        message: "DATABASE_URL not configured",
-        error: "Missing DATABASE_URL environment variable",
-        details: "Please set your DATABASE_URL in Vercel environment variables",
-        fallback: "Using mock data instead",
-        environment_check: {
-          database_url: false,
-          node_env: process.env.NODE_ENV || "development",
-        },
+      testResults.tests.push({
+        name: "Environment Variable Check",
+        status: "error",
+        message: "DATABASE_URL environment variable not found",
       })
+      testResults.success = false
+      return NextResponse.json(testResults, { status: 500 })
     }
 
-    // Test database connection
-    const sql = neon(process.env.DATABASE_URL)
-
-    // Simple query to test connection
-    const result = await sql`SELECT NOW() as current_time, version() as database_version`
-
-    if (result && result[0]) {
-      return NextResponse.json({
-        success: true,
-        message: "Database connection successful",
-        connection: {
-          current_time: result[0].current_time,
-          database_version: result[0].database_version,
-          database_url_configured: true,
-        },
-        environment_check: {
-          database_url: true,
-          node_env: process.env.NODE_ENV || "development",
-        },
-      })
-    } else {
-      return NextResponse.json({
-        success: false,
-        message: "Database query failed",
-        error: "No result returned from database",
-        fallback: "Using mock data instead",
-      })
-    }
-  } catch (error) {
-    console.error("Database connection test failed:", error)
-
-    return NextResponse.json({
-      success: false,
-      message: "Database connection failed",
-      error: error instanceof Error ? error.message : "Unknown database error",
-      details: error instanceof Error ? error.stack : "No additional details",
-      fallback: "Using mock data instead",
-      environment_check: {
-        database_url: !!process.env.DATABASE_URL,
-        node_env: process.env.NODE_ENV || "development",
-      },
+    testResults.tests.push({
+      name: "Environment Variable Check",
+      status: "success",
+      message: "DATABASE_URL found",
     })
+
+    // Test 2: Basic connection test
+    try {
+      const result = await sql`SELECT 1 as test`
+      testResults.tests.push({
+        name: "Basic Connection",
+        status: "success",
+        message: "Database connection successful",
+        data: result,
+      })
+    } catch (connectionError) {
+      testResults.tests.push({
+        name: "Basic Connection",
+        status: "error",
+        message: `Connection failed: ${connectionError.message}`,
+        error: connectionError.message,
+      })
+      testResults.success = false
+      return NextResponse.json(testResults, { status: 500 })
+    }
+
+    // Test 3: Check if users table exists
+    try {
+      const usersCheck = await sql`
+        SELECT COUNT(*) as count 
+        FROM information_schema.tables 
+        WHERE table_name = 'users'
+      `
+      const usersExist = Number.parseInt(usersCheck[0].count) > 0
+      testResults.tests.push({
+        name: "Users Table Check",
+        status: usersExist ? "success" : "error",
+        message: usersExist ? "Users table exists" : "Users table not found",
+        data: { exists: usersExist },
+      })
+    } catch (tableError) {
+      testResults.tests.push({
+        name: "Users Table Check",
+        status: "error",
+        message: `Table check failed: ${tableError.message}`,
+        error: tableError.message,
+      })
+    }
+
+    // Test 4: Check if recipes table exists
+    try {
+      const recipesCheck = await sql`
+        SELECT COUNT(*) as count 
+        FROM information_schema.tables 
+        WHERE table_name = 'recipes'
+      `
+      const recipesExist = Number.parseInt(recipesCheck[0].count) > 0
+      testResults.tests.push({
+        name: "Recipes Table Check",
+        status: recipesExist ? "success" : "error",
+        message: recipesExist ? "Recipes table exists" : "Recipes table not found",
+        data: { exists: recipesExist },
+      })
+
+      // If recipes table exists, get count
+      if (recipesExist) {
+        const recipeCount = await sql`SELECT COUNT(*) as total FROM recipes`
+        testResults.tests.push({
+          name: "Recipe Count",
+          status: "info",
+          message: `Found ${recipeCount[0].total} recipes in database`,
+          data: { count: Number.parseInt(recipeCount[0].total) },
+        })
+      }
+    } catch (tableError) {
+      testResults.tests.push({
+        name: "Recipes Table Check",
+        status: "error",
+        message: `Table check failed: ${tableError.message}`,
+        error: tableError.message,
+      })
+    }
+
+    // Test 5: Check database permissions
+    try {
+      // Try to create a temporary table to test write permissions
+      await sql`CREATE TEMPORARY TABLE test_permissions (id INTEGER)`
+      await sql`DROP TABLE test_permissions`
+      testResults.tests.push({
+        name: "Database Permissions",
+        status: "success",
+        message: "Database has read/write permissions",
+      })
+    } catch (permError) {
+      testResults.tests.push({
+        name: "Database Permissions",
+        status: "warning",
+        message: `Permission test failed: ${permError.message}`,
+        error: permError.message,
+      })
+    }
+
+    testResults.success = true
+    return NextResponse.json(testResults)
+  } catch (error) {
+    console.error("❌ [DB-CONNECTION-TEST] Test failed:", error)
+    return NextResponse.json(
+      {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      },
+      { status: 500 },
+    )
   }
 }

@@ -1,100 +1,68 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { sql, getAllUsers } from "@/lib/neon"
-import { getCurrentSession } from "@/lib/auth-system"
+import { getCurrentUserFromRequest } from "@/lib/server-auth"
+import { verifyToken } from "@/lib/auth"
 
 export async function GET(request: NextRequest) {
-  console.log("🔄 [API] Debug auth info request")
+  console.log("🔍 [AUTH-DEBUG] Starting authentication debug...")
 
   try {
-    // Check database connection
-    let databaseConnected = false
-    let tablesExist = false
-    let userCount = 0
-    let sessionCount = 0
+    // Get cookies
+    const cookies = request.cookies.getAll()
+    const authToken = request.cookies.get("auth-token")?.value
 
+    console.log(
+      "🍪 [AUTH-DEBUG] Cookies:",
+      cookies.map((c) => ({ name: c.name, hasValue: !!c.value })),
+    )
+    console.log("🔑 [AUTH-DEBUG] Auth token present:", !!authToken)
+
+    const debugInfo: any = {
+      timestamp: new Date().toISOString(),
+      cookies: cookies.map((c) => ({ name: c.name, hasValue: !!c.value })),
+      authTokenPresent: !!authToken,
+      headers: Object.fromEntries(request.headers.entries()),
+    }
+
+    // Test 1: Check if auth token exists
+    if (!authToken) {
+      debugInfo.error = "No auth token found in cookies"
+      debugInfo.success = false
+      return NextResponse.json(debugInfo)
+    }
+
+    // Test 2: Try to verify token manually
     try {
-      await sql`SELECT 1`
-      databaseConnected = true
-
-      // Check if tables exist
-      const tableCheck = await sql`
-        SELECT table_name 
-        FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name IN ('users', 'sessions', 'recipes')
-      `
-      tablesExist = tableCheck.length >= 2
-
-      if (tablesExist) {
-        // Get user count
-        const userCountResult = await sql`SELECT COUNT(*) as count FROM users`
-        userCount = Number.parseInt(userCountResult[0].count)
-
-        // Get session count
-        const sessionCountResult = await sql`SELECT COUNT(*) as count FROM sessions WHERE expires > NOW()`
-        sessionCount = Number.parseInt(sessionCountResult[0].count)
-      }
-    } catch (error) {
-      console.error("Database check failed:", error)
+      const payload = verifyToken(authToken)
+      debugInfo.tokenPayload = payload
+      debugInfo.tokenValid = !!payload
+      console.log("🔓 [AUTH-DEBUG] Token payload:", payload)
+    } catch (tokenError) {
+      debugInfo.tokenError = tokenError.message
+      debugInfo.tokenValid = false
+      console.log("❌ [AUTH-DEBUG] Token verification failed:", tokenError)
     }
 
-    // Check cookies
-    const sessionToken = request.cookies.get("auth_session")?.value || null
-    const hasAuthCookie = !!sessionToken
-
-    // Get all users
-    let users = []
+    // Test 3: Try getCurrentUserFromRequest
     try {
-      if (tablesExist) {
-        users = await getAllUsers()
-      }
-    } catch (error) {
-      console.error("Failed to get users:", error)
+      const user = await getCurrentUserFromRequest(request)
+      debugInfo.currentUser = user
+      debugInfo.userFound = !!user
+      console.log("👤 [AUTH-DEBUG] Current user:", user)
+    } catch (userError) {
+      debugInfo.userError = userError.message
+      debugInfo.userFound = false
+      console.log("❌ [AUTH-DEBUG] Get current user failed:", userError)
     }
 
-    // Check current session
-    let currentSession = { valid: false, user: null, error: null }
-    try {
-      const session = await getCurrentSession()
-      currentSession = {
-        valid: session.success,
-        user: session.user,
-        error: session.error,
-      }
-    } catch (error) {
-      currentSession.error = error instanceof Error ? error.message : "Unknown error"
-    }
-
-    const debugInfo = {
-      database: {
-        connected: databaseConnected,
-        tablesExist,
-        userCount,
-        sessionCount,
-      },
-      cookies: {
-        sessionToken,
-        hasAuthCookie,
-      },
-      users: users.map((user) => ({
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        status: user.status,
-        is_verified: user.is_verified,
-      })),
-      currentSession,
-    }
-
-    console.log("✅ [API] Debug info compiled successfully")
+    debugInfo.success = true
     return NextResponse.json(debugInfo)
   } catch (error) {
-    console.error("❌ [API] Debug auth error:", error)
+    console.error("❌ [AUTH-DEBUG] Debug failed:", error)
     return NextResponse.json(
       {
-        error: "Failed to get debug info",
-        message: error instanceof Error ? error.message : "Unknown error",
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
       },
       { status: 500 },
     )

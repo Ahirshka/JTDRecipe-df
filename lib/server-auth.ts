@@ -1,11 +1,19 @@
 import { cookies } from "next/headers"
-import { findSessionByToken, findUserById } from "@/lib/neon"
-import type { User } from "@/lib/neon"
+import { neon } from "@neondatabase/serverless"
+import { verifyToken } from "@/lib/auth"
 import type { NextRequest } from "next/server"
-import { crypto } from "crypto"
 
-// Change the cookie name to match what auth-system.ts uses
+const sql = neon(process.env.DATABASE_URL!)
 const COOKIE_NAME = "auth_session"
+
+export interface User {
+  id: string
+  username: string
+  email: string
+  role: string
+  status: string
+  created_at: string
+}
 
 export async function getCurrentUser(): Promise<User | null> {
   try {
@@ -21,23 +29,33 @@ export async function getCurrentUser(): Promise<User | null> {
 
     console.log("✅ [SERVER-AUTH] Session token found:", sessionToken.substring(0, 10) + "...")
 
-    // Find session
-    const session = await findSessionByToken(sessionToken)
-    if (!session) {
-      console.log("❌ [SERVER-AUTH] Invalid or expired session token")
+    // Verify the token
+    const payload = verifyToken(sessionToken)
+    if (!payload) {
+      console.log("❌ [SERVER-AUTH] Token verification failed")
       return null
     }
 
-    console.log("✅ [SERVER-AUTH] Valid session found for user ID:", session.user_id)
+    console.log("✅ [SERVER-AUTH] Token verified, payload:", {
+      userId: payload.userId,
+      email: payload.email,
+      role: payload.role,
+    })
 
-    // Find user
-    const user = await findUserById(session.user_id)
-    if (!user) {
-      console.log("❌ [SERVER-AUTH] User not found for session")
+    // Get user from database
+    const users = await sql`
+      SELECT id, username, email, role, status, created_at
+      FROM users 
+      WHERE id = ${payload.userId}
+    `
+
+    if (users.length === 0) {
+      console.log("❌ [SERVER-AUTH] User not found in database for ID:", payload.userId)
       return null
     }
 
-    console.log("✅ [SERVER-AUTH] User authenticated:", {
+    const user = users[0] as User
+    console.log("✅ [SERVER-AUTH] User found:", {
       id: user.id,
       username: user.username,
       role: user.role,
@@ -53,35 +71,45 @@ export async function getCurrentUser(): Promise<User | null> {
 
 export async function getCurrentUserFromRequest(request: NextRequest): Promise<User | null> {
   try {
-    console.log("🔄 [SERVER-AUTH] Getting current user from request")
+    console.log("🔍 [SERVER-AUTH] Getting current user from request...")
 
-    // Try to get session token from cookies
-    const sessionToken = request.cookies.get(COOKIE_NAME)?.value
+    // Get auth token from cookies
+    const token = request.cookies.get("auth-token")?.value
 
-    if (!sessionToken) {
-      console.log("❌ [SERVER-AUTH] No session token found in request cookies")
+    if (!token) {
+      console.log("❌ [SERVER-AUTH] No auth token found in cookies")
       return null
     }
 
-    console.log("✅ [SERVER-AUTH] Session token found in request:", sessionToken.substring(0, 10) + "...")
+    console.log("🔑 [SERVER-AUTH] Auth token found, verifying...")
 
-    // Find session
-    const session = await findSessionByToken(sessionToken)
-    if (!session) {
-      console.log("❌ [SERVER-AUTH] Invalid or expired session token from request")
+    // Verify the token
+    const payload = verifyToken(token)
+    if (!payload) {
+      console.log("❌ [SERVER-AUTH] Token verification failed")
       return null
     }
 
-    console.log("✅ [SERVER-AUTH] Valid session found from request for user ID:", session.user_id)
+    console.log("✅ [SERVER-AUTH] Token verified, payload:", {
+      userId: payload.userId,
+      email: payload.email,
+      role: payload.role,
+    })
 
-    // Find user
-    const user = await findUserById(session.user_id)
-    if (!user) {
-      console.log("❌ [SERVER-AUTH] User not found for session from request")
+    // Get user from database
+    const users = await sql`
+      SELECT id, username, email, role, status, created_at
+      FROM users 
+      WHERE id = ${payload.userId}
+    `
+
+    if (users.length === 0) {
+      console.log("❌ [SERVER-AUTH] User not found in database for ID:", payload.userId)
       return null
     }
 
-    console.log("✅ [SERVER-AUTH] User authenticated from request:", {
+    const user = users[0] as User
+    console.log("✅ [SERVER-AUTH] User found:", {
       id: user.id,
       username: user.username,
       role: user.role,
@@ -90,16 +118,22 @@ export async function getCurrentUserFromRequest(request: NextRequest): Promise<U
 
     return user
   } catch (error) {
-    console.error("❌ [SERVER-AUTH] Error getting current user from request:", error)
+    console.error("❌ [SERVER-AUTH] Error getting current user:", error)
     return null
   }
 }
 
-export async function requireAuth(): Promise<User> {
-  const user = await getCurrentUser()
+export async function requireAuth(request: NextRequest, requiredRoles?: string[]): Promise<User> {
+  const user = await getCurrentUserFromRequest(request)
+
   if (!user) {
     throw new Error("Authentication required")
   }
+
+  if (requiredRoles && !requiredRoles.includes(user.role)) {
+    throw new Error(`Insufficient permissions. Required roles: ${requiredRoles.join(", ")}`)
+  }
+
   return user
 }
 
@@ -307,7 +341,7 @@ export async function setAuthCookie(token: string): Promise<void> {
     console.log("🔍 [SERVER-AUTH] Setting authentication cookie")
 
     const cookieStore = await cookies()
-    cookieStore.set(COOKIE_NAME, token, {
+    cookieStore.set("auth-token", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
