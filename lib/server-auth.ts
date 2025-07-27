@@ -13,14 +13,18 @@ export interface User {
   status: string
   is_verified?: boolean
   created_at: string
+  last_login_at?: string
 }
 
 // Helper function to extract user ID from different token formats
 function extractUserIdFromToken(token: string): string | null {
   try {
+    console.log("🔍 [SERVER-AUTH] Extracting user ID from token...")
+
     // First try to verify as JWT
     const payload = verifyToken(token)
     if (payload && payload.userId) {
+      console.log("✅ [SERVER-AUTH] User ID extracted via JWT verification:", payload.userId)
       return payload.userId.toString()
     }
 
@@ -36,9 +40,14 @@ function extractUserIdFromToken(token: string): string | null {
       })
 
       // Try different possible user ID fields
-      return decoded.userId?.toString() || decoded.id?.toString() || null
+      const userId = decoded.userId?.toString() || decoded.id?.toString() || null
+      if (userId) {
+        console.log("✅ [SERVER-AUTH] User ID extracted via decode:", userId)
+        return userId
+      }
     }
 
+    console.log("❌ [SERVER-AUTH] Could not extract user ID from token")
     return null
   } catch (error) {
     console.log("❌ [SERVER-AUTH] Token extraction failed:", error)
@@ -89,7 +98,7 @@ export async function getCurrentUser(): Promise<User | null> {
 
     // Get user from database
     const users = await sql`
-      SELECT id, username, email, role, status, is_verified, created_at
+      SELECT id, username, email, role, status, is_verified, created_at, last_login_at
       FROM users 
       WHERE id = ${userId}
     `
@@ -158,15 +167,30 @@ export async function getCurrentUserFromRequest(request: NextRequest): Promise<U
 
     console.log("✅ [SERVER-AUTH] Extracted user ID from request:", userId)
 
-    // Get user from database
+    // Get user from database with detailed logging
+    console.log("🔍 [SERVER-AUTH] Querying database for user...")
     const users = await sql`
-      SELECT id, username, email, role, status, is_verified, created_at
+      SELECT id, username, email, role, status, is_verified, created_at, last_login_at
       FROM users 
       WHERE id = ${userId}
     `
 
+    console.log("🔍 [SERVER-AUTH] Database query result:", {
+      found: users.length,
+      userId: userId,
+    })
+
     if (users.length === 0) {
       console.log("❌ [SERVER-AUTH] User not found in database for ID:", userId)
+
+      // Additional debugging: check if user exists with different ID format
+      try {
+        const allUsers = await sql`SELECT id, username, role FROM users LIMIT 5`
+        console.log("🔍 [SERVER-AUTH] Sample users in database:", allUsers)
+      } catch (debugError) {
+        console.log("❌ [SERVER-AUTH] Could not query sample users:", debugError)
+      }
+
       return null
     }
 
@@ -176,6 +200,16 @@ export async function getCurrentUserFromRequest(request: NextRequest): Promise<U
       username: user.username,
       role: user.role,
       status: user.status,
+      is_verified: user.is_verified,
+    })
+
+    // Additional admin role verification
+    const adminRoles = ["admin", "owner", "moderator"]
+    const isAdminUser = adminRoles.includes(user.role)
+    console.log("🔍 [SERVER-AUTH] Admin role check:", {
+      userRole: user.role,
+      isAdmin: isAdminUser,
+      adminRoles: adminRoles,
     })
 
     return user
@@ -225,7 +259,11 @@ export async function requireAdmin(request?: NextRequest): Promise<User> {
     }
 
     if (!isAdmin(user)) {
-      console.log("❌ [SERVER-AUTH] User is not admin:", { role: user.role })
+      console.log("❌ [SERVER-AUTH] User is not admin:", {
+        username: user.username,
+        role: user.role,
+        status: user.status,
+      })
       throw new Error("Admin access required")
     }
 
@@ -244,66 +282,82 @@ export async function requireAdmin(request?: NextRequest): Promise<User> {
 
 export function isAdmin(user: User | null): boolean {
   if (!user) {
+    console.log("❌ [SERVER-AUTH] Admin check: no user provided")
     return false
   }
 
   const adminRoles = ["admin", "owner"]
   const hasAdminAccess = adminRoles.includes(user.role)
 
-  console.log(
-    `✅ [SERVER-AUTH] Admin check for ${user.username}: ${hasAdminAccess ? "granted" : "denied"} (role: ${user.role})`,
-  )
+  console.log("🔍 [SERVER-AUTH] Admin check details:", {
+    username: user.username,
+    userRole: user.role,
+    adminRoles: adminRoles,
+    hasAccess: hasAdminAccess,
+    userStatus: user.status,
+  })
 
   return hasAdminAccess
 }
 
 export function isModerator(user: User | null): boolean {
   if (!user) {
+    console.log("❌ [SERVER-AUTH] Moderator check: no user provided")
     return false
   }
 
   const moderatorRoles = ["moderator", "admin", "owner"]
   const hasModeratorAccess = moderatorRoles.includes(user.role)
 
-  console.log(
-    `✅ [SERVER-AUTH] Moderator check for ${user.username}: ${hasModeratorAccess ? "granted" : "denied"} (role: ${user.role})`,
-  )
+  console.log("🔍 [SERVER-AUTH] Moderator check details:", {
+    username: user.username,
+    userRole: user.role,
+    moderatorRoles: moderatorRoles,
+    hasAccess: hasModeratorAccess,
+    userStatus: user.status,
+  })
 
   return hasModeratorAccess
 }
 
 export function isOwner(user: User | null): boolean {
   if (!user) {
+    console.log("❌ [SERVER-AUTH] Owner check: no user provided")
     return false
   }
 
   const hasOwnerAccess = user.role === "owner"
 
-  console.log(
-    `✅ [SERVER-AUTH] Owner check for ${user.username}: ${hasOwnerAccess ? "granted" : "denied"} (role: ${user.role})`,
-  )
+  console.log("🔍 [SERVER-AUTH] Owner check details:", {
+    username: user.username,
+    userRole: user.role,
+    hasAccess: hasOwnerAccess,
+    userStatus: user.status,
+  })
 
   return hasOwnerAccess
 }
 
 export function hasRole(user: User | null, role: string): boolean {
   if (!user) {
+    console.log("❌ [SERVER-AUTH] Role check: no user provided")
     return false
   }
 
   const hasAccess = user.role === role
-  console.log(`✅ [SERVER-AUTH] Role check (${role}) for ${user.username}: ${hasAccess ? "granted" : "denied"}`)
+  console.log(`🔍 [SERVER-AUTH] Role check (${role}) for ${user.username}: ${hasAccess ? "granted" : "denied"}`)
   return hasAccess
 }
 
 export function hasAnyRole(user: User | null, roles: string[]): boolean {
   if (!user) {
+    console.log("❌ [SERVER-AUTH] Any role check: no user provided")
     return false
   }
 
   const hasAccess = roles.includes(user.role)
   console.log(
-    `✅ [SERVER-AUTH] Any role check (${roles.join(", ")}) for ${user.username}: ${hasAccess ? "granted" : "denied"}`,
+    `🔍 [SERVER-AUTH] Any role check (${roles.join(", ")}) for ${user.username}: ${hasAccess ? "granted" : "denied"}`,
   )
   return hasAccess
 }
@@ -313,7 +367,7 @@ export function canModerate(user: User | null): boolean {
 }
 
 export function canAccessAdmin(user: User | null): boolean {
-  return isAdmin(user)
+  return isAdmin(user) || isModerator(user)
 }
 
 export async function requirePermission(request: NextRequest, requiredRole: string): Promise<User> {

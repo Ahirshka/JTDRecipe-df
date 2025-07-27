@@ -10,7 +10,8 @@ import {
 } from "./neon"
 
 // JWT secret from environment
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key"
+const JWT_SECRET = process.env.JWT_SECRET || "fallback-secret-key-for-development"
+const JWT_EXPIRES_IN = "7d"
 
 // Role hierarchy with numeric levels (higher number = more permissions)
 export const ROLE_HIERARCHY = {
@@ -51,35 +52,42 @@ export function hasPermission(userRole: string, requiredRole: string): boolean {
 
 // Verify JWT token
 export function verifyToken(token: string): TokenPayload | null {
-  try {
-    console.log("🔍 [AUTH] Verifying token:", token.substring(0, 10) + "...")
+  console.log("🔍 [AUTH] Verifying token:", token.substring(0, 20) + "...")
 
+  try {
     const decoded = jwt.verify(token, JWT_SECRET, {
       issuer: "recipe-site",
       audience: "recipe-site-users",
     }) as TokenPayload
 
-    console.log("✅ [AUTH] Token verified successfully for user:", decoded.userId)
+    console.log("✅ [AUTH] Token verified successfully:", {
+      userId: decoded.userId,
+      email: decoded.email,
+      role: decoded.role,
+      exp: decoded.exp ? new Date(decoded.exp * 1000).toISOString() : "No expiry",
+    })
+
     return decoded
   } catch (error) {
     if (error instanceof jwt.TokenExpiredError) {
-      console.log("⏰ [AUTH] Token expired:", error.expiredAt)
+      console.log("❌ [AUTH] Token expired:", error.expiredAt)
     } else if (error instanceof jwt.JsonWebTokenError) {
       console.log("❌ [AUTH] Invalid token:", error.message)
     } else {
-      console.error("❌ [AUTH] Token verification failed:", error)
+      console.log("❌ [AUTH] Token verification error:", error)
     }
+
     return null
   }
 }
 
 // Generate JWT token
 export function generateToken(payload: Omit<TokenPayload, "iat" | "exp">): string {
-  try {
-    console.log("🔑 [AUTH] Generating token for user:", payload.userId)
+  console.log("🔑 [AUTH] Generating token for user:", payload.userId)
 
+  try {
     const token = jwt.sign(payload, JWT_SECRET, {
-      expiresIn: "7d",
+      expiresIn: JWT_EXPIRES_IN,
       issuer: "recipe-site",
       audience: "recipe-site-users",
     })
@@ -88,7 +96,7 @@ export function generateToken(payload: Omit<TokenPayload, "iat" | "exp">): strin
     return token
   } catch (error) {
     console.error("❌ [AUTH] Token generation failed:", error)
-    throw new Error("Failed to generate token")
+    throw new Error("Failed to generate authentication token")
   }
 }
 
@@ -332,19 +340,19 @@ export async function logoutUser(token: string): Promise<boolean> {
 }
 
 // Refresh token
-export function refreshToken(oldToken: string): string | null {
-  try {
-    console.log("🔄 [AUTH] Refreshing token")
+export function refreshToken(token: string): string | null {
+  console.log("🔄 [AUTH] Refreshing token")
 
-    // Verify the old token (even if expired, we can still decode it)
-    const decoded = jwt.decode(oldToken) as TokenPayload
+  try {
+    // Decode without verification to get payload
+    const decoded = jwt.decode(token) as TokenPayload
 
     if (!decoded || !decoded.userId) {
-      console.log("❌ [AUTH] Cannot refresh - invalid token structure")
+      console.log("❌ [AUTH] Cannot refresh: invalid token structure")
       return null
     }
 
-    // Generate a new token with the same payload
+    // Generate new token with same payload
     const newToken = generateToken({
       userId: decoded.userId,
       email: decoded.email,
@@ -403,16 +411,24 @@ export function createSecureCookieOptions(maxAge: number = 7 * 24 * 60 * 60) {
 // Check if token is expired
 export function isTokenExpired(token: string): boolean {
   try {
-    const expiry = getTokenExpiry(token)
-    if (!expiry) return true
+    const decoded = jwt.decode(token) as TokenPayload
 
-    const now = new Date()
-    const isExpired = now > expiry
+    if (!decoded || !decoded.exp) {
+      return true
+    }
 
-    console.log(`🕐 [AUTH] Token expiry check: ${isExpired ? "EXPIRED" : "VALID"} (expires: ${expiry.toISOString()})`)
+    const now = Math.floor(Date.now() / 1000)
+    const isExpired = decoded.exp < now
+
+    console.log("🔍 [AUTH] Token expiry check:", {
+      exp: new Date(decoded.exp * 1000).toISOString(),
+      now: new Date(now * 1000).toISOString(),
+      isExpired,
+    })
+
     return isExpired
   } catch (error) {
-    console.error("❌ [AUTH] Token expiry check failed:", error)
+    console.log("❌ [AUTH] Error checking token expiry:", error)
     return true
   }
 }
@@ -466,6 +482,17 @@ export function decodeTokenPayload(token: string): TokenPayload | null {
     return decoded
   } catch (error) {
     console.error("❌ [AUTH] Token decode failed:", error)
+    return null
+  }
+}
+
+// Get token payload
+export function getTokenPayload(token: string): TokenPayload | null {
+  try {
+    const decoded = jwt.decode(token) as TokenPayload
+    return decoded
+  } catch (error) {
+    console.log("❌ [AUTH] Error decoding token:", error)
     return null
   }
 }
