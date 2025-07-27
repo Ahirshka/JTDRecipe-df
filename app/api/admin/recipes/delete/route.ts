@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { neon } from "@neondatabase/serverless"
-import { verifyToken } from "@/lib/auth"
+import { getCurrentUserFromRequest } from "@/lib/server-auth"
 
 const sql = neon(process.env.DATABASE_URL!)
 
@@ -8,45 +8,21 @@ export async function DELETE(request: NextRequest) {
   console.log("🗑️ [DELETE-RECIPE-API] Starting recipe deletion request")
 
   try {
-    // Get auth token from cookies
-    const token = request.cookies.get("auth-token")?.value
+    // Get current user using server-auth
+    const user = await getCurrentUserFromRequest(request)
 
-    if (!token) {
-      console.log("❌ [DELETE-RECIPE-API] No auth token provided")
+    if (!user) {
+      console.log("❌ [DELETE-RECIPE-API] No authenticated user found")
       return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
     }
 
-    // Verify token and get user
-    const payload = verifyToken(token)
-    if (!payload) {
-      console.log("❌ [DELETE-RECIPE-API] Invalid auth token")
-      return NextResponse.json({ success: false, error: "Invalid authentication" }, { status: 401 })
-    }
-
-    console.log("🔍 [DELETE-RECIPE-API] Token payload:", {
-      userId: payload.userId,
-      email: payload.email,
-      role: payload.role,
+    console.log("✅ [DELETE-RECIPE-API] Found authenticated user:", {
+      id: user.id,
+      username: user.username,
+      role: user.role,
     })
 
-    // Get user from database using the correct user ID
-    const users = await sql`
-      SELECT id, username, email, role, status 
-      FROM users 
-      WHERE id = ${payload.userId}
-    `
-
-    console.log("🔍 [DELETE-RECIPE-API] Database user query result:", users)
-
-    if (users.length === 0) {
-      console.log("❌ [DELETE-RECIPE-API] User not found in database for ID:", payload.userId)
-      return NextResponse.json({ success: false, error: "User not found" }, { status: 404 })
-    }
-
-    const user = users[0]
-    console.log("✅ [DELETE-RECIPE-API] Found user:", { id: user.id, username: user.username, role: user.role })
-
-    // Check if user has admin/owner permissions
+    // Check if user has admin/owner/moderator permissions
     if (!["admin", "owner", "moderator"].includes(user.role)) {
       console.log("❌ [DELETE-RECIPE-API] Insufficient permissions:", user.role)
       return NextResponse.json({ success: false, error: "Insufficient permissions" }, { status: 403 })
@@ -61,11 +37,15 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Recipe ID is required" }, { status: 400 })
     }
 
-    console.log("🔍 [DELETE-RECIPE-API] Deleting recipe:", { recipeId, moderator: user.username, reason })
+    console.log("🔍 [DELETE-RECIPE-API] Deleting recipe:", {
+      recipeId,
+      moderator: user.username,
+      reason: reason || "No reason provided",
+    })
 
     // Get recipe details before deletion for logging
     const recipes = await sql`
-      SELECT id, title, author_id, moderation_status
+      SELECT id, title, author_id, author_username, moderation_status
       FROM recipes 
       WHERE id = ${recipeId}
     `
@@ -76,17 +56,18 @@ export async function DELETE(request: NextRequest) {
     }
 
     const recipe = recipes[0]
-    console.log("📋 [DELETE-RECIPE-API] Found recipe to delete:", { id: recipe.id, title: recipe.title })
-
-    // Get author information
-    const authors = await sql`
-      SELECT username FROM users WHERE id = ${recipe.author_id}
-    `
-    const authorUsername = authors[0]?.username || "Unknown"
+    console.log("📋 [DELETE-RECIPE-API] Found recipe to delete:", {
+      id: recipe.id,
+      title: recipe.title,
+      author: recipe.author_username,
+    })
 
     // Delete related data first (ratings, comments, etc.)
     console.log("🗑️ [DELETE-RECIPE-API] Deleting related ratings...")
     await sql`DELETE FROM ratings WHERE recipe_id = ${recipeId}`
+
+    console.log("🗑️ [DELETE-RECIPE-API] Deleting related comments...")
+    await sql`DELETE FROM comments WHERE recipe_id = ${recipeId}`
 
     // Delete the recipe
     console.log("🗑️ [DELETE-RECIPE-API] Deleting recipe...")
@@ -151,7 +132,7 @@ export async function DELETE(request: NextRequest) {
       deletedRecipe: {
         id: recipe.id,
         title: recipe.title,
-        author: authorUsername,
+        author: recipe.author_username,
       },
     })
   } catch (error) {

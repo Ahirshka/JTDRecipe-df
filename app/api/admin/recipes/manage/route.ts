@@ -1,161 +1,161 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { neon } from "@neondatabase/serverless"
-import { verifyToken } from "@/lib/auth"
+import { getCurrentUserFromRequest } from "@/lib/server-auth"
 
 const sql = neon(process.env.DATABASE_URL!)
 
 export async function GET(request: NextRequest) {
-  console.log("📋 [RECIPE-MANAGE-API] Starting recipe management request")
+  console.log("📋 [MANAGE-RECIPES-API] Starting recipe management request")
 
   try {
-    // Get auth token from cookies
-    const token = request.cookies.get("auth-token")?.value
+    // Get current user using server-auth
+    const user = await getCurrentUserFromRequest(request)
 
-    if (!token) {
-      console.log("❌ [RECIPE-MANAGE-API] No auth token provided")
+    if (!user) {
+      console.log("❌ [MANAGE-RECIPES-API] No authenticated user found")
       return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
     }
 
-    // Verify token and get user
-    const payload = verifyToken(token)
-    if (!payload) {
-      console.log("❌ [RECIPE-MANAGE-API] Invalid auth token")
-      return NextResponse.json({ success: false, error: "Invalid authentication" }, { status: 401 })
-    }
+    console.log("✅ [MANAGE-RECIPES-API] Found authenticated user:", {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+    })
 
-    // Get user from database
-    const users = await sql`
-      SELECT id, username, email, role, status 
-      FROM users 
-      WHERE id = ${payload.userId}
-    `
-
-    if (users.length === 0) {
-      console.log("❌ [RECIPE-MANAGE-API] User not found")
-      return NextResponse.json({ success: false, error: "User not found" }, { status: 404 })
-    }
-
-    const user = users[0]
-
-    // Check if user has admin/owner permissions
+    // Check if user has admin/owner/moderator permissions
     if (!["admin", "owner", "moderator"].includes(user.role)) {
-      console.log("❌ [RECIPE-MANAGE-API] Insufficient permissions:", user.role)
+      console.log("❌ [MANAGE-RECIPES-API] Insufficient permissions:", user.role)
       return NextResponse.json({ success: false, error: "Insufficient permissions" }, { status: 403 })
     }
 
-    // Get search and filter parameters
+    // Get query parameters
     const { searchParams } = new URL(request.url)
     const search = searchParams.get("search") || ""
-    const status = searchParams.get("status") || "all"
-    const category = searchParams.get("category") || "all"
-    const limit = Number.parseInt(searchParams.get("limit") || "50")
-    const offset = Number.parseInt(searchParams.get("offset") || "0")
+    const status = searchParams.get("status") || ""
+    const category = searchParams.get("category") || ""
+    const page = Number.parseInt(searchParams.get("page") || "1")
+    const limit = Number.parseInt(searchParams.get("limit") || "20")
+    const offset = (page - 1) * limit
 
-    console.log("🔍 [RECIPE-MANAGE-API] Query parameters:", { search, status, category, limit, offset })
+    console.log("🔍 [MANAGE-RECIPES-API] Query parameters:", { search, status, category, page, limit })
 
-    // Build the query with filters
+    // Build the WHERE clause
     const whereConditions = []
     const queryParams: any[] = []
     let paramIndex = 1
 
     if (search) {
       whereConditions.push(
-        `(r.title ILIKE $${paramIndex} OR r.description ILIKE $${paramIndex + 1} OR u.username ILIKE $${paramIndex + 2})`,
+        `(title ILIKE $${paramIndex} OR description ILIKE $${paramIndex + 1} OR author_username ILIKE $${paramIndex + 2})`,
       )
       queryParams.push(`%${search}%`, `%${search}%`, `%${search}%`)
       paramIndex += 3
     }
 
-    if (status !== "all") {
-      whereConditions.push(`r.moderation_status = $${paramIndex}`)
+    if (status) {
+      whereConditions.push(`moderation_status = $${paramIndex}`)
       queryParams.push(status)
       paramIndex++
     }
 
-    if (category !== "all") {
-      whereConditions.push(`r.category = $${paramIndex}`)
+    if (category) {
+      whereConditions.push(`category = $${paramIndex}`)
       queryParams.push(category)
       paramIndex++
     }
 
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(" AND ")}` : ""
 
-    // Get recipes with user information
+    // Get total count
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM recipes
+      ${whereClause}
+    `
+
+    console.log("📊 [MANAGE-RECIPES-API] Count query:", countQuery)
+    console.log("📊 [MANAGE-RECIPES-API] Query params:", queryParams)
+
+    const countResult = await sql.unsafe(countQuery, queryParams)
+    const totalRecipes = Number.parseInt(countResult[0]?.total || "0")
+
+    // Get recipes
     const recipesQuery = `
       SELECT 
-        r.id,
-        r.title,
-        r.description,
-        r.category,
-        r.difficulty,
-        r.prep_time_minutes,
-        r.cook_time_minutes,
-        r.servings,
-        r.image_url,
-        r.moderation_status,
-        r.is_published,
-        r.created_at,
-        r.updated_at,
-        u.id as author_id,
-        u.username as author_username,
-        u.email as author_email,
-        COALESCE(AVG(rt.rating), 0) as average_rating,
-        COUNT(rt.id) as rating_count
-      FROM recipes r
-      LEFT JOIN users u ON r.author_id = u.id
-      LEFT JOIN ratings rt ON r.id = rt.recipe_id
+        id,
+        title,
+        description,
+        category,
+        difficulty,
+        prep_time_minutes,
+        cook_time_minutes,
+        servings,
+        image_url,
+        moderation_status,
+        is_published,
+        created_at,
+        updated_at,
+        author_id,
+        author_username,
+        average_rating,
+        rating_count,
+        view_count
+      FROM recipes
       ${whereClause}
-      GROUP BY r.id, u.id, u.username, u.email
-      ORDER BY r.created_at DESC
+      ORDER BY created_at DESC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `
 
     queryParams.push(limit, offset)
 
-    console.log("🔍 [RECIPE-MANAGE-API] Executing query:", recipesQuery)
-    console.log("🔍 [RECIPE-MANAGE-API] Query params:", queryParams)
+    console.log("📋 [MANAGE-RECIPES-API] Recipes query:", recipesQuery)
+    console.log("📋 [MANAGE-RECIPES-API] Final query params:", queryParams)
 
     const recipes = await sql.unsafe(recipesQuery, queryParams)
 
-    // Get total count for pagination
-    const countQuery = `
-      SELECT COUNT(DISTINCT r.id) as total
-      FROM recipes r
-      LEFT JOIN users u ON r.author_id = u.id
-      ${whereClause}
+    console.log("✅ [MANAGE-RECIPES-API] Found recipes:", recipes.length)
+
+    // Get recipe statistics
+    const statsQuery = `
+      SELECT 
+        COUNT(*) as total,
+        COUNT(CASE WHEN moderation_status = 'approved' THEN 1 END) as approved,
+        COUNT(CASE WHEN moderation_status = 'pending' THEN 1 END) as pending,
+        COUNT(CASE WHEN moderation_status = 'rejected' THEN 1 END) as rejected
+      FROM recipes
     `
 
-    const countParams = queryParams.slice(0, -2) // Remove limit and offset
-    const countResult = await sql.unsafe(countQuery, countParams)
-    const totalRecipes = Number.parseInt(countResult[0]?.total || "0")
+    const statsResult = await sql.unsafe(statsQuery)
+    const stats = statsResult[0] || { total: 0, approved: 0, pending: 0, rejected: 0 }
 
-    console.log("📊 [RECIPE-MANAGE-API] Found recipes:", recipes.length, "Total:", totalRecipes)
-
-    // Get available categories for filtering
-    const categories = await sql`
-      SELECT DISTINCT category 
-      FROM recipes 
-      WHERE category IS NOT NULL 
-      ORDER BY category
-    `
+    console.log("📊 [MANAGE-RECIPES-API] Recipe stats:", stats)
 
     return NextResponse.json({
       success: true,
       recipes: recipes.map((recipe) => ({
         ...recipe,
+        ingredients: recipe.ingredients || [],
+        instructions: recipe.instructions || [],
+        tags: recipe.tags || [],
         average_rating: Number.parseFloat(recipe.average_rating || "0"),
         rating_count: Number.parseInt(recipe.rating_count || "0"),
+        view_count: Number.parseInt(recipe.view_count || "0"),
       })),
       pagination: {
-        total: totalRecipes,
+        page,
         limit,
-        offset,
-        hasMore: offset + limit < totalRecipes,
+        total: totalRecipes,
+        totalPages: Math.ceil(totalRecipes / limit),
       },
-      categories: categories.map((c) => c.category),
+      stats: {
+        total: Number.parseInt(stats.total || "0"),
+        approved: Number.parseInt(stats.approved || "0"),
+        pending: Number.parseInt(stats.pending || "0"),
+        rejected: Number.parseInt(stats.rejected || "0"),
+      },
     })
   } catch (error) {
-    console.error("❌ [RECIPE-MANAGE-API] Error fetching recipes:", error)
+    console.error("❌ [MANAGE-RECIPES-API] Error fetching recipes:", error)
     return NextResponse.json(
       {
         success: false,

@@ -2,16 +2,13 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Search, ChefHat, Trash2, Eye, Edit, Star, Clock, Filter, ArrowLeft, MoreVertical } from "lucide-react"
+import { Search, ArrowLeft, Eye, Edit, Trash2, Clock, Users, Star, ChefHat, MoreVertical } from "lucide-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,6 +16,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
 import { useAuth } from "@/contexts/auth-context"
 
 interface Recipe {
@@ -37,67 +37,53 @@ interface Recipe {
   updated_at: string
   author_id: string
   author_username: string
-  author_email: string
   average_rating: number
   rating_count: number
+  view_count: number
 }
 
-interface Pagination {
+interface RecipeStats {
   total: number
-  limit: number
-  offset: number
-  hasMore: boolean
+  approved: number
+  pending: number
+  rejected: number
 }
 
-export default function RecipeManagePage() {
-  const { user, isAuthenticated } = useAuth()
+export default function ManageRecipesPage() {
   const router = useRouter()
+  const { user, isAuthenticated } = useAuth()
   const [recipes, setRecipes] = useState<Recipe[]>([])
-  const [categories, setCategories] = useState<string[]>([])
-  const [pagination, setPagination] = useState<Pagination>({
-    total: 0,
-    limit: 50,
-    offset: 0,
-    hasMore: false,
-  })
+  const [stats, setStats] = useState<RecipeStats>({ total: 0, approved: 0, pending: 0, rejected: 0 })
   const [loading, setLoading] = useState(true)
-  const [searchTerm, setSearchTerm] = useState("")
+  const [error, setError] = useState("")
+  const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
   const [categoryFilter, setCategoryFilter] = useState("all")
-  const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null)
   const [deleteReason, setDeleteReason] = useState("")
   const [processing, setProcessing] = useState(false)
-  const [message, setMessage] = useState("")
 
-  // Check permissions
+  // Check if user has admin permissions
+  const canManage = isAuthenticated && user && ["admin", "owner", "moderator"].includes(user.role)
+
   useEffect(() => {
-    if (!isAuthenticated || !user) {
-      router.push("/login")
+    if (!canManage) {
+      router.push("/admin")
       return
     }
-
-    if (!["admin", "owner", "moderator"].includes(user.role)) {
-      router.push("/")
-      return
-    }
-  }, [isAuthenticated, user, router])
-
-  // Load recipes
-  useEffect(() => {
     loadRecipes()
-  }, [searchTerm, statusFilter, categoryFilter, pagination.offset])
+  }, [canManage, search, statusFilter, categoryFilter])
 
   const loadRecipes = async () => {
     setLoading(true)
+    setError("")
+
     try {
-      const params = new URLSearchParams({
-        search: searchTerm,
-        status: statusFilter,
-        category: categoryFilter,
-        limit: pagination.limit.toString(),
-        offset: pagination.offset.toString(),
-      })
+      const params = new URLSearchParams()
+      if (search) params.append("search", search)
+      if (statusFilter !== "all") params.append("status", statusFilter)
+      if (categoryFilter !== "all") params.append("category", categoryFilter)
 
       const response = await fetch(`/api/admin/recipes/manage?${params}`, {
         credentials: "include",
@@ -105,16 +91,18 @@ export default function RecipeManagePage() {
 
       if (response.ok) {
         const data = await response.json()
-        setRecipes(data.recipes || [])
-        setPagination(data.pagination || pagination)
-        setCategories(data.categories || [])
+        if (data.success) {
+          setRecipes(data.recipes)
+          setStats(data.stats)
+        } else {
+          setError(data.error || "Failed to load recipes")
+        }
       } else {
-        console.error("Failed to load recipes:", response.status)
-        setMessage("Failed to load recipes")
+        setError("Failed to load recipes")
       }
     } catch (error) {
       console.error("Error loading recipes:", error)
-      setMessage("Error loading recipes")
+      setError("Failed to load recipes")
     } finally {
       setLoading(false)
     }
@@ -123,7 +111,6 @@ export default function RecipeManagePage() {
   const handleDeleteRecipe = (recipe: Recipe) => {
     setSelectedRecipe(recipe)
     setDeleteReason("")
-    setMessage("")
     setDeleteDialogOpen(true)
   }
 
@@ -131,7 +118,6 @@ export default function RecipeManagePage() {
     if (!selectedRecipe) return
 
     setProcessing(true)
-    setMessage("")
 
     try {
       const response = await fetch("/api/admin/recipes/delete", {
@@ -151,19 +137,20 @@ export default function RecipeManagePage() {
       if (data.success) {
         setDeleteDialogOpen(false)
         setSelectedRecipe(null)
+        setDeleteReason("")
         loadRecipes() // Reload the list
       } else {
-        setMessage(data.error || "Failed to delete recipe")
+        setError(data.error || "Failed to delete recipe")
       }
     } catch (error) {
-      console.error("Delete failed:", error)
-      setMessage("Delete failed - network error")
+      console.error("Error deleting recipe:", error)
+      setError("Failed to delete recipe")
     } finally {
       setProcessing(false)
     }
   }
 
-  const getModerationBadgeColor = (status: string) => {
+  const getStatusColor = (status: string) => {
     switch (status) {
       case "approved":
         return "bg-green-100 text-green-800"
@@ -176,7 +163,7 @@ export default function RecipeManagePage() {
     }
   }
 
-  const getDifficultyBadgeColor = (difficulty: string) => {
+  const getDifficultyColor = (difficulty: string) => {
     switch (difficulty.toLowerCase()) {
       case "easy":
         return "bg-green-100 text-green-800"
@@ -189,236 +176,196 @@ export default function RecipeManagePage() {
     }
   }
 
-  if (!isAuthenticated || !user || !["admin", "owner", "moderator"].includes(user.role)) {
+  if (!canManage) {
     return null
   }
 
   return (
     <div className="container mx-auto px-4 py-8 space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button variant="outline" onClick={() => router.push("/admin")}>
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Admin
-        </Button>
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Recipe Management</h1>
-          <p className="text-gray-600">Manage all recipes in the system</p>
+          <Button variant="outline" onClick={() => router.push("/admin")}>
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back to Admin
+          </Button>
         </div>
+        <h1 className="text-3xl font-bold">Manage Recipes</h1>
+        <div className="w-32" /> {/* Spacer for centering */}
       </div>
 
-      {message && (
-        <Alert>
-          <AlertDescription>{message}</AlertDescription>
-        </Alert>
-      )}
-
-      {/* Stats */}
+      {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Recipes</CardTitle>
-            <ChefHat className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{pagination.total}</div>
+          <CardContent className="p-4 text-center">
+            <div className="text-2xl font-bold">{stats.total}</div>
+            <div className="text-sm text-gray-600">Total Recipes</div>
           </CardContent>
         </Card>
-
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Approved</CardTitle>
-            <Eye className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{recipes.filter((r) => r.moderation_status === "approved").length}</div>
+          <CardContent className="p-4 text-center">
+            <div className="text-2xl font-bold text-green-600">{stats.approved}</div>
+            <div className="text-sm text-gray-600">Approved</div>
           </CardContent>
         </Card>
-
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pending</CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{recipes.filter((r) => r.moderation_status === "pending").length}</div>
+          <CardContent className="p-4 text-center">
+            <div className="text-2xl font-bold text-yellow-600">{stats.pending}</div>
+            <div className="text-sm text-gray-600">Pending</div>
           </CardContent>
         </Card>
-
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Categories</CardTitle>
-            <Filter className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{categories.length}</div>
+          <CardContent className="p-4 text-center">
+            <div className="text-2xl font-bold text-red-600">{stats.rejected}</div>
+            <div className="text-sm text-gray-600">Rejected</div>
           </CardContent>
         </Card>
       </div>
 
       {/* Filters */}
       <Card>
-        <CardHeader>
-          <CardTitle>Filters</CardTitle>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="p-4">
           <div className="flex flex-col md:flex-row gap-4">
             <div className="flex-1">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
                 <Input
-                  placeholder="Search recipes, authors, or descriptions..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search recipes by title, description, or author..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
                   className="pl-10"
                 />
               </div>
             </div>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="Status" />
+              <SelectTrigger className="w-full md:w-48">
+                <SelectValue placeholder="Filter by status" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="all">All Statuses</SelectItem>
                 <SelectItem value="approved">Approved</SelectItem>
                 <SelectItem value="pending">Pending</SelectItem>
                 <SelectItem value="rejected">Rejected</SelectItem>
               </SelectContent>
             </Select>
             <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="Category" />
+              <SelectTrigger className="w-full md:w-48">
+                <SelectValue placeholder="Filter by category" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Categories</SelectItem>
-                {categories.map((category) => (
-                  <SelectItem key={category} value={category}>
-                    {category}
-                  </SelectItem>
-                ))}
+                <SelectItem value="appetizer">Appetizer</SelectItem>
+                <SelectItem value="main-course">Main Course</SelectItem>
+                <SelectItem value="dessert">Dessert</SelectItem>
+                <SelectItem value="beverage">Beverage</SelectItem>
+                <SelectItem value="snack">Snack</SelectItem>
+                <SelectItem value="breakfast">Breakfast</SelectItem>
+                <SelectItem value="lunch">Lunch</SelectItem>
+                <SelectItem value="dinner">Dinner</SelectItem>
               </SelectContent>
             </Select>
           </div>
         </CardContent>
       </Card>
 
-      {/* Recipe List */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Recipes ({pagination.total})</CardTitle>
-          <CardDescription>
-            Showing {pagination.offset + 1} - {Math.min(pagination.offset + pagination.limit, pagination.total)} of{" "}
-            {pagination.total} recipes
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="flex items-center justify-center py-8">
-              <Clock className="w-8 h-8 animate-spin text-orange-600" />
-            </div>
-          ) : recipes.length === 0 ? (
-            <div className="text-center py-8">
-              <ChefHat className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">No recipes found</h3>
-              <p className="text-gray-600">Try adjusting your search or filters.</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {recipes.map((recipe) => (
-                <div
-                  key={recipe.id}
-                  className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50"
-                >
-                  <div className="flex items-center gap-4 flex-1">
-                    <div className="w-16 h-16 bg-gray-200 rounded-lg flex items-center justify-center overflow-hidden">
-                      {recipe.image_url ? (
-                        <img
-                          src={recipe.image_url || "/placeholder.svg"}
-                          alt={recipe.title}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <ChefHat className="w-8 h-8 text-gray-400" />
-                      )}
-                    </div>
+      {/* Error Alert */}
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h3 className="font-medium text-lg">{recipe.title}</h3>
-                        <Badge className={getModerationBadgeColor(recipe.moderation_status)}>
-                          {recipe.moderation_status}
-                        </Badge>
-                        {!recipe.is_published && <Badge variant="outline">Draft</Badge>}
-                      </div>
-
-                      <p className="text-sm text-gray-600 mb-2">
-                        by {recipe.author_username} • {new Date(recipe.created_at).toLocaleDateString()}
-                      </p>
-
-                      {recipe.description && (
-                        <p className="text-sm text-gray-700 mb-2 line-clamp-2">{recipe.description}</p>
-                      )}
-
-                      <div className="flex flex-wrap gap-2">
-                        <Badge variant="outline">{recipe.category}</Badge>
-                        <Badge className={getDifficultyBadgeColor(recipe.difficulty)}>{recipe.difficulty}</Badge>
-                        <Badge variant="outline">{recipe.prep_time_minutes + recipe.cook_time_minutes} min</Badge>
-                        <Badge variant="outline">{recipe.servings} servings</Badge>
-                        {recipe.rating_count > 0 && (
-                          <Badge variant="outline" className="flex items-center gap-1">
-                            <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
-                            {recipe.average_rating.toFixed(1)} ({recipe.rating_count})
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
+      {/* Recipes List */}
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <div className="text-center">
+            <Clock className="w-8 h-8 animate-spin mx-auto mb-4 text-orange-600" />
+            <p className="text-gray-600">Loading recipes...</p>
+          </div>
+        </div>
+      ) : recipes.length === 0 ? (
+        <Card>
+          <CardContent className="p-12 text-center">
+            <ChefHat className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold mb-2">No Recipes Found</h3>
+            <p className="text-gray-600">No recipes match your current filters.</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {recipes.map((recipe) => (
+            <Card key={recipe.id} className="overflow-hidden">
+              <div className="aspect-video bg-gray-200 relative">
+                {recipe.image_url ? (
+                  <img
+                    src={recipe.image_url || "/placeholder.svg"}
+                    alt={recipe.title}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <ChefHat className="w-8 h-8 text-gray-400" />
                   </div>
+                )}
+                <div className="absolute top-2 left-2 flex gap-1">
+                  <Badge className={getStatusColor(recipe.moderation_status)}>{recipe.moderation_status}</Badge>
+                  <Badge className={getDifficultyColor(recipe.difficulty)}>{recipe.difficulty}</Badge>
+                </div>
+                <div className="absolute top-2 right-2">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="secondary" size="sm">
+                        <MoreVertical className="w-4 h-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => router.push(`/recipe/${recipe.id}`)}>
+                        <Eye className="w-4 h-4 mr-2" />
+                        View Recipe
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => router.push(`/recipe/${recipe.id}/edit`)}>
+                        <Edit className="w-4 h-4 mr-2" />
+                        Edit Recipe
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => handleDeleteRecipe(recipe)}
+                        className="text-red-600 focus:text-red-600"
+                      >
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        Delete Recipe
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </div>
+              <CardContent className="p-4">
+                <h3 className="font-semibold text-lg mb-2 line-clamp-2">{recipe.title}</h3>
+                <p className="text-sm text-gray-600 mb-3">by {recipe.author_username}</p>
 
-                  <div className="flex items-center gap-2">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="outline" size="sm">
-                          <MoreVertical className="w-4 h-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => router.push(`/recipe/${recipe.id}`)}>
-                          <Eye className="w-4 h-4 mr-2" />
-                          View Recipe
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => router.push(`/recipe/${recipe.id}/edit`)}>
-                          <Edit className="w-4 h-4 mr-2" />
-                          Edit Recipe
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onClick={() => handleDeleteRecipe(recipe)}
-                          className="text-red-600 focus:text-red-600"
-                        >
-                          <Trash2 className="w-4 h-4 mr-2" />
-                          Delete Recipe
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                <div className="flex items-center justify-between text-sm text-gray-500 mb-3">
+                  <div className="flex items-center gap-1">
+                    <Clock className="w-4 h-4" />
+                    <span>{recipe.prep_time_minutes + recipe.cook_time_minutes}m</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Users className="w-4 h-4" />
+                    <span>{recipe.servings}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Star className="w-4 h-4" />
+                    <span>
+                      {recipe.average_rating.toFixed(1)} ({recipe.rating_count})
+                    </span>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
 
-          {/* Pagination */}
-          {pagination.hasMore && (
-            <div className="flex justify-center mt-6">
-              <Button
-                onClick={() => setPagination((prev) => ({ ...prev, offset: prev.offset + prev.limit }))}
-                disabled={loading}
-              >
-                Load More Recipes
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                <div className="text-xs text-gray-500">Created: {new Date(recipe.created_at).toLocaleDateString()}</div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -427,8 +374,8 @@ export default function RecipeManagePage() {
             <DialogTitle>Delete Recipe</DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-4">
-            {selectedRecipe && (
+          {selectedRecipe && (
+            <div className="space-y-4">
               <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
                 <div className="flex items-center gap-2 mb-2">
                   <Trash2 className="w-5 h-5 text-red-600" />
@@ -439,25 +386,19 @@ export default function RecipeManagePage() {
                   ⚠️ This action cannot be undone. The recipe and all associated data will be permanently deleted.
                 </p>
               </div>
-            )}
 
-            {message && (
-              <Alert variant="destructive">
-                <AlertDescription>{message}</AlertDescription>
-              </Alert>
-            )}
-
-            <div>
-              <Label htmlFor="deleteReason">Reason for deletion (optional)</Label>
-              <Textarea
-                id="deleteReason"
-                value={deleteReason}
-                onChange={(e) => setDeleteReason(e.target.value)}
-                placeholder="Enter reason for deleting this recipe..."
-                rows={3}
-              />
+              <div>
+                <Label htmlFor="deleteReason">Reason for deletion (optional)</Label>
+                <Textarea
+                  id="deleteReason"
+                  value={deleteReason}
+                  onChange={(e) => setDeleteReason(e.target.value)}
+                  placeholder="Enter reason for deleting this recipe..."
+                  rows={3}
+                />
+              </div>
             </div>
-          </div>
+          )}
 
           <DialogFooter>
             <Button
@@ -466,7 +407,6 @@ export default function RecipeManagePage() {
                 setDeleteDialogOpen(false)
                 setSelectedRecipe(null)
                 setDeleteReason("")
-                setMessage("")
               }}
               disabled={processing}
             >
