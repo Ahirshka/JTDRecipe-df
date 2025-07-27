@@ -1,20 +1,19 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { Trash2, User, Database, Key, CheckCircle, XCircle, AlertTriangle, RefreshCw, Eye, ChefHat } from "lucide-react"
-import { useAuth } from "@/contexts/auth-context"
+import { CheckCircle, XCircle, AlertCircle, Info, Loader2 } from "lucide-react"
 
 interface Recipe {
   id: string
   title: string
   author_username: string
-  author_id: string
   moderation_status: string
   created_at: string
 }
@@ -27,498 +26,473 @@ interface TestResult {
 }
 
 export default function TestRecipeDeletionPage() {
-  const { user, isAuthenticated } = useAuth()
   const [recipes, setRecipes] = useState<Recipe[]>([])
   const [selectedRecipeId, setSelectedRecipeId] = useState("")
-  const [deleteReason, setDeleteReason] = useState("Test deletion from debug page")
+  const [reason, setReason] = useState("")
   const [testResults, setTestResults] = useState<TestResult[]>([])
-  const [loading, setLoading] = useState(false)
-  const [authDebug, setAuthDebug] = useState<any>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [loadingRecipes, setLoadingRecipes] = useState(true)
 
+  // Load recipes on component mount
   useEffect(() => {
     loadRecipes()
-    debugAuth()
   }, [])
 
-  const addResult = (step: string, status: "success" | "error" | "warning" | "info", message: string, data?: any) => {
-    setTestResults((prev) => [...prev, { step, status, message, data }])
+  const loadRecipes = async () => {
+    try {
+      setLoadingRecipes(true)
+      const response = await fetch("/api/recipes")
+      const data = await response.json()
+
+      if (data.success && data.recipes) {
+        setRecipes(data.recipes.slice(0, 10)) // Limit to first 10 for testing
+      } else {
+        console.error("Failed to load recipes:", data)
+      }
+    } catch (error) {
+      console.error("Error loading recipes:", error)
+    } finally {
+      setLoadingRecipes(false)
+    }
+  }
+
+  const addResult = (step: string, status: TestResult["status"], message: string, data?: any) => {
+    const result: TestResult = { step, status, message, data }
+    setTestResults((prev) => [...prev, result])
+    console.log(`[${status.toUpperCase()}] ${step}: ${message}`, data)
   }
 
   const clearResults = () => {
     setTestResults([])
   }
 
-  const debugAuth = async () => {
-    try {
-      const response = await fetch("/api/debug/auth", {
-        credentials: "include",
-      })
-      const data = await response.json()
-      setAuthDebug(data)
-    } catch (error) {
-      console.error("Auth debug failed:", error)
-    }
-  }
-
-  const loadRecipes = async () => {
-    try {
-      const response = await fetch("/api/recipes", {
-        credentials: "include",
-      })
-      const data = await response.json()
-
-      if (data.success && data.recipes) {
-        // Get first few recipes for testing
-        const testRecipes = data.recipes.slice(0, 10).map((recipe: any) => ({
-          id: recipe.id,
-          title: recipe.title,
-          author_username: recipe.author_username,
-          author_id: recipe.author_id,
-          moderation_status: recipe.moderation_status,
-          created_at: recipe.created_at,
-        }))
-        setRecipes(testRecipes)
-      }
-    } catch (error) {
-      console.error("Failed to load recipes:", error)
-    }
-  }
-
-  const testAuthenticationFlow = async () => {
+  const testAuthOnly = async () => {
+    setIsLoading(true)
     clearResults()
-    addResult("auth-start", "info", "Starting authentication flow test...")
 
-    // Test 1: Check if user is logged in
-    if (!isAuthenticated || !user) {
-      addResult("auth-check", "error", "User is not authenticated", { isAuthenticated, user })
-      return
-    }
-    addResult("auth-check", "success", `User is authenticated: ${user.username}`, {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-    })
+    addResult("Auth Test", "info", "Starting authentication test...")
 
-    // Test 2: Check user permissions
-    const canModerate = ["admin", "owner", "moderator"].includes(user.role)
-    if (!canModerate) {
-      addResult("permission-check", "error", `User role '${user.role}' cannot moderate recipes`, { role: user.role })
-      return
-    }
-    addResult("permission-check", "success", `User has moderation permissions: ${user.role}`, { role: user.role })
-
-    // Test 3: Test auth endpoint
     try {
-      const response = await fetch("/api/debug/auth", {
-        credentials: "include",
-      })
-      const data = await response.json()
+      // Test 1: Check cookies in browser
+      const cookies = document.cookie
+      addResult(
+        "Browser Cookies",
+        cookies ? "success" : "warning",
+        cookies ? `Found cookies: ${cookies.split(";").length} cookies` : "No cookies found in browser",
+        { cookies: cookies.split(";").map((c) => c.trim().split("=")[0]) },
+      )
 
-      if (data.success) {
-        addResult("auth-endpoint", "success", "Auth endpoint working correctly", data)
+      // Test 2: Call auth debug API
+      const authResponse = await fetch("/api/debug/auth")
+      const authData = await authResponse.json()
+
+      if (authData.success) {
+        addResult("Auth Debug API", "success", "Auth debug API responded successfully", authData)
+
+        if (authData.serverAuthResult?.success) {
+          addResult(
+            "User Authentication",
+            "success",
+            `User authenticated: ${authData.serverAuthResult.user.username} (${authData.serverAuthResult.user.role})`,
+            authData.serverAuthResult.user,
+          )
+        } else {
+          addResult(
+            "User Authentication",
+            "error",
+            authData.serverAuthResult?.error || "Authentication failed",
+            authData.serverAuthResult,
+          )
+        }
+
+        if (authData.tokenVerification?.success) {
+          addResult(
+            "Token Verification",
+            "success",
+            `Token valid for user: ${authData.tokenVerification.payload.email}`,
+            authData.tokenVerification.payload,
+          )
+        } else {
+          addResult(
+            "Token Verification",
+            "error",
+            authData.tokenVerification?.error || "Token verification failed",
+            authData.tokenVerification,
+          )
+        }
       } else {
-        addResult("auth-endpoint", "error", "Auth endpoint failed", data)
+        addResult("Auth Debug API", "error", authData.error || "Auth debug failed", authData)
+      }
+
+      // Test 3: Check current user endpoint
+      const meResponse = await fetch("/api/auth/me")
+      const meData = await meResponse.json()
+
+      if (meResponse.ok && meData.success) {
+        addResult(
+          "Current User API",
+          "success",
+          `Current user API: ${meData.user.username} (${meData.user.role})`,
+          meData.user,
+        )
+      } else {
+        addResult("Current User API", "error", meData.error || "Failed to get current user", meData)
       }
     } catch (error) {
-      addResult("auth-endpoint", "error", "Auth endpoint request failed", { error: error.message })
+      addResult("Auth Test Error", "error", `Authentication test failed: ${error.message}`)
     }
 
-    // Test 4: Test cookie presence
-    const cookies = document.cookie
-    const hasAuthToken = cookies.includes("auth-token")
-    if (hasAuthToken) {
-      addResult("cookie-check", "success", "Auth token cookie is present", { cookies })
-    } else {
-      addResult("cookie-check", "warning", "Auth token cookie not found", { cookies })
-    }
+    setIsLoading(false)
   }
 
-  const testDatabaseConnection = async () => {
-    addResult("db-start", "info", "Testing database connection...")
+  const testDatabaseOnly = async () => {
+    setIsLoading(true)
+    clearResults()
+
+    addResult("Database Test", "info", "Starting database connection test...")
 
     try {
-      const response = await fetch("/api/test/database-connection", {
-        credentials: "include",
-      })
+      const response = await fetch("/api/test/database-connection")
       const data = await response.json()
 
       if (data.success) {
-        addResult("db-connection", "success", "Database connection successful", data)
+        addResult("Database Connection", "success", "Database connected successfully", data)
+
+        if (data.tablesExist) {
+          addResult("Database Tables", "success", `Tables exist: ${data.tables.join(", ")}`, data.tables)
+        } else {
+          addResult("Database Tables", "error", "Required tables missing", data.tables)
+        }
+
+        if (data.recipeCount > 0) {
+          addResult("Recipe Data", "success", `Found ${data.recipeCount} recipes in database`, {
+            count: data.recipeCount,
+          })
+        } else {
+          addResult("Recipe Data", "warning", "No recipes found in database", { count: data.recipeCount })
+        }
       } else {
-        addResult("db-connection", "error", "Database connection failed", data)
+        addResult("Database Connection", "error", data.error || "Database connection failed", data)
       }
     } catch (error) {
-      addResult("db-connection", "error", "Database connection request failed", { error: error.message })
+      addResult("Database Test Error", "error", `Database test failed: ${error.message}`)
     }
-  }
 
-  const testRecipeExists = async (recipeId: string) => {
-    addResult("recipe-check", "info", `Checking if recipe ${recipeId} exists...`)
-
-    try {
-      const response = await fetch(`/api/recipes/${recipeId}`, {
-        credentials: "include",
-      })
-      const data = await response.json()
-
-      if (data.success) {
-        addResult("recipe-exists", "success", `Recipe found: ${data.recipe.title}`, {
-          id: data.recipe.id,
-          title: data.recipe.title,
-          author: data.recipe.author_username,
-        })
-        return true
-      } else {
-        addResult("recipe-exists", "error", "Recipe not found", data)
-        return false
-      }
-    } catch (error) {
-      addResult("recipe-exists", "error", "Recipe check request failed", { error: error.message })
-      return false
-    }
-  }
-
-  const testDeleteAPI = async (recipeId: string, reason: string) => {
-    addResult("delete-start", "info", `Starting deletion test for recipe ${recipeId}...`)
-
-    try {
-      const response = await fetch("/api/admin/recipes/delete", {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        credentials: "include",
-        body: JSON.stringify({
-          recipeId: recipeId,
-          reason: reason,
-        }),
-      })
-
-      addResult("delete-request", "info", `Delete request sent. Status: ${response.status}`, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: Object.fromEntries(response.headers.entries()),
-      })
-
-      const data = await response.json()
-
-      if (data.success) {
-        addResult("delete-success", "success", `Recipe deleted successfully: ${data.message}`, data)
-        return true
-      } else {
-        addResult("delete-failed", "error", `Delete failed: ${data.error}`, data)
-        return false
-      }
-    } catch (error) {
-      addResult("delete-error", "error", "Delete request failed", {
-        error: error.message,
-        stack: error.stack,
-      })
-      return false
-    }
+    setIsLoading(false)
   }
 
   const runFullDeletionTest = async () => {
     if (!selectedRecipeId) {
-      addResult("test-error", "error", "Please select a recipe to test deletion")
+      addResult("Validation", "error", "Please select a recipe to test deletion")
       return
     }
 
-    setLoading(true)
+    setIsLoading(true)
     clearResults()
 
-    addResult("test-start", "info", "Starting comprehensive recipe deletion test...")
+    addResult("Full Deletion Test", "info", `Starting full deletion test for recipe: ${selectedRecipeId}`)
 
-    // Step 1: Test authentication
-    await testAuthenticationFlow()
+    try {
+      // Step 1: Test Authentication
+      addResult("Step 1", "info", "Testing authentication...")
 
-    // Step 2: Test database connection
-    await testDatabaseConnection()
+      const authResponse = await fetch("/api/debug/auth")
+      const authData = await authResponse.json()
 
-    // Step 3: Check if recipe exists
-    const recipeExists = await testRecipeExists(selectedRecipeId)
-    if (!recipeExists) {
-      setLoading(false)
-      return
-    }
+      if (!authData.success || !authData.serverAuthResult?.success) {
+        addResult("Authentication", "error", "Authentication failed - cannot proceed with deletion", authData)
+        setIsLoading(false)
+        return
+      }
 
-    // Step 4: Test the delete API
-    const deleteSuccess = await testDeleteAPI(selectedRecipeId, deleteReason)
+      const user = authData.serverAuthResult.user
+      addResult("Authentication", "success", `Authenticated as: ${user.username} (${user.role})`, user)
 
-    // Step 5: Verify deletion
-    if (deleteSuccess) {
-      addResult("verify-start", "info", "Verifying recipe was deleted...")
+      // Check permissions
+      if (!["admin", "owner", "moderator"].includes(user.role)) {
+        addResult("Permissions", "error", `Insufficient permissions. Role '${user.role}' cannot delete recipes`)
+        setIsLoading(false)
+        return
+      }
 
-      setTimeout(async () => {
-        const stillExists = await testRecipeExists(selectedRecipeId)
+      addResult("Permissions", "success", `User has deletion permissions (${user.role})`)
+
+      // Step 2: Test Database Connection
+      addResult("Step 2", "info", "Testing database connection...")
+
+      const dbResponse = await fetch("/api/test/database-connection")
+      const dbData = await dbResponse.json()
+
+      if (!dbData.success) {
+        addResult("Database", "error", "Database connection failed", dbData)
+        setIsLoading(false)
+        return
+      }
+
+      addResult("Database", "success", "Database connection verified", dbData)
+
+      // Step 3: Verify Recipe Exists
+      addResult("Step 3", "info", "Verifying recipe exists...")
+
+      const selectedRecipe = recipes.find((r) => r.id === selectedRecipeId)
+      if (!selectedRecipe) {
+        addResult("Recipe Lookup", "error", `Recipe with ID ${selectedRecipeId} not found in loaded recipes`)
+        setIsLoading(false)
+        return
+      }
+
+      addResult(
+        "Recipe Lookup",
+        "success",
+        `Recipe found: "${selectedRecipe.title}" by ${selectedRecipe.author_username}`,
+        selectedRecipe,
+      )
+
+      // Step 4: Attempt Deletion
+      addResult("Step 4", "info", "Attempting recipe deletion...")
+
+      const deleteResponse = await fetch("/api/admin/recipes/delete", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          recipeId: selectedRecipeId,
+          reason: reason || "Test deletion from debug page",
+        }),
+      })
+
+      const deleteData = await deleteResponse.json()
+
+      if (deleteResponse.ok && deleteData.success) {
+        addResult("Recipe Deletion", "success", deleteData.message, deleteData)
+
+        // Step 5: Verify Deletion
+        addResult("Step 5", "info", "Verifying deletion...")
+
+        // Reload recipes to verify deletion
+        await loadRecipes()
+        const stillExists = recipes.some((r) => r.id === selectedRecipeId)
+
         if (!stillExists) {
-          addResult("verify-success", "success", "Recipe successfully deleted and verified")
+          addResult("Deletion Verification", "success", "Recipe successfully removed from database")
         } else {
-          addResult("verify-failed", "warning", "Recipe still exists after deletion attempt")
+          addResult("Deletion Verification", "warning", "Recipe may still exist - refresh the page to verify")
         }
-        setLoading(false)
-      }, 1000)
-    } else {
-      setLoading(false)
+
+        // Clear selection
+        setSelectedRecipeId("")
+      } else {
+        addResult("Recipe Deletion", "error", deleteData.error || "Deletion failed", deleteData)
+      }
+    } catch (error) {
+      addResult("Test Error", "error", `Full deletion test failed: ${error.message}`)
     }
 
-    // Reload recipes list
-    setTimeout(() => {
-      loadRecipes()
-    }, 2000)
+    setIsLoading(false)
   }
 
-  const getStatusIcon = (status: string) => {
+  const getStatusIcon = (status: TestResult["status"]) => {
     switch (status) {
       case "success":
-        return <CheckCircle className="w-4 h-4 text-green-600" />
+        return <CheckCircle className="h-4 w-4 text-green-500" />
       case "error":
-        return <XCircle className="w-4 h-4 text-red-600" />
+        return <XCircle className="h-4 w-4 text-red-500" />
       case "warning":
-        return <AlertTriangle className="w-4 h-4 text-yellow-600" />
-      default:
-        return <Eye className="w-4 h-4 text-blue-600" />
+        return <AlertCircle className="h-4 w-4 text-yellow-500" />
+      case "info":
+        return <Info className="h-4 w-4 text-blue-500" />
     }
   }
 
-  const getStatusColor = (status: string) => {
+  const getStatusColor = (status: TestResult["status"]) => {
     switch (status) {
       case "success":
-        return "border-green-200 bg-green-50"
+        return "text-green-700 bg-green-50 border-green-200"
       case "error":
-        return "border-red-200 bg-red-50"
+        return "text-red-700 bg-red-50 border-red-200"
       case "warning":
-        return "border-yellow-200 bg-yellow-50"
-      default:
-        return "border-blue-200 bg-blue-50"
+        return "text-yellow-700 bg-yellow-50 border-yellow-200"
+      case "info":
+        return "text-blue-700 bg-blue-50 border-blue-200"
     }
   }
 
   return (
-    <div className="container mx-auto px-4 py-8 space-y-6">
-      {/* Header */}
-      <div className="text-center">
+    <div className="container mx-auto p-6 max-w-6xl">
+      <div className="mb-8">
         <h1 className="text-3xl font-bold mb-2">Recipe Deletion Debug Tool</h1>
-        <p className="text-gray-600">Comprehensive testing tool for debugging recipe deletion issues</p>
+        <p className="text-muted-foreground">
+          Comprehensive testing tool for debugging recipe deletion issues. This tool will test authentication, database
+          connectivity, and the complete deletion process step-by-step.
+        </p>
       </div>
 
-      {/* Current User Info */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <User className="w-5 h-5" />
-            Current User Status
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <Label>Authentication Status</Label>
-              <div className="flex items-center gap-2 mt-1">
-                {isAuthenticated ? (
-                  <Badge className="bg-green-100 text-green-800">Authenticated</Badge>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Test Controls */}
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Test Controls</CardTitle>
+              <CardDescription>Select a recipe and run various tests to debug deletion issues</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <Label htmlFor="recipe-select">Select Recipe to Test</Label>
+                {loadingRecipes ? (
+                  <div className="flex items-center gap-2 p-2 border rounded">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Loading recipes...</span>
+                  </div>
                 ) : (
-                  <Badge className="bg-red-100 text-red-800">Not Authenticated</Badge>
+                  <Select value={selectedRecipeId} onValueChange={setSelectedRecipeId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose a recipe to test deletion" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {recipes.map((recipe) => (
+                        <SelectItem key={recipe.id} value={recipe.id}>
+                          {recipe.title} - by {recipe.author_username}
+                          <Badge variant="outline" className="ml-2">
+                            {recipe.moderation_status}
+                          </Badge>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 )}
               </div>
-            </div>
-            <div>
-              <Label>Username</Label>
-              <div className="mt-1 font-medium">{user?.username || "Not logged in"}</div>
-            </div>
-            <div>
-              <Label>Role</Label>
-              <div className="mt-1">
-                <Badge
-                  className={
-                    ["admin", "owner", "moderator"].includes(user?.role || "")
-                      ? "bg-blue-100 text-blue-800"
-                      : "bg-gray-100 text-gray-800"
-                  }
-                >
-                  {user?.role || "None"}
-                </Badge>
+
+              <div>
+                <Label htmlFor="reason">Deletion Reason (Optional)</Label>
+                <Textarea
+                  id="reason"
+                  placeholder="Enter reason for deletion (for testing purposes)"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  rows={3}
+                />
               </div>
-            </div>
-          </div>
 
-          {authDebug && (
-            <div className="mt-4">
-              <Label>Auth Debug Info</Label>
-              <pre className="mt-1 p-3 bg-gray-100 rounded text-xs overflow-auto">
-                {JSON.stringify(authDebug, null, 2)}
-              </pre>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+              <Separator />
 
-      {/* Test Configuration */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ChefHat className="w-5 h-5" />
-            Test Configuration
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <Label htmlFor="recipeSelect">Select Recipe to Test Deletion</Label>
-            <select
-              id="recipeSelect"
-              value={selectedRecipeId}
-              onChange={(e) => setSelectedRecipeId(e.target.value)}
-              className="w-full mt-1 p-2 border rounded-md"
-            >
-              <option value="">Select a recipe...</option>
-              {recipes.map((recipe) => (
-                <option key={recipe.id} value={recipe.id}>
-                  {recipe.title} (by {recipe.author_username}) - {recipe.moderation_status}
-                </option>
-              ))}
-            </select>
-          </div>
+              <div className="space-y-2">
+                <h3 className="font-semibold">Test Options</h3>
+                <div className="grid grid-cols-1 gap-2">
+                  <Button
+                    onClick={testAuthOnly}
+                    disabled={isLoading}
+                    variant="outline"
+                    className="justify-start bg-transparent"
+                  >
+                    {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}🔑 Test Auth Only
+                  </Button>
 
-          <div>
-            <Label htmlFor="deleteReason">Deletion Reason</Label>
-            <Textarea
-              id="deleteReason"
-              value={deleteReason}
-              onChange={(e) => setDeleteReason(e.target.value)}
-              placeholder="Enter reason for deletion..."
-              rows={3}
-            />
-          </div>
+                  <Button
+                    onClick={testDatabaseOnly}
+                    disabled={isLoading}
+                    variant="outline"
+                    className="justify-start bg-transparent"
+                  >
+                    {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                    🗄️ Test DB Only
+                  </Button>
 
-          <div className="flex gap-2">
-            <Button onClick={runFullDeletionTest} disabled={loading || !selectedRecipeId}>
-              {loading ? (
-                <>
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                  Testing...
-                </>
-              ) : (
-                <>
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Run Full Deletion Test
-                </>
+                  <Button
+                    onClick={runFullDeletionTest}
+                    disabled={isLoading || !selectedRecipeId}
+                    className="justify-start"
+                  >
+                    {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                    🗑️ Run Full Deletion Test
+                  </Button>
+                </div>
+              </div>
+
+              {testResults.length > 0 && (
+                <Button onClick={clearResults} variant="ghost" size="sm" className="w-full">
+                  Clear Results
+                </Button>
               )}
-            </Button>
-            <Button variant="outline" onClick={testAuthenticationFlow}>
-              <Key className="w-4 h-4 mr-2" />
-              Test Auth Only
-            </Button>
-            <Button variant="outline" onClick={testDatabaseConnection}>
-              <Database className="w-4 h-4 mr-2" />
-              Test DB Only
-            </Button>
-            <Button variant="outline" onClick={clearResults}>
-              Clear Results
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
 
-      {/* Test Results */}
-      {testResults.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Test Results</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {testResults.map((result, index) => (
-                <div key={index} className={`p-4 border rounded-lg ${getStatusColor(result.status)}`}>
-                  <div className="flex items-start gap-3">
-                    {getStatusIcon(result.status)}
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-medium">{result.step}</span>
-                        <Badge variant="outline" className="text-xs">
-                          {result.status}
-                        </Badge>
+          {/* Available Recipes */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Available Recipes ({recipes.length})</CardTitle>
+              <CardDescription>Recipes loaded from the database for testing</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loadingRecipes ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Loading recipes...</span>
+                </div>
+              ) : recipes.length > 0 ? (
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {recipes.map((recipe) => (
+                    <div
+                      key={recipe.id}
+                      className={`p-2 border rounded text-sm cursor-pointer hover:bg-muted/50 ${
+                        selectedRecipeId === recipe.id ? "bg-primary/10 border-primary" : ""
+                      }`}
+                      onClick={() => setSelectedRecipeId(recipe.id)}
+                    >
+                      <div className="font-medium">{recipe.title}</div>
+                      <div className="text-muted-foreground">
+                        by {recipe.author_username} • {recipe.moderation_status}
                       </div>
-                      <p className="text-sm text-gray-700 mb-2">{result.message}</p>
-                      {result.data && (
-                        <details className="text-xs">
-                          <summary className="cursor-pointer text-gray-600 hover:text-gray-800">View Details</summary>
-                          <pre className="mt-2 p-2 bg-white border rounded overflow-auto">
-                            {JSON.stringify(result.data, null, 2)}
-                          </pre>
-                        </details>
-                      )}
+                      <div className="text-xs text-muted-foreground">ID: {recipe.id}</div>
                     </div>
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+              ) : (
+                <p className="text-muted-foreground">No recipes found</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
-      {/* Available Recipes */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Available Recipes for Testing</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {recipes.length === 0 ? (
-            <p className="text-gray-600">No recipes found. Make sure you have recipes in your database.</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {recipes.map((recipe) => (
-                <div
-                  key={recipe.id}
-                  className={`p-4 border rounded-lg cursor-pointer transition-colors ${
-                    selectedRecipeId === recipe.id
-                      ? "border-blue-500 bg-blue-50"
-                      : "border-gray-200 hover:border-gray-300"
-                  }`}
-                  onClick={() => setSelectedRecipeId(recipe.id)}
-                >
-                  <h3 className="font-medium mb-2">{recipe.title}</h3>
-                  <p className="text-sm text-gray-600 mb-2">by {recipe.author_username}</p>
-                  <div className="flex items-center justify-between">
-                    <Badge variant="outline">{recipe.moderation_status}</Badge>
-                    <span className="text-xs text-gray-500">ID: {recipe.id}</span>
-                  </div>
+        {/* Test Results */}
+        <div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Test Results</CardTitle>
+              <CardDescription>Detailed results from the deletion tests</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {testResults.length === 0 ? (
+                <p className="text-muted-foreground text-center py-8">
+                  No tests run yet. Select a recipe and run a test to see results here.
+                </p>
+              ) : (
+                <div className="space-y-3 max-h-96 overflow-y-auto">
+                  {testResults.map((result, index) => (
+                    <div key={index} className={`p-3 border rounded-lg ${getStatusColor(result.status)}`}>
+                      <div className="flex items-start gap-2">
+                        {getStatusIcon(result.status)}
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium">{result.step}</div>
+                          <div className="text-sm mt-1">{result.message}</div>
+                          {result.data && (
+                            <details className="mt-2">
+                              <summary className="text-xs cursor-pointer hover:underline">View Details</summary>
+                              <pre className="text-xs mt-1 p-2 bg-black/5 rounded overflow-x-auto">
+                                {JSON.stringify(result.data, null, 2)}
+                              </pre>
+                            </details>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Instructions */}
-      <Card>
-        <CardHeader>
-          <CardTitle>How to Use This Debug Tool</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ol className="list-decimal list-inside space-y-2 text-sm">
-            <li>Make sure you're logged in as an admin, owner, or moderator</li>
-            <li>Select a recipe from the list below (click on a recipe card)</li>
-            <li>Enter a reason for deletion (optional)</li>
-            <li>Click "Run Full Deletion Test" to execute all tests</li>
-            <li>Review the test results to identify any issues</li>
-            <li>Use individual test buttons to isolate specific problems</li>
-          </ol>
-
-          <Separator className="my-4" />
-
-          <div className="text-sm text-gray-600">
-            <p className="font-medium mb-2">Test Steps:</p>
-            <ul className="list-disc list-inside space-y-1">
-              <li>Authentication verification</li>
-              <li>Permission checking</li>
-              <li>Database connection test</li>
-              <li>Recipe existence verification</li>
-              <li>Delete API execution</li>
-              <li>Deletion verification</li>
-            </ul>
-          </div>
-        </CardContent>
-      </Card>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
     </div>
   )
 }

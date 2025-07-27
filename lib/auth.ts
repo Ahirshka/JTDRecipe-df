@@ -25,7 +25,7 @@ export type Role = keyof typeof ROLE_HIERARCHY
 
 // Token payload interface
 export interface TokenPayload {
-  userId: number
+  userId: string
   email: string
   role: string
   iat?: number
@@ -52,26 +52,29 @@ export function hasPermission(userRole: string, requiredRole: string): boolean {
 // Verify JWT token
 export function verifyToken(token: string): TokenPayload | null {
   try {
+    console.log("🔍 [AUTH] Verifying token:", token.substring(0, 20) + "...")
+
     const decoded = jwt.verify(token, JWT_SECRET) as TokenPayload
+
+    console.log("✅ [AUTH] Token verified successfully for user:", decoded.userId)
     return decoded
   } catch (error) {
-    console.error("Token verification failed:", error)
+    console.log("❌ [AUTH] Token verification failed:", error instanceof Error ? error.message : "Unknown error")
     return null
   }
 }
 
 // Generate JWT token
-export function generateToken(user: User): string {
-  const payload: TokenPayload = {
-    userId: user.id,
-    email: user.email,
-    role: user.role,
-  }
+export function generateToken(payload: Omit<TokenPayload, "iat" | "exp">): string {
+  console.log("🔑 [AUTH] Generating token for user:", payload.userId)
 
-  return jwt.sign(payload, JWT_SECRET, {
+  const token = jwt.sign(payload, JWT_SECRET, {
     expiresIn: "7d",
-    issuer: "jtd-recipe",
+    issuer: "recipe-site",
   })
+
+  console.log("✅ [AUTH] Token generated successfully")
+  return token
 }
 
 // Hash password
@@ -282,7 +285,11 @@ export async function loginUser(email: string, password: string): Promise<{ user
       throw new Error("Account is not active")
     }
 
-    const token = generateToken(user)
+    const token = generateToken({
+      userId: user.id.toString(),
+      email: user.email,
+      role: user.role,
+    })
 
     // Update last login
     await updateUser(user.id, {
@@ -324,7 +331,7 @@ export function refreshToken(oldToken: string): string | null {
 
     return jwt.sign(newPayload, JWT_SECRET, {
       expiresIn: "7d",
-      issuer: "jtd-recipe",
+      issuer: "recipe-site",
     })
   } catch (error) {
     console.error("Error refreshing token:", error)
@@ -370,5 +377,57 @@ export function createSecureCookieOptions(maxAge: number = 7 * 24 * 60 * 60) {
     sameSite: "lax" as const,
     maxAge,
     path: "/",
+  }
+}
+
+// Check if token is expired
+export function isTokenExpired(token: string): boolean {
+  try {
+    const decoded = jwt.decode(token) as TokenPayload
+    if (!decoded || !decoded.exp) {
+      return true
+    }
+
+    const currentTime = Math.floor(Date.now() / 1000)
+    const isExpired = decoded.exp < currentTime
+
+    console.log("🕐 [AUTH] Token expiry check:", {
+      exp: decoded.exp,
+      current: currentTime,
+      expired: isExpired,
+    })
+
+    return isExpired
+  } catch (error) {
+    console.log("❌ [AUTH] Token expiry check failed:", error)
+    return true
+  }
+}
+
+// Refresh token if needed
+export function refreshTokenIfNeeded(token: string): string | null {
+  try {
+    const decoded = jwt.decode(token) as TokenPayload
+    if (!decoded || !decoded.exp) {
+      return null
+    }
+
+    const currentTime = Math.floor(Date.now() / 1000)
+    const timeUntilExpiry = decoded.exp - currentTime
+
+    // Refresh if token expires in less than 1 day
+    if (timeUntilExpiry < 86400) {
+      console.log("🔄 [AUTH] Refreshing token for user:", decoded.userId)
+      return generateToken({
+        userId: decoded.userId,
+        email: decoded.email,
+        role: decoded.role,
+      })
+    }
+
+    return token
+  } catch (error) {
+    console.log("❌ [AUTH] Token refresh failed:", error)
+    return null
   }
 }
