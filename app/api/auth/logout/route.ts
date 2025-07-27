@@ -1,20 +1,27 @@
-import { type NextRequest, NextResponse } from "next/server"
+import { NextResponse } from "next/server"
 import { logoutUser } from "@/lib/auth-system"
 
-export async function POST(request: NextRequest) {
-  console.log("🔄 [API] Logout request received")
+export async function POST() {
+  console.log("🚪 [LOGOUT-API] Logout request received")
 
   try {
     const result = await logoutUser()
 
+    console.log("🔍 [LOGOUT-API] Logout result:", {
+      success: result.success,
+      message: result.message,
+    })
+
     if (result.success) {
-      console.log("✅ [API] Logout successful")
+      console.log("✅ [LOGOUT-API] Logout successful")
+
       return NextResponse.json({
         success: true,
         message: result.message,
       })
     } else {
-      console.log("❌ [API] Logout failed:", result.message)
+      console.log("❌ [LOGOUT-API] Logout failed:", result.message)
+
       return NextResponse.json(
         {
           success: false,
@@ -24,7 +31,8 @@ export async function POST(request: NextRequest) {
       )
     }
   } catch (error) {
-    console.error("❌ [API] Logout error:", error)
+    console.error("❌ [LOGOUT-API] Logout error:", error)
+
     return NextResponse.json(
       {
         success: false,

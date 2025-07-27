@@ -1,11 +1,11 @@
 import { cookies } from "next/headers"
 import { neon } from "@neondatabase/serverless"
-import { verifyToken } from "@/lib/auth"
+import { verifyToken } from "./auth-system"
 import type { NextRequest } from "next/server"
 
 const sql = neon(process.env.DATABASE_URL!)
 
-export interface User {
+export interface ServerUser {
   id: string
   username: string
   email: string
@@ -16,99 +16,44 @@ export interface User {
   last_login_at?: string
 }
 
-// Helper function to extract user ID from different token formats
-function extractUserIdFromToken(token: string): string | null {
-  try {
-    console.log("🔍 [SERVER-AUTH] Extracting user ID from token...")
-
-    // First try to verify as JWT
-    const payload = verifyToken(token)
-    if (payload && payload.userId) {
-      console.log("✅ [SERVER-AUTH] User ID extracted via JWT verification:", payload.userId)
-      return payload.userId.toString()
-    }
-
-    // If JWT verification fails, try to decode without verification to see the structure
-    const jwt = require("jsonwebtoken")
-    const decoded = jwt.decode(token) as any
-
-    if (decoded) {
-      console.log("🔍 [SERVER-AUTH] Token structure:", {
-        hasUserId: !!decoded.userId,
-        hasId: !!decoded.id,
-        keys: Object.keys(decoded),
-      })
-
-      // Try different possible user ID fields
-      const userId = decoded.userId?.toString() || decoded.id?.toString() || null
-      if (userId) {
-        console.log("✅ [SERVER-AUTH] User ID extracted via decode:", userId)
-        return userId
-      }
-    }
-
-    console.log("❌ [SERVER-AUTH] Could not extract user ID from token")
-    return null
-  } catch (error) {
-    console.log("❌ [SERVER-AUTH] Token extraction failed:", error)
-    return null
-  }
-}
-
-export async function getCurrentUser(): Promise<User | null> {
+// Get current user from cookies (server-side)
+export async function getCurrentUser(): Promise<ServerUser | null> {
   try {
     console.log("🔄 [SERVER-AUTH] Getting current user from cookies")
 
     const cookieStore = await cookies()
-
-    // Try multiple cookie names that might be used
-    const cookieNames = ["auth-token", "auth_token", "auth_session", "session", "session_token"]
-    let token = null
-    let usedCookieName = null
-
-    for (const cookieName of cookieNames) {
-      const cookieValue = cookieStore.get(cookieName)?.value
-      if (cookieValue) {
-        token = cookieValue
-        usedCookieName = cookieName
-        console.log(`✅ [SERVER-AUTH] Found token in cookie: ${cookieName}`)
-        break
-      }
-    }
+    const token = cookieStore.get("auth-token")?.value
 
     if (!token) {
-      console.log("❌ [SERVER-AUTH] No auth token found in any cookie")
-      console.log(
-        "Available cookies:",
-        Array.from(cookieStore.getAll()).map((c) => c.name),
-      )
+      console.log("❌ [SERVER-AUTH] No auth token found in cookies")
       return null
     }
 
-    console.log("✅ [SERVER-AUTH] Auth token found in:", usedCookieName)
+    console.log("✅ [SERVER-AUTH] Auth token found, verifying...")
 
-    // Extract user ID from token
-    const userId = extractUserIdFromToken(token)
-    if (!userId) {
-      console.log("❌ [SERVER-AUTH] Could not extract user ID from token")
+    // Verify JWT token
+    const payload = verifyToken(token)
+    if (!payload) {
+      console.log("❌ [SERVER-AUTH] Invalid or expired token")
       return null
     }
 
-    console.log("✅ [SERVER-AUTH] Extracted user ID:", userId)
+    console.log("✅ [SERVER-AUTH] Token verified, fetching user:", payload.userId)
 
     // Get user from database
     const users = await sql`
-      SELECT id, username, email, role, status, is_verified, created_at, last_login_at
+      SELECT id, username, email, role, status, is_verified, created_at, updated_at
       FROM users 
-      WHERE id = ${userId}
+      WHERE id = ${payload.userId}
+      AND status = 'active'
     `
 
     if (users.length === 0) {
-      console.log("❌ [SERVER-AUTH] User not found in database for ID:", userId)
+      console.log("❌ [SERVER-AUTH] User not found or inactive:", payload.userId)
       return null
     }
 
-    const user = users[0] as User
+    const user = users[0] as any
     console.log("✅ [SERVER-AUTH] User found:", {
       id: user.id,
       username: user.username,
@@ -116,72 +61,71 @@ export async function getCurrentUser(): Promise<User | null> {
       status: user.status,
     })
 
-    return user
+    return {
+      id: user.id.toString(),
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      is_verified: user.is_verified || false,
+      created_at: user.created_at,
+      last_login_at: user.updated_at,
+    }
   } catch (error) {
     console.error("❌ [SERVER-AUTH] Error getting current user:", error)
     return null
   }
 }
 
-export async function getCurrentUserFromRequest(request: NextRequest): Promise<User | null> {
+// Get current user from request (required export)
+export async function getCurrentUserFromRequest(request: NextRequest): Promise<ServerUser | null> {
   try {
     console.log("🔍 [SERVER-AUTH] Getting current user from request...")
     console.log("🔍 [SERVER-AUTH] Request URL:", request.url)
 
-    // Try multiple cookie names that might be used
-    const cookieNames = ["auth-token", "auth_token", "auth_session", "session", "session_token"]
-    let token = null
-    let usedCookieName = null
-
-    for (const cookieName of cookieNames) {
-      const cookieValue = request.cookies.get(cookieName)?.value
-      if (cookieValue) {
-        token = cookieValue
-        usedCookieName = cookieName
-        console.log(`✅ [SERVER-AUTH] Found token in request cookie: ${cookieName}`)
-        break
-      }
-    }
-
-    // Log all available cookies for debugging
-    const allCookies = Array.from(request.cookies.entries()).map(([name, cookie]) => ({
-      name,
-      hasValue: !!cookie.value,
-      valuePreview: cookie.value.substring(0, 20) + "...",
-    }))
-    console.log("🔍 [SERVER-AUTH] Available request cookies:", allCookies)
+    const token = request.cookies.get("auth-token")?.value
 
     if (!token) {
       console.log("❌ [SERVER-AUTH] No auth token found in request cookies")
+
+      // Log all available cookies for debugging
+      const allCookies = Array.from(request.cookies.entries()).map(([name, cookie]) => ({
+        name,
+        hasValue: !!cookie.value,
+        valuePreview: cookie.value ? cookie.value.substring(0, 20) + "..." : "empty",
+      }))
+      console.log("🔍 [SERVER-AUTH] Available request cookies:", allCookies)
+
       return null
     }
 
-    console.log("🔑 [SERVER-AUTH] Auth token found in request, extracting user ID...")
+    console.log("✅ [SERVER-AUTH] Auth token found in request, verifying...")
 
-    // Extract user ID from token
-    const userId = extractUserIdFromToken(token)
-    if (!userId) {
-      console.log("❌ [SERVER-AUTH] Could not extract user ID from token")
+    // Verify JWT token
+    const payload = verifyToken(token)
+    if (!payload) {
+      console.log("❌ [SERVER-AUTH] Invalid or expired token")
       return null
     }
 
-    console.log("✅ [SERVER-AUTH] Extracted user ID from request:", userId)
+    console.log("✅ [SERVER-AUTH] Token verified, fetching user:", payload.userId)
 
     // Get user from database with detailed logging
     console.log("🔍 [SERVER-AUTH] Querying database for user...")
     const users = await sql`
-      SELECT id, username, email, role, status, is_verified, created_at, last_login_at
+      SELECT id, username, email, role, status, is_verified, created_at, updated_at
       FROM users 
-      WHERE id = ${userId}
+      WHERE id = ${payload.userId}
+      AND status = 'active'
     `
 
     console.log("🔍 [SERVER-AUTH] Database query result:", {
       found: users.length,
-      userId: userId,
+      userId: payload.userId,
     })
 
     if (users.length === 0) {
-      console.log("❌ [SERVER-AUTH] User not found in database for ID:", userId)
+      console.log("❌ [SERVER-AUTH] User not found in database for ID:", payload.userId)
 
       // Additional debugging: check if user exists with different ID format
       try {
@@ -194,7 +138,7 @@ export async function getCurrentUserFromRequest(request: NextRequest): Promise<U
       return null
     }
 
-    const user = users[0] as User
+    const user = users[0] as any
     console.log("✅ [SERVER-AUTH] User found from request:", {
       id: user.id,
       username: user.username,
@@ -212,28 +156,39 @@ export async function getCurrentUserFromRequest(request: NextRequest): Promise<U
       adminRoles: adminRoles,
     })
 
-    return user
+    return {
+      id: user.id.toString(),
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      is_verified: user.is_verified || false,
+      created_at: user.created_at,
+      last_login_at: user.updated_at,
+    }
   } catch (error) {
     console.error("❌ [SERVER-AUTH] Error getting current user from request:", error)
     return null
   }
 }
 
-export async function requireAuth(request: NextRequest, requiredRoles?: string[]): Promise<User> {
-  const user = await getCurrentUserFromRequest(request)
+// Require authentication for server-side operations
+export async function requireAuth(request?: NextRequest): Promise<ServerUser | null> {
+  console.log("🔒 [SERVER-AUTH] Requiring authentication")
+
+  const user = request ? await getCurrentUserFromRequest(request) : await getCurrentUser()
 
   if (!user) {
-    throw new Error("Authentication required")
+    console.log("❌ [SERVER-AUTH] Authentication required but no user found")
+    return null
   }
 
-  if (requiredRoles && !requiredRoles.includes(user.role)) {
-    throw new Error(`Insufficient permissions. Required roles: ${requiredRoles.join(", ")}`)
-  }
-
+  console.log("✅ [SERVER-AUTH] Authentication verified for:", user.username)
   return user
 }
 
-export async function requireAuthFromRequest(request: NextRequest): Promise<User> {
+// Require authentication from request (required export)
+export async function requireAuthFromRequest(request: NextRequest): Promise<ServerUser> {
   const user = await getCurrentUserFromRequest(request)
   if (!user) {
     throw new Error("Authentication required")
@@ -241,11 +196,12 @@ export async function requireAuthFromRequest(request: NextRequest): Promise<User
   return user
 }
 
-export async function requireAdmin(request?: NextRequest): Promise<User> {
+// Require admin role for server-side operations
+export async function requireAdmin(request?: NextRequest): Promise<ServerUser> {
   try {
     console.log("🔄 [SERVER-AUTH] Checking admin access")
 
-    let user: User | null = null
+    let user: ServerUser | null = null
 
     if (request) {
       user = await getCurrentUserFromRequest(request)
@@ -280,7 +236,28 @@ export async function requireAdmin(request?: NextRequest): Promise<User> {
   }
 }
 
-export function isAdmin(user: User | null): boolean {
+// Require owner role for server-side operations
+export async function requireOwner(request?: NextRequest): Promise<ServerUser> {
+  console.log("🔒 [SERVER-AUTH] Requiring owner role")
+
+  const user = request ? await getCurrentUserFromRequest(request) : await getCurrentUser()
+
+  if (!user) {
+    console.log("❌ [SERVER-AUTH] No authenticated user")
+    throw new Error("Authentication required")
+  }
+
+  if (user.role !== "owner") {
+    console.log("❌ [SERVER-AUTH] User does not have owner role:", user.role)
+    throw new Error("Owner access required")
+  }
+
+  console.log("✅ [SERVER-AUTH] Owner access verified for:", user.username)
+  return user
+}
+
+// Check if user is admin
+export function isAdmin(user: ServerUser | null): boolean {
   if (!user) {
     console.log("❌ [SERVER-AUTH] Admin check: no user provided")
     return false
@@ -300,7 +277,8 @@ export function isAdmin(user: User | null): boolean {
   return hasAdminAccess
 }
 
-export function isModerator(user: User | null): boolean {
+// Check if user is moderator
+export function isModerator(user: ServerUser | null): boolean {
   if (!user) {
     console.log("❌ [SERVER-AUTH] Moderator check: no user provided")
     return false
@@ -320,7 +298,8 @@ export function isModerator(user: User | null): boolean {
   return hasModeratorAccess
 }
 
-export function isOwner(user: User | null): boolean {
+// Check if user is owner
+export function isOwner(user: ServerUser | null): boolean {
   if (!user) {
     console.log("❌ [SERVER-AUTH] Owner check: no user provided")
     return false
@@ -338,7 +317,8 @@ export function isOwner(user: User | null): boolean {
   return hasOwnerAccess
 }
 
-export function hasRole(user: User | null, role: string): boolean {
+// Check if user has specific role
+export function hasRole(user: ServerUser | null, role: string): boolean {
   if (!user) {
     console.log("❌ [SERVER-AUTH] Role check: no user provided")
     return false
@@ -349,7 +329,8 @@ export function hasRole(user: User | null, role: string): boolean {
   return hasAccess
 }
 
-export function hasAnyRole(user: User | null, roles: string[]): boolean {
+// Check if user has any of the specified roles
+export function hasAnyRole(user: ServerUser | null, roles: string[]): boolean {
   if (!user) {
     console.log("❌ [SERVER-AUTH] Any role check: no user provided")
     return false
@@ -362,15 +343,18 @@ export function hasAnyRole(user: User | null, roles: string[]): boolean {
   return hasAccess
 }
 
-export function canModerate(user: User | null): boolean {
+// Check if user can moderate
+export function canModerate(user: ServerUser | null): boolean {
   return isModerator(user)
 }
 
-export function canAccessAdmin(user: User | null): boolean {
+// Check if user can access admin features
+export function canAccessAdmin(user: ServerUser | null): boolean {
   return isAdmin(user) || isModerator(user)
 }
 
-export async function requirePermission(request: NextRequest, requiredRole: string): Promise<User> {
+// Require specific permission level
+export async function requirePermission(request: NextRequest, requiredRole: string): Promise<ServerUser> {
   try {
     const user = await getCurrentUserFromRequest(request)
     if (!user) {
@@ -402,7 +386,8 @@ export async function requirePermission(request: NextRequest, requiredRole: stri
   }
 }
 
-export function getUserRoleLevel(user: User | null): number {
+// Get user role level
+export function getUserRoleLevel(user: ServerUser | null): number {
   if (!user) return 0
 
   const roleHierarchy: Record<string, number> = {
@@ -416,11 +401,13 @@ export function getUserRoleLevel(user: User | null): number {
   return roleHierarchy[user.role] || 0
 }
 
-export function isVerified(user: User | null): boolean {
+// Check if user is verified
+export function isVerified(user: ServerUser | null): boolean {
   return user?.is_verified === true
 }
 
-export async function requireVerified(request: NextRequest): Promise<User> {
+// Require verified user
+export async function requireVerified(request: NextRequest): Promise<ServerUser> {
   try {
     const user = await getCurrentUserFromRequest(request)
     if (!user) {
@@ -441,6 +428,7 @@ export async function requireVerified(request: NextRequest): Promise<User> {
   }
 }
 
+// Set authentication cookie
 export async function setAuthCookie(token: string): Promise<void> {
   try {
     console.log("🔍 [SERVER-AUTH] Setting authentication cookie")
@@ -463,6 +451,7 @@ export async function setAuthCookie(token: string): Promise<void> {
   }
 }
 
+// Clear authentication cookie
 export async function clearAuthCookie(): Promise<void> {
   try {
     console.log("🔍 [SERVER-AUTH] Clearing authentication cookie")
@@ -481,12 +470,13 @@ export async function clearAuthCookie(): Promise<void> {
   }
 }
 
+// Create session for user
 export async function createSession(userId: string): Promise<string> {
   try {
     console.log("🔄 [SERVER-AUTH] Creating new session for user:", userId)
 
     // Generate session token using the auth library
-    const { generateToken } = await import("@/lib/auth")
+    const { generateToken } = await import("@/lib/auth-system")
     const user = await sql`SELECT * FROM users WHERE id = ${userId}`
 
     if (user.length === 0) {
@@ -507,6 +497,7 @@ export async function createSession(userId: string): Promise<string> {
   }
 }
 
+// Destroy session
 export async function destroySession(sessionToken: string): Promise<void> {
   try {
     console.log("🔄 [SERVER-AUTH] Destroying session")
@@ -517,5 +508,44 @@ export async function destroySession(sessionToken: string): Promise<void> {
   } catch (error) {
     console.error("❌ [SERVER-AUTH] Error destroying session:", error)
     throw error
+  }
+}
+
+// Get user by ID (utility function)
+export async function getUserById(id: number): Promise<ServerUser | null> {
+  console.log("🔍 [SERVER-AUTH] Getting user by ID:", id)
+
+  try {
+    const users = await sql`
+      SELECT id, username, email, role, status, is_verified, created_at, updated_at
+      FROM users 
+      WHERE id = ${id}
+    `
+
+    if (users.length === 0) {
+      console.log("❌ [SERVER-AUTH] User not found by ID:", id)
+      return null
+    }
+
+    const user = users[0] as any
+    console.log("✅ [SERVER-AUTH] User found by ID:", {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+    })
+
+    return {
+      id: user.id.toString(),
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      is_verified: user.is_verified || false,
+      created_at: user.created_at,
+      last_login_at: user.updated_at,
+    }
+  } catch (error) {
+    console.error("❌ [SERVER-AUTH] Error getting user by ID:", error)
+    return null
   }
 }

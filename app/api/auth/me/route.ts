@@ -1,52 +1,44 @@
-import { type NextRequest, NextResponse } from "next/server"
-import { getCurrentUserFromRequest } from "@/lib/server-auth"
+import { NextResponse } from "next/server"
+import { getCurrentSession } from "@/lib/auth-system"
 
 export const dynamic = "force-dynamic"
 
-export async function GET(request: NextRequest) {
+export async function GET() {
+  console.log("👤 [ME-API] Current user request received")
+
   try {
-    console.log("🔄 [API] Getting current user")
-    console.log("🔄 [AUTH] Getting current session")
+    const session = await getCurrentSession()
 
-    const user = await getCurrentUserFromRequest(request)
-
-    if (!user) {
-      console.log("❌ [API] No valid session found")
+    if (session.success && session.user) {
+      console.log("✅ [ME-API] Current user found:", session.user.username)
+      return NextResponse.json({
+        success: true,
+        user: {
+          id: session.user.id,
+          username: session.user.username,
+          email: session.user.email,
+          role: session.user.role,
+          status: session.user.status,
+          is_verified: session.user.is_verified,
+        },
+      })
+    } else {
+      console.log("❌ [ME-API] No authenticated user found")
       return NextResponse.json(
         {
           success: false,
-          error: "Not authenticated",
-          user: null,
+          message: "Not authenticated",
         },
         { status: 401 },
       )
     }
-
-    console.log("✅ [API] User authenticated:", {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-      status: user.status,
-    })
-
-    return NextResponse.json({
-      success: true,
-      user: {
-        id: Number(user.id),
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        status: user.status,
-        is_verified: user.is_verified || false,
-      },
-    })
   } catch (error) {
-    console.error("❌ [AUTH] Session validation error:", error)
+    console.error("❌ [ME-API] Error getting current user:", error)
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Authentication failed",
-        user: null,
+        message: "Internal server error",
+        error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )
