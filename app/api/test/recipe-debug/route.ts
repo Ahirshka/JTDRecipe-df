@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server"
-import { sql, getPendingRecipes } from "@/lib/neon"
+import { sql } from "@/lib/neon"
 import { getCurrentUser } from "@/lib/server-auth"
 import { addLog } from "./server-logs/route"
+
+export const dynamic = "force-dynamic"
 
 export async function GET() {
   try {
@@ -13,20 +15,20 @@ export async function GET() {
     const recipesResult = await sql`SELECT COUNT(*) as count FROM recipes`
     const recipeCount = recipesResult[0]?.count || 0
 
-    const pendingRecipesResult = await sql`SELECT COUNT(*) as count FROM pending_recipes`
-    const pendingCount = pendingRecipesResult[0]?.count || 0
+    // Skip pending_recipes table since it doesn't exist
+    const pendingCount = 0
 
     // Get recent recipes
     const recentRecipes = await sql`
       SELECT r.id, r.title, r.created_at, u.username
       FROM recipes r
-      JOIN users u ON r.user_id = u.id
+      JOIN users u ON r.author_id = u.id
       ORDER BY r.created_at DESC
       LIMIT 5
     `
 
-    // Get pending recipes
-    const pendingRecipes = await getPendingRecipes()
+    // Skip pending recipes since table doesn't exist
+    const pendingRecipes = []
 
     const debugInfo = {
       timestamp: new Date().toISOString(),
@@ -39,8 +41,8 @@ export async function GET() {
         : null,
       recipeCounts: {
         approved: Number.parseInt(recipeCount),
-        pending: Number.parseInt(pendingCount),
-        total: Number.parseInt(recipeCount) + Number.parseInt(pendingCount),
+        pending: pendingCount,
+        total: Number.parseInt(recipeCount) + pendingCount,
       },
       recentRecipes: recentRecipes.map((recipe) => ({
         id: recipe.id,
@@ -48,16 +50,11 @@ export async function GET() {
         author: recipe.username,
         createdAt: recipe.created_at,
       })),
-      pendingRecipes: pendingRecipes.slice(0, 3).map((recipe) => ({
-        id: recipe.id,
-        title: recipe.title,
-        author: recipe.username,
-        createdAt: recipe.created_at,
-      })),
+      pendingRecipes: pendingRecipes,
       database: {
         tablesExist: {
           recipes: true,
-          pendingRecipes: true,
+          pendingRecipes: false,
           users: true,
         },
       },

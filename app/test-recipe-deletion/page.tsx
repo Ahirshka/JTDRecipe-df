@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -42,11 +42,12 @@ export default function TestRecipeDeletionPage() {
   const [dbResult, setDbResult] = useState<TestResult | null>(null)
   const [deletionResult, setDeletionResult] = useState<TestResult | null>(null)
   const [authDetails, setAuthDetails] = useState<AuthTestResult | null>(null)
+  const [message, setMessage] = useState("")
 
   // Load recipes on component mount
-  useState(() => {
+  useEffect(() => {
     loadRecipes()
-  })
+  }, [])
 
   const loadRecipes = async () => {
     try {
@@ -202,6 +203,37 @@ export default function TestRecipeDeletionPage() {
     }
   }
 
+  const runTest = async () => {
+    setLoading(true)
+    setMessage("Running deletion test...")
+
+    try {
+      const response = await fetch("/api/admin/recipes/delete", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          recipeId: "test-recipe-id",
+          reason: "Test deletion",
+        }),
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        setMessage("✅ Test completed successfully")
+      } else {
+        setMessage(`❌ Test failed: ${data.error}`)
+      }
+    } catch (error) {
+      setMessage(`❌ Test error: ${error instanceof Error ? error.message : "Unknown error"}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const getStatusIcon = (result: TestResult | null) => {
     if (!result) return <Info className="h-4 w-4 text-gray-400" />
     if (result.success) return <CheckCircle className="h-4 w-4 text-green-500" />
@@ -285,7 +317,16 @@ export default function TestRecipeDeletionPage() {
             >
               🗑️ Run Full Deletion Test
             </Button>
+            <Button onClick={runTest} disabled={loading} className="bg-red-600 hover:bg-red-700">
+              {loading ? "Running Test..." : "🗑️ Run Deletion Test"}
+            </Button>
           </div>
+
+          {message && (
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <p className="text-sm">{message}</p>
+            </div>
+          )}
         </CardContent>
       </Card>
 

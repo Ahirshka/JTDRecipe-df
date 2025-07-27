@@ -2,16 +2,16 @@
 
 import type React from "react"
 
-import { useState, useRef } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { useAuth } from "@/contexts/auth-context"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,445 +23,386 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Camera, Upload, Trash2, Save, ArrowLeft, AlertTriangle } from "lucide-react"
-import Link from "next/link"
-import { toast } from "sonner"
+import { useToast } from "@/hooks/use-toast"
+import { useAuth } from "@/contexts/auth-context"
+import { User, Settings, Trash2, Camera } from "lucide-react"
+
+interface UserProfile {
+  id: number
+  username: string
+  email: string
+  role: string
+  status: string
+  is_verified: boolean
+  created_at: string
+  bio?: string
+  location?: string
+  website?: string
+  avatar_url?: string
+}
 
 export default function ProfileSettingsPage() {
-  const { user, loading, refreshUser } = useAuth()
   const router = useRouter()
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const { toast } = useToast()
+  const { user, isAuthenticated, isLoading } = useAuth()
+
+  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const [formData, setFormData] = useState({
-    username: user?.username || "",
-    email: user?.email || "",
+    username: "",
+    email: "",
     bio: "",
     location: "",
     website: "",
   })
-  const [isUploading, setIsUploading] = useState(false)
-  const [isSaving, setIsSaving] = useState(false)
-  const [isDeleting, setIsDeleting] = useState(false)
-  const [selectedImage, setSelectedImage] = useState<File | null>(null)
-  const [imagePreview, setImagePreview] = useState<string | null>(null)
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading profile...</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (!user) {
-    router.push("/login")
-    return null
-  }
-
-  const handleImageSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file) return
-
-    // Validate file type
-    if (!file.type.startsWith("image/")) {
-      toast.error("Please select a valid image file")
-      return
+  // Redirect if not authenticated
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      router.push("/login")
     }
+  }, [isAuthenticated, isLoading, router])
 
-    // Validate file size (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("Image size must be less than 5MB")
-      return
+  // Load user profile
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      loadProfile()
     }
+  }, [isAuthenticated, user])
 
-    setSelectedImage(file)
-
-    // Create preview
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      setImagePreview(e.target?.result as string)
-    }
-    reader.readAsDataURL(file)
-  }
-
-  const handleUploadProfilePicture = async () => {
-    if (!selectedImage) return
-
-    setIsUploading(true)
+  const loadProfile = async () => {
     try {
-      const formData = new FormData()
-      formData.append("avatar", selectedImage)
-
-      const response = await fetch("/api/user/upload-avatar", {
-        method: "POST",
-        body: formData,
+      const response = await fetch("/api/user/profile", {
         credentials: "include",
       })
 
-      const result = await response.json()
-
-      if (result.success) {
-        toast.success("Profile picture updated successfully!")
-        await refreshUser()
-        setSelectedImage(null)
-        setImagePreview(null)
-      } else {
-        toast.error(result.error || "Failed to upload profile picture")
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success) {
+          setProfile(data.profile)
+          setFormData({
+            username: data.profile.username || "",
+            email: data.profile.email || "",
+            bio: data.profile.bio || "",
+            location: data.profile.location || "",
+            website: data.profile.website || "",
+          })
+        }
       }
     } catch (error) {
-      console.error("Upload error:", error)
-      toast.error("Failed to upload profile picture")
+      console.error("Error loading profile:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load profile",
+        variant: "destructive",
+      })
     } finally {
-      setIsUploading(false)
+      setLoading(false)
     }
   }
 
-  const handleDeleteProfilePicture = async () => {
-    try {
-      const response = await fetch("/api/user/delete-avatar", {
-        method: "DELETE",
-        credentials: "include",
-      })
-
-      const result = await response.json()
-
-      if (result.success) {
-        toast.success("Profile picture removed successfully!")
-        await refreshUser()
-      } else {
-        toast.error(result.error || "Failed to remove profile picture")
-      }
-    } catch (error) {
-      console.error("Delete avatar error:", error)
-      toast.error("Failed to remove profile picture")
-    }
-  }
-
-  const handleSaveProfile = async () => {
-    setIsSaving(true)
+  const handleSave = async () => {
+    setSaving(true)
     try {
       const response = await fetch("/api/user/update-profile", {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(formData),
         credentials: "include",
+        body: JSON.stringify(formData),
       })
 
-      const result = await response.json()
+      const data = await response.json()
 
-      if (result.success) {
-        toast.success("Profile updated successfully!")
-        await refreshUser()
+      if (data.success) {
+        toast({
+          title: "Success",
+          description: "Profile updated successfully",
+        })
+        await loadProfile()
       } else {
-        toast.error(result.error || "Failed to update profile")
+        toast({
+          title: "Error",
+          description: data.error || "Failed to update profile",
+          variant: "destructive",
+        })
       }
     } catch (error) {
-      console.error("Update profile error:", error)
-      toast.error("Failed to update profile")
+      console.error("Error updating profile:", error)
+      toast({
+        title: "Error",
+        description: "Failed to update profile",
+        variant: "destructive",
+      })
     } finally {
-      setIsSaving(false)
+      setSaving(false)
     }
   }
 
   const handleDeleteAccount = async () => {
-    setIsDeleting(true)
+    setDeleting(true)
     try {
       const response = await fetch("/api/user/delete-account", {
         method: "DELETE",
         credentials: "include",
       })
 
-      const result = await response.json()
+      const data = await response.json()
 
-      if (result.success) {
-        toast.success("Account deleted successfully")
-        router.push("/")
+      if (data.success) {
+        toast({
+          title: "Account Deleted",
+          description: "Your account has been permanently deleted",
+        })
+        // Redirect to home page after a short delay
+        setTimeout(() => {
+          router.push("/")
+        }, 2000)
       } else {
-        toast.error(result.error || "Failed to delete account")
+        toast({
+          title: "Error",
+          description: data.error || "Failed to delete account",
+          variant: "destructive",
+        })
       }
     } catch (error) {
-      console.error("Delete account error:", error)
-      toast.error("Failed to delete account")
+      console.error("Error deleting account:", error)
+      toast({
+        title: "Error",
+        description: "Failed to delete account",
+        variant: "destructive",
+      })
     } finally {
-      setIsDeleting(false)
+      setDeleting(false)
     }
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-4">
-              <Link href="/profile" className="flex items-center gap-2 text-gray-600 hover:text-gray-900">
-                <ArrowLeft className="w-4 h-4" />
-                Back to Profile
-              </Link>
-            </div>
-            <Link href="/" className="text-2xl font-bold text-orange-600">
-              JTDRecipe
-            </Link>
-          </div>
+  const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    const formData = new FormData()
+    formData.append("avatar", file)
+
+    try {
+      const response = await fetch("/api/user/upload-avatar", {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        toast({
+          title: "Success",
+          description: "Avatar updated successfully",
+        })
+        await loadProfile()
+      } else {
+        toast({
+          title: "Error",
+          description: data.error || "Failed to upload avatar",
+          variant: "destructive",
+        })
+      }
+    } catch (error) {
+      console.error("Error uploading avatar:", error)
+      toast({
+        title: "Error",
+        description: "Failed to upload avatar",
+        variant: "destructive",
+      })
+    }
+  }
+
+  if (isLoading || loading) {
+    return (
+      <div className="container mx-auto p-6 max-w-4xl">
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
         </div>
-      </header>
+      </div>
+    )
+  }
 
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <div className="space-y-6">
-          {/* Profile Picture Section */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Camera className="w-5 h-5" />
-                Profile Picture
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex flex-col sm:flex-row items-center gap-6">
-                <div className="relative">
-                  <Avatar className="w-32 h-32">
-                    <AvatarImage
-                      src={imagePreview || user.avatar || "/placeholder.svg?height=128&width=128"}
-                      alt={user.username}
-                    />
-                    <AvatarFallback className="text-2xl">{user.username.charAt(0).toUpperCase()}</AvatarFallback>
-                  </Avatar>
-                  {imagePreview && <Badge className="absolute -top-2 -right-2 bg-green-600">Preview</Badge>}
-                </div>
+  if (!isAuthenticated || !profile) {
+    return null
+  }
 
-                <div className="flex-1 space-y-4">
-                  <div className="text-center sm:text-left">
-                    <h3 className="font-semibold text-lg">{user.username}</h3>
-                    <p className="text-gray-600">{user.email}</p>
-                  </div>
+  return (
+    <div className="container mx-auto p-6 max-w-4xl">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold mb-2">Profile Settings</h1>
+        <p className="text-gray-600">Manage your account settings and preferences</p>
+      </div>
 
-                  <div className="flex flex-wrap gap-3">
-                    <Button
-                      onClick={() => fileInputRef.current?.click()}
-                      variant="outline"
-                      className="flex items-center gap-2"
-                    >
-                      <Upload className="w-4 h-4" />
-                      Choose Photo
-                    </Button>
-
-                    {selectedImage && (
-                      <Button
-                        onClick={handleUploadProfilePicture}
-                        disabled={isUploading}
-                        className="flex items-center gap-2"
-                      >
-                        {isUploading ? (
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                        ) : (
-                          <Save className="w-4 h-4" />
-                        )}
-                        {isUploading ? "Uploading..." : "Save Photo"}
-                      </Button>
-                    )}
-
-                    {user.avatar && (
-                      <Button
-                        onClick={handleDeleteProfilePicture}
-                        variant="outline"
-                        className="flex items-center gap-2 text-red-600 hover:text-red-700"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                        Remove Photo
-                      </Button>
-                    )}
-                  </div>
-
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageSelect}
-                    className="hidden"
-                  />
-
-                  <p className="text-sm text-gray-500">Upload a JPG, PNG, or GIF image. Max file size: 5MB.</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Profile Information */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Profile Information</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="username">Username</Label>
-                  <Input
-                    id="username"
-                    value={formData.username}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, username: e.target.value }))}
-                    placeholder="Enter your username"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email Address</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, email: e.target.value }))}
-                    placeholder="Enter your email"
-                  />
-                </div>
+      <div className="grid gap-6 md:grid-cols-3">
+        {/* Profile Overview */}
+        <Card className="md:col-span-1">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <User className="h-5 w-5" />
+              Profile
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col items-center space-y-4">
+              <div className="relative">
+                <Avatar className="h-24 w-24">
+                  <AvatarImage src={profile.avatar_url || "/placeholder.svg"} />
+                  <AvatarFallback className="text-lg">{profile.username.charAt(0).toUpperCase()}</AvatarFallback>
+                </Avatar>
+                <label className="absolute bottom-0 right-0 bg-blue-600 text-white p-2 rounded-full cursor-pointer hover:bg-blue-700 transition-colors">
+                  <Camera className="h-4 w-4" />
+                  <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
+                </label>
               </div>
 
+              <div className="text-center">
+                <h3 className="font-semibold text-lg">{profile.username}</h3>
+                <p className="text-gray-600 text-sm">{profile.email}</p>
+                <div className="flex justify-center mt-2">
+                  <Badge variant={profile.role === "owner" ? "default" : "secondary"}>{profile.role}</Badge>
+                </div>
+              </div>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-600">Status:</span>
+                <Badge variant={profile.status === "active" ? "default" : "secondary"}>{profile.status}</Badge>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Verified:</span>
+                <Badge variant={profile.is_verified ? "default" : "secondary"}>
+                  {profile.is_verified ? "Yes" : "No"}
+                </Badge>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Member since:</span>
+                <span>{new Date(profile.created_at).toLocaleDateString()}</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Settings Form */}
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Settings className="h-5 w-5" />
+              Account Settings
+            </CardTitle>
+            <CardDescription>Update your account information and preferences</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="bio">Bio</Label>
-                <Textarea
-                  id="bio"
-                  value={formData.bio}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, bio: e.target.value }))}
-                  placeholder="Tell us about yourself..."
-                  rows={3}
+                <Label htmlFor="username">Username</Label>
+                <Input
+                  id="username"
+                  value={formData.username}
+                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                  placeholder="Enter your username"
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="location">Location</Label>
-                  <Input
-                    id="location"
-                    value={formData.location}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, location: e.target.value }))}
-                    placeholder="Your location"
-                  />
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  placeholder="Enter your email"
+                />
+              </div>
+            </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="website">Website</Label>
-                  <Input
-                    id="website"
-                    value={formData.website}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, website: e.target.value }))}
-                    placeholder="https://yourwebsite.com"
-                  />
-                </div>
+            <div className="space-y-2">
+              <Label htmlFor="bio">Bio</Label>
+              <Textarea
+                id="bio"
+                value={formData.bio}
+                onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
+                placeholder="Tell us about yourself..."
+                rows={3}
+              />
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="location">Location</Label>
+                <Input
+                  id="location"
+                  value={formData.location}
+                  onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                  placeholder="Your location"
+                />
               </div>
 
-              <div className="pt-4">
-                <Button onClick={handleSaveProfile} disabled={isSaving} className="flex items-center gap-2">
-                  {isSaving ? (
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                  ) : (
-                    <Save className="w-4 h-4" />
-                  )}
-                  {isSaving ? "Saving..." : "Save Changes"}
-                </Button>
+              <div className="space-y-2">
+                <Label htmlFor="website">Website</Label>
+                <Input
+                  id="website"
+                  type="url"
+                  value={formData.website}
+                  onChange={(e) => setFormData({ ...formData, website: e.target.value })}
+                  placeholder="https://your-website.com"
+                />
               </div>
-            </CardContent>
-          </Card>
+            </div>
 
-          {/* Account Settings */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Account Settings</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div>
-                  <h4 className="font-medium">Account Status</h4>
-                  <p className="text-sm text-gray-600">Your account is active and verified</p>
-                </div>
-                <Badge variant="secondary" className="bg-green-100 text-green-800">
-                  Active
-                </Badge>
-              </div>
-
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div>
-                  <h4 className="font-medium">Member Since</h4>
-                  <p className="text-sm text-gray-600">
-                    {new Date(user.created_at).toLocaleDateString("en-US", {
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    })}
-                  </p>
-                </div>
-                <Badge variant="outline">{user.role}</Badge>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Danger Zone */}
-          <Card className="border-red-200">
-            <CardHeader>
-              <CardTitle className="text-red-600 flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5" />
-                Danger Zone
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Alert className="border-red-200 bg-red-50">
-                <AlertTriangle className="h-4 w-4 text-red-600" />
-                <AlertDescription className="text-red-800">
-                  Once you delete your account, there is no going back. Please be certain.
-                </AlertDescription>
-              </Alert>
-
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="destructive" className="flex items-center gap-2" disabled={isDeleting}>
-                    <Trash2 className="w-4 h-4" />
-                    Delete My Account
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-                    <AlertDialogDescription className="space-y-2">
-                      <p>
-                        This action cannot be undone. This will permanently delete your account and remove all your data
-                        from our servers.
-                      </p>
-                      <p className="font-medium">This includes:</p>
-                      <ul className="list-disc list-inside text-sm space-y-1">
-                        <li>Your profile and account information</li>
-                        <li>All recipes you've submitted</li>
-                        <li>Your favorites and ratings</li>
-                        <li>All comments and reviews</li>
-                      </ul>
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={handleDeleteAccount}
-                      className="bg-red-600 hover:bg-red-700"
-                      disabled={isDeleting}
-                    >
-                      {isDeleting ? (
-                        <div className="flex items-center gap-2">
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                          Deleting...
-                        </div>
-                      ) : (
-                        "Yes, delete my account"
-                      )}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </CardContent>
-          </Card>
-        </div>
+            <div className="flex justify-between pt-4">
+              <Button onClick={handleSave} disabled={saving} className="bg-blue-600 hover:bg-blue-700">
+                {saving ? "Saving..." : "Save Changes"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
+
+      {/* Danger Zone */}
+      <Card className="mt-6 border-red-200">
+        <CardHeader>
+          <CardTitle className="text-red-600 flex items-center gap-2">
+            <Trash2 className="h-5 w-5" />
+            Danger Zone
+          </CardTitle>
+          <CardDescription>Irreversible and destructive actions</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="destructive" disabled={deleting}>
+                {deleting ? "Deleting..." : "Delete Account"}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This action cannot be undone. This will permanently delete your account and remove all your data from
+                  our servers.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={handleDeleteAccount} className="bg-red-600 hover:bg-red-700">
+                  Delete Account
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </CardContent>
+      </Card>
     </div>
   )
 }

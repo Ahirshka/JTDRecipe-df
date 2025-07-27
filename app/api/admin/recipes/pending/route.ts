@@ -2,6 +2,8 @@ import { type NextRequest, NextResponse } from "next/server"
 import { sql } from "@/lib/neon"
 import { getCurrentUserFromRequest } from "@/lib/server-auth"
 
+export const dynamic = "force-dynamic"
+
 export async function GET(request: NextRequest) {
   try {
     console.log("🔄 [ADMIN-PENDING] Fetching pending recipes")

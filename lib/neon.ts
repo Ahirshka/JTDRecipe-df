@@ -142,7 +142,7 @@ export async function reinitializeDatabase(): Promise<boolean> {
   }
 }
 
-// Initialize database tables
+// Initialize database tables - FIXED: Split SQL commands
 export async function initializeDatabase(): Promise<boolean> {
   console.log("🔄 [NEON-DB] Initializing database tables...")
 
@@ -207,18 +207,30 @@ export async function initializeDatabase(): Promise<boolean> {
       );
     `
 
-    // Add search index
+    // Add search index - SEPARATE COMMAND
     console.log("📋 [NEON-DB] Creating search index...")
     await sql`
       CREATE INDEX IF NOT EXISTS recipe_search_idx ON recipes USING GIN(search_vector);
     `
 
-    // Add other useful indexes
+    // Add other useful indexes - SEPARATE COMMANDS
     await sql`
       CREATE INDEX IF NOT EXISTS recipe_author_idx ON recipes(author_id);
+    `
+
+    await sql`
       CREATE INDEX IF NOT EXISTS recipe_category_idx ON recipes(category);
+    `
+
+    await sql`
       CREATE INDEX IF NOT EXISTS recipe_status_idx ON recipes(moderation_status);
+    `
+
+    await sql`
       CREATE INDEX IF NOT EXISTS recipe_published_idx ON recipes(is_published);
+    `
+
+    await sql`
       CREATE INDEX IF NOT EXISTS recipe_created_idx ON recipes(created_at);
     `
 
@@ -229,7 +241,7 @@ export async function initializeDatabase(): Promise<boolean> {
     await sql`DROP TRIGGER IF EXISTS recipes_search_update_trigger ON recipes;`
     await sql`DROP FUNCTION IF EXISTS recipes_search_update();`
 
-    // Create function
+    // Create function - SEPARATE COMMAND
     await sql`
       CREATE OR REPLACE FUNCTION recipes_search_update() RETURNS trigger AS $$
       BEGIN
@@ -244,7 +256,7 @@ export async function initializeDatabase(): Promise<boolean> {
       $$ LANGUAGE plpgsql;
     `
 
-    // Create trigger
+    // Create trigger - SEPARATE COMMAND
     await sql`
       CREATE TRIGGER recipes_search_update_trigger
       BEFORE INSERT OR UPDATE ON recipes
