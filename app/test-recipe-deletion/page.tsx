@@ -7,7 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { ChevronRight, CheckCircle, XCircle, Info } from "lucide-react"
+import { ChevronRight, CheckCircle, XCircle, Info, User, Shield, AlertCircle } from "lucide-react"
+import { useAuth } from "@/contexts/auth-context"
 
 interface Recipe {
   id: string
@@ -33,7 +34,19 @@ interface AuthTestResult {
   serverAuthResult: any
 }
 
+interface UserInfo {
+  id: string
+  username: string
+  email: string
+  role: string
+  status: string
+  is_verified: boolean
+  created_at: string
+  last_login_at?: string
+}
+
 export default function TestRecipeDeletionPage() {
+  const { user, isLoading, isAuthenticated, checkAuth } = useAuth()
   const [recipes, setRecipes] = useState<Recipe[]>([])
   const [selectedRecipeId, setSelectedRecipeId] = useState<string>("")
   const [deletionReason, setDeletionReason] = useState<string>("")
@@ -43,21 +56,111 @@ export default function TestRecipeDeletionPage() {
   const [deletionResult, setDeletionResult] = useState<TestResult | null>(null)
   const [authDetails, setAuthDetails] = useState<AuthTestResult | null>(null)
   const [message, setMessage] = useState("")
+  const [userInfo, setUserInfo] = useState<UserInfo | null>(null)
+  const [authStatus, setAuthStatus] = useState<{
+    contextAuth: boolean
+    serverAuth: boolean
+    cookieAuth: boolean
+    lastChecked: string
+  }>({
+    contextAuth: false,
+    serverAuth: false,
+    cookieAuth: false,
+    lastChecked: new Date().toISOString(),
+  })
 
-  // Load recipes on component mount
+  // Load recipes and check auth on component mount
   useEffect(() => {
     loadRecipes()
+    checkUserAuth()
   }, [])
+
+  // Update auth status when context changes
+  useEffect(() => {
+    setAuthStatus((prev) => ({
+      ...prev,
+      contextAuth: isAuthenticated,
+      lastChecked: new Date().toISOString(),
+    }))
+
+    if (user) {
+      setUserInfo({
+        id: user.id.toString(),
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        status: user.status,
+        is_verified: user.is_verified,
+        created_at: new Date().toISOString(),
+        last_login_at: new Date().toISOString(),
+      })
+    } else {
+      setUserInfo(null)
+    }
+  }, [user, isAuthenticated])
+
+  const checkUserAuth = async () => {
+    console.log("🔍 [DELETION-TEST] Checking user authentication status...")
+
+    try {
+      // Check server-side auth
+      const serverResponse = await fetch("/api/auth/me", {
+        credentials: "include",
+        cache: "no-store",
+      })
+
+      const serverData = await serverResponse.json()
+      console.log("🔍 [DELETION-TEST] Server auth response:", serverData)
+
+      // Check cookie auth
+      const cookieResponse = await fetch("/api/debug/auth", {
+        credentials: "include",
+        cache: "no-store",
+      })
+
+      const cookieData = await cookieResponse.json()
+      console.log("🔍 [DELETION-TEST] Cookie auth response:", cookieData)
+
+      setAuthStatus((prev) => ({
+        ...prev,
+        serverAuth: serverData.success && !!serverData.user,
+        cookieAuth: cookieData.success && !!cookieData.serverAuthResult?.user,
+        lastChecked: new Date().toISOString(),
+      }))
+
+      // Set user info from server response if available
+      if (serverData.success && serverData.user) {
+        setUserInfo(serverData.user)
+      } else if (cookieData.success && cookieData.serverAuthResult?.user) {
+        setUserInfo(cookieData.serverAuthResult.user)
+      }
+    } catch (error) {
+      console.error("❌ [DELETION-TEST] Auth check failed:", error)
+      setAuthStatus((prev) => ({
+        ...prev,
+        serverAuth: false,
+        cookieAuth: false,
+        lastChecked: new Date().toISOString(),
+      }))
+    }
+  }
 
   const loadRecipes = async () => {
     try {
-      const response = await fetch("/api/recipes")
+      console.log("🔍 [DELETION-TEST] Loading recipes...")
+      const response = await fetch("/api/recipes", {
+        credentials: "include",
+      })
+
       if (response.ok) {
         const data = await response.json()
+        console.log("✅ [DELETION-TEST] Recipes loaded:", data.recipes?.length || 0)
         setRecipes(data.recipes || [])
+      } else {
+        console.log("❌ [DELETION-TEST] Failed to load recipes:", response.status)
       }
     } catch (error) {
-      console.error("Failed to load recipes:", error)
+      console.error("❌ [DELETION-TEST] Failed to load recipes:", error)
     }
   }
 
@@ -67,14 +170,14 @@ export default function TestRecipeDeletionPage() {
     setAuthDetails(null)
 
     try {
-      console.log("🔍 Testing authentication...")
+      console.log("🔍 [DELETION-TEST] Testing authentication...")
       const response = await fetch("/api/debug/auth", {
         method: "GET",
         credentials: "include",
       })
 
       const data = await response.json()
-      console.log("🔍 Auth test response:", data)
+      console.log("🔍 [DELETION-TEST] Auth test response:", data)
 
       if (data.success) {
         setAuthResult({
@@ -83,6 +186,11 @@ export default function TestRecipeDeletionPage() {
           data: data,
         })
         setAuthDetails(data)
+
+        // Update user info from auth test
+        if (data.serverAuthResult?.user) {
+          setUserInfo(data.serverAuthResult.user)
+        }
       } else {
         setAuthResult({
           success: false,
@@ -93,7 +201,7 @@ export default function TestRecipeDeletionPage() {
         setAuthDetails(data)
       }
     } catch (error) {
-      console.error("Auth test error:", error)
+      console.error("❌ [DELETION-TEST] Auth test error:", error)
       setAuthResult({
         success: false,
         message: "Authentication test failed",
@@ -109,14 +217,14 @@ export default function TestRecipeDeletionPage() {
     setDbResult(null)
 
     try {
-      console.log("🔍 Testing database connection...")
+      console.log("🔍 [DELETION-TEST] Testing database connection...")
       const response = await fetch("/api/test/database-connection", {
         method: "GET",
         credentials: "include",
       })
 
       const data = await response.json()
-      console.log("🔍 Database test response:", data)
+      console.log("🔍 [DELETION-TEST] Database test response:", data)
 
       if (data.success) {
         setDbResult({
@@ -133,7 +241,7 @@ export default function TestRecipeDeletionPage() {
         })
       }
     } catch (error) {
-      console.error("Database test error:", error)
+      console.error("❌ [DELETION-TEST] Database test error:", error)
       setDbResult({
         success: false,
         message: "Database test failed",
@@ -154,9 +262,10 @@ export default function TestRecipeDeletionPage() {
     setDeletionResult(null)
 
     try {
-      console.log("🗑️ Testing full recipe deletion...")
+      console.log("🗑️ [DELETION-TEST] Testing full recipe deletion...")
       console.log("🗑️ Recipe ID:", selectedRecipeId)
       console.log("🗑️ Reason:", deletionReason)
+      console.log("🗑️ Current user:", userInfo)
 
       const response = await fetch("/api/admin/recipes/delete", {
         method: "DELETE",
@@ -171,7 +280,7 @@ export default function TestRecipeDeletionPage() {
       })
 
       const data = await response.json()
-      console.log("🗑️ Deletion test response:", data)
+      console.log("🗑️ [DELETION-TEST] Deletion test response:", data)
 
       if (data.success) {
         setDeletionResult({
@@ -192,7 +301,7 @@ export default function TestRecipeDeletionPage() {
         })
       }
     } catch (error) {
-      console.error("Deletion test error:", error)
+      console.error("❌ [DELETION-TEST] Deletion test error:", error)
       setDeletionResult({
         success: false,
         message: "Deletion test failed",
@@ -203,32 +312,14 @@ export default function TestRecipeDeletionPage() {
     }
   }
 
-  const runTest = async () => {
+  const refreshAuth = async () => {
     setLoading(true)
-    setMessage("Running deletion test...")
-
     try {
-      const response = await fetch("/api/admin/recipes/delete", {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        credentials: "include",
-        body: JSON.stringify({
-          recipeId: "test-recipe-id",
-          reason: "Test deletion",
-        }),
-      })
-
-      const data = await response.json()
-
-      if (data.success) {
-        setMessage("✅ Test completed successfully")
-      } else {
-        setMessage(`❌ Test failed: ${data.error}`)
-      }
+      await checkAuth()
+      await checkUserAuth()
+      setMessage("✅ Authentication status refreshed")
     } catch (error) {
-      setMessage(`❌ Test error: ${error instanceof Error ? error.message : "Unknown error"}`)
+      setMessage("❌ Failed to refresh authentication")
     } finally {
       setLoading(false)
     }
@@ -246,6 +337,25 @@ export default function TestRecipeDeletionPage() {
     return "text-red-600"
   }
 
+  const getAuthStatusIcon = (status: boolean) => {
+    return status ? <CheckCircle className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-red-500" />
+  }
+
+  const getRoleColor = (role: string) => {
+    switch (role) {
+      case "owner":
+        return "bg-purple-100 text-purple-800"
+      case "admin":
+        return "bg-red-100 text-red-800"
+      case "moderator":
+        return "bg-blue-100 text-blue-800"
+      case "user":
+        return "bg-gray-100 text-gray-800"
+      default:
+        return "bg-gray-100 text-gray-800"
+    }
+  }
+
   return (
     <div className="container mx-auto p-6 max-w-4xl">
       <div className="mb-8">
@@ -254,6 +364,107 @@ export default function TestRecipeDeletionPage() {
           Comprehensive testing tool for debugging recipe deletion authentication and database operations.
         </p>
       </div>
+
+      {/* User Authentication Status */}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <User className="h-5 w-5" />
+            User Authentication Status
+          </CardTitle>
+          <CardDescription>Current login status and user information</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Authentication Status Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
+              {getAuthStatusIcon(authStatus.contextAuth)}
+              <div>
+                <p className="font-medium text-sm">Context Auth</p>
+                <p className="text-xs text-gray-600">
+                  {authStatus.contextAuth ? "Authenticated" : "Not authenticated"}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
+              {getAuthStatusIcon(authStatus.serverAuth)}
+              <div>
+                <p className="font-medium text-sm">Server Auth</p>
+                <p className="text-xs text-gray-600">{authStatus.serverAuth ? "Valid session" : "No valid session"}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
+              {getAuthStatusIcon(authStatus.cookieAuth)}
+              <div>
+                <p className="font-medium text-sm">Cookie Auth</p>
+                <p className="text-xs text-gray-600">{authStatus.cookieAuth ? "Valid cookies" : "Invalid cookies"}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* User Information */}
+          {userInfo ? (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Shield className="h-5 w-5 text-green-600" />
+                <h3 className="font-medium text-green-800">Logged in as:</h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                <div>
+                  <span className="font-medium">Username:</span> {userInfo.username}
+                </div>
+                <div>
+                  <span className="font-medium">Email:</span> {userInfo.email}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">Role:</span>
+                  <Badge className={getRoleColor(userInfo.role)}>{userInfo.role}</Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">Status:</span>
+                  <Badge variant={userInfo.status === "active" ? "default" : "secondary"}>{userInfo.status}</Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">Verified:</span>
+                  {userInfo.is_verified ? (
+                    <CheckCircle className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <XCircle className="h-4 w-4 text-red-500" />
+                  )}
+                  <span>{userInfo.is_verified ? "Yes" : "No"}</span>
+                </div>
+                <div>
+                  <span className="font-medium">User ID:</span> {userInfo.id}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-5 w-5 text-red-600" />
+                <p className="text-red-800 font-medium">Not logged in</p>
+              </div>
+              <p className="text-red-600 text-sm mt-1">
+                You need to be logged in to test recipe deletion functionality.
+              </p>
+            </div>
+          )}
+
+          {/* Control Buttons */}
+          <div className="flex gap-2">
+            <Button onClick={refreshAuth} disabled={loading} variant="outline" size="sm">
+              🔄 Refresh Auth Status
+            </Button>
+            <Button onClick={checkUserAuth} disabled={loading} variant="outline" size="sm">
+              🔍 Check Server Auth
+            </Button>
+          </div>
+
+          <p className="text-xs text-gray-500">Last checked: {new Date(authStatus.lastChecked).toLocaleString()}</p>
+        </CardContent>
+      </Card>
 
       {/* Recipe Selection */}
       <Card className="mb-6">
@@ -312,18 +523,21 @@ export default function TestRecipeDeletionPage() {
             </Button>
             <Button
               onClick={testFullDeletion}
-              disabled={loading || !selectedRecipeId}
+              disabled={loading || !selectedRecipeId || !userInfo}
               className="bg-red-600 hover:bg-red-700"
             >
               🗑️ Run Full Deletion Test
             </Button>
-            <Button onClick={runTest} disabled={loading} className="bg-red-600 hover:bg-red-700">
-              {loading ? "Running Test..." : "🗑️ Run Deletion Test"}
-            </Button>
           </div>
 
+          {!userInfo && (
+            <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-yellow-800 text-sm">⚠️ You must be logged in to test recipe deletion functionality.</p>
+            </div>
+          )}
+
           {message && (
-            <div className="p-4 bg-gray-50 rounded-lg">
+            <div className="mt-4 p-4 bg-gray-50 rounded-lg">
               <p className="text-sm">{message}</p>
             </div>
           )}
