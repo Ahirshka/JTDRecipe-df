@@ -15,6 +15,37 @@ export interface User {
   created_at: string
 }
 
+// Helper function to extract user ID from different token formats
+function extractUserIdFromToken(token: string): string | null {
+  try {
+    // First try to verify as JWT
+    const payload = verifyToken(token)
+    if (payload && payload.userId) {
+      return payload.userId.toString()
+    }
+
+    // If JWT verification fails, try to decode without verification to see the structure
+    const jwt = require("jsonwebtoken")
+    const decoded = jwt.decode(token) as any
+
+    if (decoded) {
+      console.log("🔍 [SERVER-AUTH] Token structure:", {
+        hasUserId: !!decoded.userId,
+        hasId: !!decoded.id,
+        keys: Object.keys(decoded),
+      })
+
+      // Try different possible user ID fields
+      return decoded.userId?.toString() || decoded.id?.toString() || null
+    }
+
+    return null
+  } catch (error) {
+    console.log("❌ [SERVER-AUTH] Token extraction failed:", error)
+    return null
+  }
+}
+
 export async function getCurrentUser(): Promise<User | null> {
   try {
     console.log("🔄 [SERVER-AUTH] Getting current user from cookies")
@@ -22,49 +53,49 @@ export async function getCurrentUser(): Promise<User | null> {
     const cookieStore = await cookies()
 
     // Try multiple cookie names that might be used
-    let token = cookieStore.get("auth-token")?.value
-    if (!token) {
-      token = cookieStore.get("auth_session")?.value
-    }
-    if (!token) {
-      token = cookieStore.get("session")?.value
+    const cookieNames = ["auth-token", "auth_token", "auth_session", "session", "session_token"]
+    let token = null
+    let usedCookieName = null
+
+    for (const cookieName of cookieNames) {
+      const cookieValue = cookieStore.get(cookieName)?.value
+      if (cookieValue) {
+        token = cookieValue
+        usedCookieName = cookieName
+        console.log(`✅ [SERVER-AUTH] Found token in cookie: ${cookieName}`)
+        break
+      }
     }
 
     if (!token) {
       console.log("❌ [SERVER-AUTH] No auth token found in any cookie")
       console.log(
         "Available cookies:",
-        Object.fromEntries(
-          Array.from(cookieStore.getAll()).map((cookie) => [cookie.name, cookie.value.substring(0, 10) + "..."]),
-        ),
+        Array.from(cookieStore.getAll()).map((c) => c.name),
       )
       return null
     }
 
-    console.log("✅ [SERVER-AUTH] Auth token found:", token.substring(0, 10) + "...")
+    console.log("✅ [SERVER-AUTH] Auth token found in:", usedCookieName)
 
-    // Verify the token
-    const payload = verifyToken(token)
-    if (!payload) {
-      console.log("❌ [SERVER-AUTH] Token verification failed")
+    // Extract user ID from token
+    const userId = extractUserIdFromToken(token)
+    if (!userId) {
+      console.log("❌ [SERVER-AUTH] Could not extract user ID from token")
       return null
     }
 
-    console.log("✅ [SERVER-AUTH] Token verified, payload:", {
-      userId: payload.userId,
-      email: payload.email,
-      role: payload.role,
-    })
+    console.log("✅ [SERVER-AUTH] Extracted user ID:", userId)
 
     // Get user from database
     const users = await sql`
       SELECT id, username, email, role, status, is_verified, created_at
       FROM users 
-      WHERE id = ${payload.userId}
+      WHERE id = ${userId}
     `
 
     if (users.length === 0) {
-      console.log("❌ [SERVER-AUTH] User not found in database for ID:", payload.userId)
+      console.log("❌ [SERVER-AUTH] User not found in database for ID:", userId)
       return null
     }
 
@@ -87,57 +118,60 @@ export async function getCurrentUserFromRequest(request: NextRequest): Promise<U
   try {
     console.log("🔍 [SERVER-AUTH] Getting current user from request...")
     console.log("🔍 [SERVER-AUTH] Request URL:", request.url)
-    console.log("🔍 [SERVER-AUTH] Request method:", request.method)
 
     // Try multiple cookie names that might be used
-    let token = request.cookies.get("auth-token")?.value
-    if (!token) {
-      token = request.cookies.get("auth_session")?.value
-    }
-    if (!token) {
-      token = request.cookies.get("session")?.value
+    const cookieNames = ["auth-token", "auth_token", "auth_session", "session", "session_token"]
+    let token = null
+    let usedCookieName = null
+
+    for (const cookieName of cookieNames) {
+      const cookieValue = request.cookies.get(cookieName)?.value
+      if (cookieValue) {
+        token = cookieValue
+        usedCookieName = cookieName
+        console.log(`✅ [SERVER-AUTH] Found token in request cookie: ${cookieName}`)
+        break
+      }
     }
 
     // Log all available cookies for debugging
-    const allCookies = Object.fromEntries(
-      Array.from(request.cookies.entries()).map(([name, cookie]) => [name, cookie.value.substring(0, 10) + "..."]),
-    )
-    console.log("🔍 [SERVER-AUTH] Available cookies:", allCookies)
+    const allCookies = Array.from(request.cookies.entries()).map(([name, cookie]) => ({
+      name,
+      hasValue: !!cookie.value,
+      valuePreview: cookie.value.substring(0, 20) + "...",
+    }))
+    console.log("🔍 [SERVER-AUTH] Available request cookies:", allCookies)
 
     if (!token) {
       console.log("❌ [SERVER-AUTH] No auth token found in request cookies")
       return null
     }
 
-    console.log("🔑 [SERVER-AUTH] Auth token found, verifying...")
+    console.log("🔑 [SERVER-AUTH] Auth token found in request, extracting user ID...")
 
-    // Verify the token
-    const payload = verifyToken(token)
-    if (!payload) {
-      console.log("❌ [SERVER-AUTH] Token verification failed")
+    // Extract user ID from token
+    const userId = extractUserIdFromToken(token)
+    if (!userId) {
+      console.log("❌ [SERVER-AUTH] Could not extract user ID from token")
       return null
     }
 
-    console.log("✅ [SERVER-AUTH] Token verified, payload:", {
-      userId: payload.userId,
-      email: payload.email,
-      role: payload.role,
-    })
+    console.log("✅ [SERVER-AUTH] Extracted user ID from request:", userId)
 
     // Get user from database
     const users = await sql`
       SELECT id, username, email, role, status, is_verified, created_at
       FROM users 
-      WHERE id = ${payload.userId}
+      WHERE id = ${userId}
     `
 
     if (users.length === 0) {
-      console.log("❌ [SERVER-AUTH] User not found in database for ID:", payload.userId)
+      console.log("❌ [SERVER-AUTH] User not found in database for ID:", userId)
       return null
     }
 
     const user = users[0] as User
-    console.log("✅ [SERVER-AUTH] User found:", {
+    console.log("✅ [SERVER-AUTH] User found from request:", {
       id: user.id,
       username: user.username,
       role: user.role,
@@ -146,7 +180,7 @@ export async function getCurrentUserFromRequest(request: NextRequest): Promise<U
 
     return user
   } catch (error) {
-    console.error("❌ [SERVER-AUTH] Error getting current user:", error)
+    console.error("❌ [SERVER-AUTH] Error getting current user from request:", error)
     return null
   }
 }
@@ -380,9 +414,11 @@ export async function clearAuthCookie(): Promise<void> {
     console.log("🔍 [SERVER-AUTH] Clearing authentication cookie")
 
     const cookieStore = await cookies()
-    cookieStore.delete("auth-token")
-    cookieStore.delete("auth_session")
-    cookieStore.delete("session")
+    const cookieNames = ["auth-token", "auth_token", "auth_session", "session", "session_token"]
+
+    for (const cookieName of cookieNames) {
+      cookieStore.delete(cookieName)
+    }
 
     console.log("✅ [SERVER-AUTH] Authentication cookies cleared successfully")
   } catch (error) {
@@ -404,7 +440,7 @@ export async function createSession(userId: string): Promise<string> {
     }
 
     const sessionToken = generateToken({
-      userId: user[0].id,
+      userId: user[0].id.toString(),
       email: user[0].email,
       role: user[0].role,
     })
