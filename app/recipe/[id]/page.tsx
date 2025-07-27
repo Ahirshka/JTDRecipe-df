@@ -3,34 +3,34 @@
 import { useState, useEffect } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Clock, Users, ChefHat, Eye, ArrowLeft } from "lucide-react"
-import Image from "next/image"
+import { Badge } from "@/components/ui/badge"
+import { Clock, Users, ChefHat, Star, ArrowLeft, Edit, Heart, Share2, Bookmark } from "lucide-react"
+import { StarRating } from "@/components/star-rating"
+import { RecipeQuickActions } from "@/components/recipe-quick-actions"
 import { useAuth } from "@/contexts/auth-context"
-import StarRating from "@/components/star-rating"
-import RecipeQuickActions from "@/components/recipe-quick-actions"
 
 interface Recipe {
   id: string
   title: string
-  description: string
-  author_id: string
-  author_username: string
+  description?: string
   category: string
   difficulty: string
   prep_time_minutes: number
   cook_time_minutes: number
   servings: number
-  image_url: string
   ingredients: string[]
   instructions: string[]
-  tags: string[]
-  rating: number
-  review_count: number
-  view_count: number
+  image_url?: string
+  moderation_status: string
+  is_published: boolean
   created_at: string
   updated_at: string
+  author_id: string
+  author_username: string
+  average_rating: number
+  rating_count: number
+  user_rating?: number
 }
 
 export default function RecipePage() {
@@ -41,82 +41,75 @@ export default function RecipePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
 
-  useEffect(() => {
-    if (params.id) {
-      fetchRecipe(params.id as string)
-    }
-  }, [params.id])
+  const recipeId = params.id as string
 
-  const fetchRecipe = async (id: string) => {
+  useEffect(() => {
+    if (recipeId) {
+      loadRecipe()
+    }
+  }, [recipeId])
+
+  const loadRecipe = async () => {
+    setLoading(true)
+    setError("")
+
     try {
-      setLoading(true)
-      const response = await fetch(`/api/recipes/${id}`, {
+      const response = await fetch(`/api/recipes/${recipeId}`, {
         credentials: "include",
       })
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-
-      const data = await response.json()
-
-      if (data.success) {
-        setRecipe(data.recipe)
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success) {
+          setRecipe(data.recipe)
+        } else {
+          setError(data.error || "Recipe not found")
+        }
+      } else if (response.status === 404) {
+        setError("Recipe not found")
       } else {
-        setError(data.message || "Recipe not found")
+        setError("Failed to load recipe")
       }
     } catch (error) {
-      console.error("Error fetching recipe:", error)
+      console.error("Error loading recipe:", error)
       setError("Failed to load recipe")
     } finally {
       setLoading(false)
     }
   }
 
-  const handleRatingUpdate = (newRating: number, newReviewCount: number) => {
+  const handleRatingUpdate = (newRating: number, newAverage: number, newCount: number) => {
     if (recipe) {
       setRecipe({
         ...recipe,
-        rating: newRating,
-        review_count: newReviewCount,
+        user_rating: newRating,
+        average_rating: newAverage,
+        rating_count: newCount,
       })
     }
   }
 
-  const handleRecipeDeleted = () => {
-    // Recipe was deleted, redirect to homepage
-    router.push("/")
-  }
-
-  const getCategoryColor = (category: string) => {
-    const colors: Record<string, string> = {
-      appetizer: "bg-green-100 text-green-800",
-      "main-course": "bg-blue-100 text-blue-800",
-      dessert: "bg-pink-100 text-pink-800",
-      beverage: "bg-purple-100 text-purple-800",
-      snack: "bg-yellow-100 text-yellow-800",
-      breakfast: "bg-orange-100 text-orange-800",
-      lunch: "bg-teal-100 text-teal-800",
-      dinner: "bg-red-100 text-red-800",
-    }
-    return colors[category.toLowerCase()] || "bg-gray-100 text-gray-800"
-  }
-
   const getDifficultyColor = (difficulty: string) => {
-    const colors: Record<string, string> = {
-      easy: "bg-green-100 text-green-800",
-      medium: "bg-yellow-100 text-yellow-800",
-      hard: "bg-red-100 text-red-800",
+    switch (difficulty.toLowerCase()) {
+      case "easy":
+        return "bg-green-100 text-green-800"
+      case "medium":
+        return "bg-yellow-100 text-yellow-800"
+      case "hard":
+        return "bg-red-100 text-red-800"
+      default:
+        return "bg-gray-100 text-gray-800"
     }
-    return colors[difficulty.toLowerCase()] || "bg-gray-100 text-gray-800"
   }
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading recipe...</p>
+      <div className="container mx-auto px-4 py-8">
+        <div className="flex items-center justify-center py-12">
+          <div className="text-center">
+            <Clock className="w-8 h-8 animate-spin mx-auto mb-4 text-orange-600" />
+            <p className="text-gray-600">Loading recipe...</p>
+          </div>
         </div>
       </div>
     )
@@ -124,195 +117,184 @@ export default function RecipePage() {
 
   if (error || !recipe) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <Card className="w-full max-w-md">
-          <CardContent className="p-6 text-center">
-            <h2 className="text-xl font-semibold mb-2">Recipe Not Found</h2>
-            <p className="text-gray-600 mb-4">{error}</p>
-            <Button onClick={() => router.push("/")} variant="outline">
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Home
-            </Button>
-          </CardContent>
-        </Card>
+      <div className="container mx-auto px-4 py-8">
+        <div className="text-center py-12">
+          <ChefHat className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold mb-2">Recipe Not Found</h2>
+          <p className="text-gray-600 mb-4">{error || "The recipe you're looking for doesn't exist."}</p>
+          <Button onClick={() => router.push("/")}>
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back to Home
+          </Button>
+        </div>
       </div>
     )
   }
 
-  const totalTime = (recipe.prep_time_minutes || 0) + (recipe.cook_time_minutes || 0)
+  const isAuthor = isAuthenticated && user && user.id === recipe.author_id
+  const canModerate = isAuthenticated && user && ["admin", "owner", "moderator"].includes(user.role)
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        {/* Header with Back Button and Quick Actions */}
-        <div className="flex items-center justify-between mb-6">
-          <Button variant="ghost" onClick={() => router.back()}>
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back
-          </Button>
+    <div className="container mx-auto px-4 py-8 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <Button variant="outline" onClick={() => router.push("/")}>
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          Back to Recipes
+        </Button>
 
-          <RecipeQuickActions
-            recipe={{
-              id: recipe.id,
-              title: recipe.title,
-              author_username: recipe.author_username,
-              author_id: recipe.author_id,
-            }}
-            onRecipeDeleted={handleRecipeDeleted}
-          />
-        </div>
-
-        {/* Recipe Header */}
-        <Card className="mb-6">
-          <div className="relative">
-            <div className="aspect-video relative overflow-hidden rounded-t-lg">
-              <Image
-                src={recipe.image_url || "/placeholder.svg?height=400&width=800"}
-                alt={recipe.title}
-                fill
-                className="object-cover"
-                priority
+        <div className="flex items-center gap-2">
+          {(isAuthor || canModerate) && (
+            <>
+              {isAuthor && (
+                <Button variant="outline" onClick={() => router.push(`/recipe/${recipe.id}/edit`)}>
+                  <Edit className="w-4 h-4 mr-2" />
+                  Edit Recipe
+                </Button>
+              )}
+              <RecipeQuickActions
+                recipe={{
+                  id: recipe.id,
+                  title: recipe.title,
+                  author_username: recipe.author_username,
+                  author_id: recipe.author_id,
+                }}
+                onRecipeDeleted={() => router.push("/")}
               />
-            </div>
+            </>
+          )}
+        </div>
+      </div>
 
-            {/* Badges Overlay */}
-            <div className="absolute top-4 left-4 flex gap-2">
-              <Badge className={`${getCategoryColor(recipe.category)} font-medium`}>
-                {recipe.category.replace("-", " ").replace(/\b\w/g, (l) => l.toUpperCase())}
-              </Badge>
-              <Badge className={`${getDifficultyColor(recipe.difficulty)} font-medium`}>
-                {recipe.difficulty.charAt(0).toUpperCase() + recipe.difficulty.slice(1)}
-              </Badge>
-            </div>
-
-            {/* View Count */}
-            {recipe.view_count > 0 && (
-              <div className="absolute top-4 right-4 bg-black/70 text-white px-3 py-1 rounded-md flex items-center gap-1 text-sm">
-                <Eye className="w-4 h-4" />
-                <span>{recipe.view_count} views</span>
+      {/* Recipe Header */}
+      <Card>
+        <CardContent className="p-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Recipe Image */}
+            <div className="lg:col-span-1">
+              <div className="aspect-square bg-gray-200 rounded-lg overflow-hidden">
+                {recipe.image_url ? (
+                  <img
+                    src={recipe.image_url || "/placeholder.svg"}
+                    alt={recipe.title}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <ChefHat className="w-16 h-16 text-gray-400" />
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </div>
 
-          <CardContent className="p-6">
-            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
-              <div className="flex-1">
-                <h1 className="text-3xl font-bold mb-2">{recipe.title}</h1>
-                <p className="text-gray-600 mb-4">{recipe.description}</p>
-
-                <div className="flex items-center gap-4 text-sm text-gray-500 mb-4">
-                  <span>
-                    by <span className="font-medium text-gray-700">{recipe.author_username}</span>
-                  </span>
-                  <span>•</span>
-                  <span>{new Date(recipe.created_at).toLocaleDateString()}</span>
+            {/* Recipe Info */}
+            <div className="lg:col-span-2 space-y-4">
+              <div>
+                <div className="flex items-start justify-between mb-2">
+                  <h1 className="text-3xl font-bold">{recipe.title}</h1>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm">
+                      <Heart className="w-4 h-4" />
+                    </Button>
+                    <Button variant="outline" size="sm">
+                      <Bookmark className="w-4 h-4" />
+                    </Button>
+                    <Button variant="outline" size="sm">
+                      <Share2 className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
 
-                {/* Recipe Stats */}
-                <div className="flex flex-wrap items-center gap-6 text-sm">
-                  {recipe.prep_time_minutes > 0 && (
-                    <div className="flex items-center gap-1">
-                      <Clock className="w-4 h-4 text-gray-400" />
-                      <span>Prep: {recipe.prep_time_minutes}m</span>
-                    </div>
-                  )}
+                <p className="text-gray-600 mb-4">
+                  by {recipe.author_username} • {new Date(recipe.created_at).toLocaleDateString()}
+                </p>
 
-                  {recipe.cook_time_minutes > 0 && (
-                    <div className="flex items-center gap-1">
-                      <ChefHat className="w-4 h-4 text-gray-400" />
-                      <span>Cook: {recipe.cook_time_minutes}m</span>
-                    </div>
-                  )}
+                {recipe.description && <p className="text-gray-700 mb-4">{recipe.description}</p>}
 
-                  {totalTime > 0 && (
-                    <div className="flex items-center gap-1">
-                      <Clock className="w-4 h-4 text-gray-400" />
-                      <span>Total: {totalTime}m</span>
-                    </div>
-                  )}
-
-                  {recipe.servings > 0 && (
-                    <div className="flex items-center gap-1">
-                      <Users className="w-4 h-4 text-gray-400" />
-                      <span>
-                        {recipe.servings} serving{recipe.servings !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-                  )}
+                <div className="flex flex-wrap gap-2 mb-4">
+                  <Badge variant="outline">{recipe.category}</Badge>
+                  <Badge className={getDifficultyColor(recipe.difficulty)}>{recipe.difficulty}</Badge>
                 </div>
               </div>
 
-              {/* Star Rating */}
-              <div className="lg:ml-6">
+              {/* Recipe Stats */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="text-center p-3 bg-gray-50 rounded-lg">
+                  <Clock className="w-5 h-5 mx-auto mb-1 text-gray-600" />
+                  <div className="text-sm font-medium">Prep Time</div>
+                  <div className="text-lg font-bold">{recipe.prep_time_minutes}m</div>
+                </div>
+                <div className="text-center p-3 bg-gray-50 rounded-lg">
+                  <Clock className="w-5 h-5 mx-auto mb-1 text-gray-600" />
+                  <div className="text-sm font-medium">Cook Time</div>
+                  <div className="text-lg font-bold">{recipe.cook_time_minutes}m</div>
+                </div>
+                <div className="text-center p-3 bg-gray-50 rounded-lg">
+                  <Users className="w-5 h-5 mx-auto mb-1 text-gray-600" />
+                  <div className="text-sm font-medium">Servings</div>
+                  <div className="text-lg font-bold">{recipe.servings}</div>
+                </div>
+                <div className="text-center p-3 bg-gray-50 rounded-lg">
+                  <Star className="w-5 h-5 mx-auto mb-1 text-gray-600" />
+                  <div className="text-sm font-medium">Rating</div>
+                  <div className="text-lg font-bold">
+                    {recipe.rating_count > 0 ? recipe.average_rating.toFixed(1) : "—"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Rating Component */}
+              <div className="pt-4">
                 <StarRating
                   recipeId={recipe.id}
-                  currentRating={recipe.rating}
-                  reviewCount={recipe.review_count}
+                  currentRating={recipe.average_rating}
+                  totalReviews={recipe.rating_count}
+                  userRating={recipe.user_rating}
                   onRatingUpdate={handleRatingUpdate}
                 />
               </div>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Recipe Content */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Ingredients */}
+        <Card className="lg:col-span-1">
+          <CardHeader>
+            <CardTitle>Ingredients</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2">
+              {recipe.ingredients.map((ingredient, index) => (
+                <li key={index} className="flex items-start gap-2">
+                  <span className="w-2 h-2 bg-orange-500 rounded-full mt-2 flex-shrink-0" />
+                  <span>{ingredient}</span>
+                </li>
+              ))}
+            </ul>
           </CardContent>
         </Card>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Ingredients */}
-          <Card className="lg:col-span-1">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ChefHat className="w-5 h-5" />
-                Ingredients
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ul className="space-y-2">
-                {recipe.ingredients.map((ingredient, index) => (
-                  <li key={index} className="flex items-start gap-2">
-                    <span className="w-2 h-2 bg-orange-500 rounded-full mt-2 flex-shrink-0"></span>
-                    <span className="text-sm">{ingredient}</span>
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
-
-          {/* Instructions */}
-          <Card className="lg:col-span-2">
-            <CardHeader>
-              <CardTitle>Instructions</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ol className="space-y-4">
-                {recipe.instructions.map((instruction, index) => (
-                  <li key={index} className="flex gap-4">
-                    <div className="flex-shrink-0 w-8 h-8 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center text-sm font-semibold">
-                      {index + 1}
-                    </div>
-                    <p className="text-sm leading-relaxed pt-1">{instruction}</p>
-                  </li>
-                ))}
-              </ol>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Tags */}
-        {recipe.tags && recipe.tags.length > 0 && (
-          <Card className="mt-6">
-            <CardHeader>
-              <CardTitle>Tags</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap gap-2">
-                {recipe.tags.map((tag, index) => (
-                  <Badge key={index} variant="secondary">
-                    {tag}
-                  </Badge>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
+        {/* Instructions */}
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle>Instructions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ol className="space-y-4">
+              {recipe.instructions.map((instruction, index) => (
+                <li key={index} className="flex gap-4">
+                  <span className="flex-shrink-0 w-8 h-8 bg-orange-500 text-white rounded-full flex items-center justify-center font-medium">
+                    {index + 1}
+                  </span>
+                  <p className="pt-1">{instruction}</p>
+                </li>
+              ))}
+            </ol>
+          </CardContent>
+        </Card>
       </div>
     </div>
   )

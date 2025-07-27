@@ -23,19 +23,28 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Invalid authentication" }, { status: 401 })
     }
 
-    // Get user from database
+    console.log("🔍 [DELETE-RECIPE-API] Token payload:", {
+      userId: payload.userId,
+      email: payload.email,
+      role: payload.role,
+    })
+
+    // Get user from database using the correct user ID
     const users = await sql`
       SELECT id, username, email, role, status 
       FROM users 
       WHERE id = ${payload.userId}
     `
 
+    console.log("🔍 [DELETE-RECIPE-API] Database user query result:", users)
+
     if (users.length === 0) {
-      console.log("❌ [DELETE-RECIPE-API] User not found")
+      console.log("❌ [DELETE-RECIPE-API] User not found in database for ID:", payload.userId)
       return NextResponse.json({ success: false, error: "User not found" }, { status: 404 })
     }
 
     const user = users[0]
+    console.log("✅ [DELETE-RECIPE-API] Found user:", { id: user.id, username: user.username, role: user.role })
 
     // Check if user has admin/owner permissions
     if (!["admin", "owner", "moderator"].includes(user.role)) {
@@ -56,7 +65,7 @@ export async function DELETE(request: NextRequest) {
 
     // Get recipe details before deletion for logging
     const recipes = await sql`
-      SELECT id, title, author_username, moderation_status
+      SELECT id, title, author_id, moderation_status
       FROM recipes 
       WHERE id = ${recipeId}
     `
@@ -67,9 +76,20 @@ export async function DELETE(request: NextRequest) {
     }
 
     const recipe = recipes[0]
-    console.log("📋 [DELETE-RECIPE-API] Found recipe to delete:", recipe.title)
+    console.log("📋 [DELETE-RECIPE-API] Found recipe to delete:", { id: recipe.id, title: recipe.title })
 
-    // Delete the recipe (this will cascade to related tables like ratings)
+    // Get author information
+    const authors = await sql`
+      SELECT username FROM users WHERE id = ${recipe.author_id}
+    `
+    const authorUsername = authors[0]?.username || "Unknown"
+
+    // Delete related data first (ratings, comments, etc.)
+    console.log("🗑️ [DELETE-RECIPE-API] Deleting related ratings...")
+    await sql`DELETE FROM ratings WHERE recipe_id = ${recipeId}`
+
+    // Delete the recipe
+    console.log("🗑️ [DELETE-RECIPE-API] Deleting recipe...")
     const deleteResult = await sql`
       DELETE FROM recipes 
       WHERE id = ${recipeId}
@@ -77,8 +97,25 @@ export async function DELETE(request: NextRequest) {
 
     console.log("🗑️ [DELETE-RECIPE-API] Delete result:", deleteResult)
 
-    // Log the deletion action
+    // Log the deletion action (create table if it doesn't exist)
     try {
+      console.log("📝 [DELETE-RECIPE-API] Logging deletion action...")
+
+      // First, try to create the moderation_logs table if it doesn't exist
+      await sql`
+        CREATE TABLE IF NOT EXISTS moderation_logs (
+          id SERIAL PRIMARY KEY,
+          moderator_id INTEGER,
+          moderator_username VARCHAR(255),
+          action_type VARCHAR(50),
+          target_type VARCHAR(50),
+          target_id VARCHAR(255),
+          target_title TEXT,
+          reason TEXT,
+          created_at TIMESTAMP DEFAULT NOW()
+        )
+      `
+
       await sql`
         INSERT INTO moderation_logs (
           moderator_id, 
@@ -100,7 +137,7 @@ export async function DELETE(request: NextRequest) {
           NOW()
         )
       `
-      console.log("📝 [DELETE-RECIPE-API] Logged deletion action")
+      console.log("📝 [DELETE-RECIPE-API] Logged deletion action successfully")
     } catch (logError) {
       console.log("⚠️ [DELETE-RECIPE-API] Failed to log action:", logError)
       // Continue even if logging fails
@@ -114,7 +151,7 @@ export async function DELETE(request: NextRequest) {
       deletedRecipe: {
         id: recipe.id,
         title: recipe.title,
-        author: recipe.author_username,
+        author: authorUsername,
       },
     })
   } catch (error) {

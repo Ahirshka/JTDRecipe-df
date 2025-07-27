@@ -49,6 +49,7 @@ export function RecipeQuickActions({ recipe, onRecipeDeleted }: RecipeQuickActio
 
   const handleDeleteRecipe = () => {
     console.log("🗑️ [RECIPE-QUICK-ACTIONS] Opening delete dialog for recipe:", recipe.id)
+    console.log("🗑️ [RECIPE-QUICK-ACTIONS] Current user:", { id: user.id, role: user.role, username: user.username })
     setDeleteReason("")
     setMessage("")
     setDeleteDialogOpen(true)
@@ -60,6 +61,8 @@ export function RecipeQuickActions({ recipe, onRecipeDeleted }: RecipeQuickActio
     console.log("🔄 [RECIPE-QUICK-ACTIONS] Executing deletion:", {
       recipeId: recipe.id,
       reason: deleteReason,
+      userId: user.id,
+      userRole: user.role,
     })
 
     try {
