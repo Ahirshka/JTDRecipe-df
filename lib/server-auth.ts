@@ -4,7 +4,6 @@ import { verifyToken } from "@/lib/auth"
 import type { NextRequest } from "next/server"
 
 const sql = neon(process.env.DATABASE_URL!)
-const COOKIE_NAME = "auth_session"
 
 export interface User {
   id: string
@@ -12,6 +11,7 @@ export interface User {
   email: string
   role: string
   status: string
+  is_verified?: boolean
   created_at: string
 }
 
@@ -20,17 +20,31 @@ export async function getCurrentUser(): Promise<User | null> {
     console.log("🔄 [SERVER-AUTH] Getting current user from cookies")
 
     const cookieStore = await cookies()
-    const sessionToken = cookieStore.get(COOKIE_NAME)?.value
 
-    if (!sessionToken) {
-      console.log("❌ [SERVER-AUTH] No session token found in cookies")
+    // Try multiple cookie names that might be used
+    let token = cookieStore.get("auth-token")?.value
+    if (!token) {
+      token = cookieStore.get("auth_session")?.value
+    }
+    if (!token) {
+      token = cookieStore.get("session")?.value
+    }
+
+    if (!token) {
+      console.log("❌ [SERVER-AUTH] No auth token found in any cookie")
+      console.log(
+        "Available cookies:",
+        Object.fromEntries(
+          Array.from(cookieStore.getAll()).map((cookie) => [cookie.name, cookie.value.substring(0, 10) + "..."]),
+        ),
+      )
       return null
     }
 
-    console.log("✅ [SERVER-AUTH] Session token found:", sessionToken.substring(0, 10) + "...")
+    console.log("✅ [SERVER-AUTH] Auth token found:", token.substring(0, 10) + "...")
 
     // Verify the token
-    const payload = verifyToken(sessionToken)
+    const payload = verifyToken(token)
     if (!payload) {
       console.log("❌ [SERVER-AUTH] Token verification failed")
       return null
@@ -44,7 +58,7 @@ export async function getCurrentUser(): Promise<User | null> {
 
     // Get user from database
     const users = await sql`
-      SELECT id, username, email, role, status, created_at
+      SELECT id, username, email, role, status, is_verified, created_at
       FROM users 
       WHERE id = ${payload.userId}
     `
@@ -72,12 +86,26 @@ export async function getCurrentUser(): Promise<User | null> {
 export async function getCurrentUserFromRequest(request: NextRequest): Promise<User | null> {
   try {
     console.log("🔍 [SERVER-AUTH] Getting current user from request...")
+    console.log("🔍 [SERVER-AUTH] Request URL:", request.url)
+    console.log("🔍 [SERVER-AUTH] Request method:", request.method)
 
-    // Get auth token from cookies
-    const token = request.cookies.get("auth-token")?.value
+    // Try multiple cookie names that might be used
+    let token = request.cookies.get("auth-token")?.value
+    if (!token) {
+      token = request.cookies.get("auth_session")?.value
+    }
+    if (!token) {
+      token = request.cookies.get("session")?.value
+    }
+
+    // Log all available cookies for debugging
+    const allCookies = Object.fromEntries(
+      Array.from(request.cookies.entries()).map(([name, cookie]) => [name, cookie.value.substring(0, 10) + "..."]),
+    )
+    console.log("🔍 [SERVER-AUTH] Available cookies:", allCookies)
 
     if (!token) {
-      console.log("❌ [SERVER-AUTH] No auth token found in cookies")
+      console.log("❌ [SERVER-AUTH] No auth token found in request cookies")
       return null
     }
 
@@ -98,7 +126,7 @@ export async function getCurrentUserFromRequest(request: NextRequest): Promise<U
 
     // Get user from database
     const users = await sql`
-      SELECT id, username, email, role, status, created_at
+      SELECT id, username, email, role, status, is_verified, created_at
       FROM users 
       WHERE id = ${payload.userId}
     `
@@ -325,22 +353,13 @@ export async function requireVerified(request: NextRequest): Promise<User> {
   }
 }
 
-export function createSessionCookie(token: string): string {
-  const expires = new Date()
-  expires.setDate(expires.getDate() + 7) // 7 days
-
-  return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Expires=${expires.toUTCString()}`
-}
-
-export function clearSessionCookie(): string {
-  return `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Strict; Expires=Thu, 01 Jan 1970 00:00:00 GMT`
-}
-
 export async function setAuthCookie(token: string): Promise<void> {
   try {
     console.log("🔍 [SERVER-AUTH] Setting authentication cookie")
 
     const cookieStore = await cookies()
+
+    // Set the primary auth token cookie
     cookieStore.set("auth-token", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -361,8 +380,9 @@ export async function clearAuthCookie(): Promise<void> {
     console.log("🔍 [SERVER-AUTH] Clearing authentication cookie")
 
     const cookieStore = await cookies()
-    cookieStore.delete(COOKIE_NAME)
-    cookieStore.delete("auth-token") // Clear any legacy auth tokens
+    cookieStore.delete("auth-token")
+    cookieStore.delete("auth_session")
+    cookieStore.delete("session")
 
     console.log("✅ [SERVER-AUTH] Authentication cookies cleared successfully")
   } catch (error) {
@@ -375,15 +395,19 @@ export async function createSession(userId: string): Promise<string> {
   try {
     console.log("🔄 [SERVER-AUTH] Creating new session for user:", userId)
 
-    // Generate session token
-    const sessionToken = crypto.randomUUID()
+    // Generate session token using the auth library
+    const { generateToken } = await import("@/lib/auth")
+    const user = await sql`SELECT * FROM users WHERE id = ${userId}`
 
-    // Set expiration (7 days from now)
-    const expiresAt = new Date()
-    expiresAt.setDate(expiresAt.getDate() + 7)
+    if (user.length === 0) {
+      throw new Error("User not found")
+    }
 
-    // Store session in database (you'll need to implement this in your neon.ts)
-    // await createUserSession(userId, sessionToken, expiresAt)
+    const sessionToken = generateToken({
+      userId: user[0].id,
+      email: user[0].email,
+      role: user[0].role,
+    })
 
     console.log("✅ [SERVER-AUTH] Session created successfully")
     return sessionToken
@@ -396,10 +420,9 @@ export async function createSession(userId: string): Promise<string> {
 export async function destroySession(sessionToken: string): Promise<void> {
   try {
     console.log("🔄 [SERVER-AUTH] Destroying session")
-
-    // Remove session from database (you'll need to implement this in your neon.ts)
-    // await deleteUserSession(sessionToken)
-
+    // For JWT tokens, we just need to clear the cookie
+    // The token will expire naturally
+    await clearAuthCookie()
     console.log("✅ [SERVER-AUTH] Session destroyed successfully")
   } catch (error) {
     console.error("❌ [SERVER-AUTH] Error destroying session:", error)

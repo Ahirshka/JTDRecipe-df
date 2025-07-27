@@ -3,66 +3,99 @@ import { getCurrentUserFromRequest } from "@/lib/server-auth"
 import { verifyToken } from "@/lib/auth"
 
 export async function GET(request: NextRequest) {
-  console.log("🔍 [AUTH-DEBUG] Starting authentication debug...")
+  console.log("🔍 [AUTH-DEBUG] Starting authentication debug")
 
   try {
-    // Get cookies
-    const cookies = request.cookies.getAll()
-    const authToken = request.cookies.get("auth-token")?.value
-
-    console.log(
-      "🍪 [AUTH-DEBUG] Cookies:",
-      cookies.map((c) => ({ name: c.name, hasValue: !!c.value })),
+    // Get all cookies from the request
+    const allCookies = Object.fromEntries(
+      Array.from(request.cookies.entries()).map(([name, cookie]) => [name, cookie.value]),
     )
-    console.log("🔑 [AUTH-DEBUG] Auth token present:", !!authToken)
 
-    const debugInfo: any = {
+    console.log("🔍 [AUTH-DEBUG] All cookies:", Object.keys(allCookies))
+
+    // Try to find auth tokens
+    const authToken = request.cookies.get("auth-token")?.value
+    const authSession = request.cookies.get("auth_session")?.value
+    const session = request.cookies.get("session")?.value
+
+    const debugInfo = {
+      success: true,
       timestamp: new Date().toISOString(),
-      cookies: cookies.map((c) => ({ name: c.name, hasValue: !!c.value })),
-      authTokenPresent: !!authToken,
-      headers: Object.fromEntries(request.headers.entries()),
+      cookies: {
+        total: Object.keys(allCookies).length,
+        names: Object.keys(allCookies),
+        authToken: authToken ? `${authToken.substring(0, 10)}...` : null,
+        authSession: authSession ? `${authSession.substring(0, 10)}...` : null,
+        session: session ? `${session.substring(0, 10)}...` : null,
+      },
+      headers: {
+        userAgent: request.headers.get("user-agent"),
+        referer: request.headers.get("referer"),
+        origin: request.headers.get("origin"),
+        host: request.headers.get("host"),
+      },
+      tokenVerification: null,
+      userLookup: null,
+      serverAuthResult: null,
     }
 
-    // Test 1: Check if auth token exists
-    if (!authToken) {
-      debugInfo.error = "No auth token found in cookies"
-      debugInfo.success = false
-      return NextResponse.json(debugInfo)
+    // Test token verification if we have a token
+    const tokenToTest = authToken || authSession || session
+    if (tokenToTest) {
+      try {
+        const payload = verifyToken(tokenToTest)
+        debugInfo.tokenVerification = {
+          success: !!payload,
+          payload: payload
+            ? {
+                userId: payload.userId,
+                email: payload.email,
+                role: payload.role,
+                exp: payload.exp,
+                iat: payload.iat,
+              }
+            : null,
+        }
+      } catch (error) {
+        debugInfo.tokenVerification = {
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+        }
+      }
     }
 
-    // Test 2: Try to verify token manually
-    try {
-      const payload = verifyToken(authToken)
-      debugInfo.tokenPayload = payload
-      debugInfo.tokenValid = !!payload
-      console.log("🔓 [AUTH-DEBUG] Token payload:", payload)
-    } catch (tokenError) {
-      debugInfo.tokenError = tokenError.message
-      debugInfo.tokenValid = false
-      console.log("❌ [AUTH-DEBUG] Token verification failed:", tokenError)
-    }
-
-    // Test 3: Try getCurrentUserFromRequest
+    // Test server auth function
     try {
       const user = await getCurrentUserFromRequest(request)
-      debugInfo.currentUser = user
-      debugInfo.userFound = !!user
-      console.log("👤 [AUTH-DEBUG] Current user:", user)
-    } catch (userError) {
-      debugInfo.userError = userError.message
-      debugInfo.userFound = false
-      console.log("❌ [AUTH-DEBUG] Get current user failed:", userError)
+      debugInfo.serverAuthResult = {
+        success: !!user,
+        user: user
+          ? {
+              id: user.id,
+              username: user.username,
+              email: user.email,
+              role: user.role,
+              status: user.status,
+            }
+          : null,
+      }
+    } catch (error) {
+      debugInfo.serverAuthResult = {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      }
     }
 
-    debugInfo.success = true
+    console.log("✅ [AUTH-DEBUG] Debug info collected:", debugInfo)
+
     return NextResponse.json(debugInfo)
   } catch (error) {
-    console.error("❌ [AUTH-DEBUG] Debug failed:", error)
+    console.error("❌ [AUTH-DEBUG] Error during debug:", error)
     return NextResponse.json(
       {
         success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
+        error: "Debug failed",
+        details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )

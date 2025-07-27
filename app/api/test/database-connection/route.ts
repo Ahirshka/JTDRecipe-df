@@ -1,140 +1,112 @@
-import { type NextRequest, NextResponse } from "next/server"
+import { NextResponse } from "next/server"
 import { neon } from "@neondatabase/serverless"
 
 const sql = neon(process.env.DATABASE_URL!)
 
-export async function GET(request: NextRequest) {
-  console.log("🔍 [DB-CONNECTION-TEST] Starting database connection test...")
+export async function GET() {
+  console.log("🔍 [DB-TEST] Starting database connection test")
 
   try {
-    const testResults: any = {
+    const testResults = {
+      success: true,
       timestamp: new Date().toISOString(),
-      databaseUrl: !!process.env.DATABASE_URL,
-      tests: [],
+      environment: {
+        databaseUrl: process.env.DATABASE_URL ? "✅ Present" : "❌ Missing",
+        nodeEnv: process.env.NODE_ENV,
+      },
+      connection: null,
+      tables: null,
+      sampleData: null,
     }
 
-    // Test 1: Check if DATABASE_URL exists
-    if (!process.env.DATABASE_URL) {
-      testResults.tests.push({
-        name: "Environment Variable Check",
-        status: "error",
-        message: "DATABASE_URL environment variable not found",
-      })
-      testResults.success = false
-      return NextResponse.json(testResults, { status: 500 })
-    }
-
-    testResults.tests.push({
-      name: "Environment Variable Check",
-      status: "success",
-      message: "DATABASE_URL found",
-    })
-
-    // Test 2: Basic connection test
+    // Test 1: Basic connection
     try {
-      const result = await sql`SELECT 1 as test`
-      testResults.tests.push({
-        name: "Basic Connection",
-        status: "success",
-        message: "Database connection successful",
-        data: result,
-      })
-    } catch (connectionError) {
-      testResults.tests.push({
-        name: "Basic Connection",
-        status: "error",
-        message: `Connection failed: ${connectionError.message}`,
-        error: connectionError.message,
-      })
-      testResults.success = false
-      return NextResponse.json(testResults, { status: 500 })
-    }
-
-    // Test 3: Check if users table exists
-    try {
-      const usersCheck = await sql`
-        SELECT COUNT(*) as count 
-        FROM information_schema.tables 
-        WHERE table_name = 'users'
-      `
-      const usersExist = Number.parseInt(usersCheck[0].count) > 0
-      testResults.tests.push({
-        name: "Users Table Check",
-        status: usersExist ? "success" : "error",
-        message: usersExist ? "Users table exists" : "Users table not found",
-        data: { exists: usersExist },
-      })
-    } catch (tableError) {
-      testResults.tests.push({
-        name: "Users Table Check",
-        status: "error",
-        message: `Table check failed: ${tableError.message}`,
-        error: tableError.message,
-      })
-    }
-
-    // Test 4: Check if recipes table exists
-    try {
-      const recipesCheck = await sql`
-        SELECT COUNT(*) as count 
-        FROM information_schema.tables 
-        WHERE table_name = 'recipes'
-      `
-      const recipesExist = Number.parseInt(recipesCheck[0].count) > 0
-      testResults.tests.push({
-        name: "Recipes Table Check",
-        status: recipesExist ? "success" : "error",
-        message: recipesExist ? "Recipes table exists" : "Recipes table not found",
-        data: { exists: recipesExist },
-      })
-
-      // If recipes table exists, get count
-      if (recipesExist) {
-        const recipeCount = await sql`SELECT COUNT(*) as total FROM recipes`
-        testResults.tests.push({
-          name: "Recipe Count",
-          status: "info",
-          message: `Found ${recipeCount[0].total} recipes in database`,
-          data: { count: Number.parseInt(recipeCount[0].total) },
-        })
+      console.log("🔍 [DB-TEST] Testing basic connection...")
+      const result = await sql`SELECT NOW() as current_time, version() as db_version`
+      testResults.connection = {
+        success: true,
+        currentTime: result[0].current_time,
+        version: result[0].db_version,
       }
-    } catch (tableError) {
-      testResults.tests.push({
-        name: "Recipes Table Check",
-        status: "error",
-        message: `Table check failed: ${tableError.message}`,
-        error: tableError.message,
-      })
+      console.log("✅ [DB-TEST] Basic connection successful")
+    } catch (error) {
+      testResults.connection = {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      }
+      console.error("❌ [DB-TEST] Basic connection failed:", error)
     }
 
-    // Test 5: Check database permissions
+    // Test 2: Check tables exist
     try {
-      // Try to create a temporary table to test write permissions
-      await sql`CREATE TEMPORARY TABLE test_permissions (id INTEGER)`
-      await sql`DROP TABLE test_permissions`
-      testResults.tests.push({
-        name: "Database Permissions",
-        status: "success",
-        message: "Database has read/write permissions",
-      })
-    } catch (permError) {
-      testResults.tests.push({
-        name: "Database Permissions",
-        status: "warning",
-        message: `Permission test failed: ${permError.message}`,
-        error: permError.message,
-      })
+      console.log("🔍 [DB-TEST] Checking table existence...")
+      const tables = await sql`
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_type = 'BASE TABLE'
+        ORDER BY table_name
+      `
+
+      const tableNames = tables.map((t) => t.table_name)
+      const requiredTables = ["users", "recipes", "ratings", "comments"]
+      const missingTables = requiredTables.filter((table) => !tableNames.includes(table))
+
+      testResults.tables = {
+        success: missingTables.length === 0,
+        existing: tableNames,
+        required: requiredTables,
+        missing: missingTables,
+      }
+      console.log("✅ [DB-TEST] Table check completed")
+    } catch (error) {
+      testResults.tables = {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      }
+      console.error("❌ [DB-TEST] Table check failed:", error)
     }
 
-    testResults.success = true
+    // Test 3: Sample data queries
+    try {
+      console.log("🔍 [DB-TEST] Testing sample data queries...")
+
+      const userCount = await sql`SELECT COUNT(*) as count FROM users`
+      const recipeCount = await sql`SELECT COUNT(*) as count FROM recipes`
+
+      // Get a sample user if any exist
+      const sampleUsers = await sql`SELECT id, username, role FROM users LIMIT 3`
+      const sampleRecipes = await sql`SELECT id, title, author_username FROM recipes LIMIT 3`
+
+      testResults.sampleData = {
+        success: true,
+        counts: {
+          users: Number.parseInt(userCount[0].count),
+          recipes: Number.parseInt(recipeCount[0].count),
+        },
+        samples: {
+          users: sampleUsers,
+          recipes: sampleRecipes,
+        },
+      }
+      console.log("✅ [DB-TEST] Sample data queries successful")
+    } catch (error) {
+      testResults.sampleData = {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      }
+      console.error("❌ [DB-TEST] Sample data queries failed:", error)
+    }
+
+    console.log("✅ [DB-TEST] Database test completed:", testResults)
     return NextResponse.json(testResults)
   } catch (error) {
-    console.error("❌ [DB-CONNECTION-TEST] Test failed:", error)
+    console.error("❌ [DB-TEST] Database test failed:", error)
     return NextResponse.json(
       {
         success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
+        error: "Database test failed",
+        details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )
