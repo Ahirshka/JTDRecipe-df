@@ -25,6 +25,9 @@ interface AdminStats {
   totalRecipes: number
   pendingRecipes: number
   approvedRecipes: number
+  rejectedRecipes: number
+  totalComments: number
+  flaggedComments: number
   totalRatings: number
   averageRating: number
   recentUsers: number
@@ -39,6 +42,9 @@ export function AdminDashboard() {
     totalRecipes: 0,
     pendingRecipes: 0,
     approvedRecipes: 0,
+    rejectedRecipes: 0,
+    totalComments: 0,
+    flaggedComments: 0,
     totalRatings: 0,
     averageRating: 0,
     recentUsers: 0,
@@ -54,28 +60,51 @@ export function AdminDashboard() {
   useEffect(() => {
     if (isAdmin) {
       loadStats()
+    } else if (isAuthenticated && !isAdmin) {
+      setError("You don't have admin permissions")
+      setLoading(false)
     }
-  }, [isAdmin])
+  }, [isAdmin, isAuthenticated])
 
   const loadStats = async () => {
     try {
+      console.log("🔄 [ADMIN-DASHBOARD] Fetching admin stats...")
+
       const response = await fetch("/api/admin/stats", {
+        method: "GET",
         credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
       })
+
+      console.log("🔄 [ADMIN-DASHBOARD] Stats response status:", response.status)
 
       if (response.ok) {
         const data = await response.json()
-        if (data.success) {
+        console.log("🔄 [ADMIN-DASHBOARD] Stats response data:", data)
+
+        if (data.success && data.stats) {
           setStats(data.stats)
+          setError("")
+          console.log("✅ [ADMIN-DASHBOARD] Stats loaded successfully:", data.stats)
         } else {
-          setError(data.error || "Failed to load stats")
+          console.error("❌ [ADMIN-DASHBOARD] Stats API returned error:", data.error)
+          setError(data.error || data.message || "Failed to load stats")
         }
       } else {
-        setError("Failed to load admin statistics")
+        const errorText = await response.text()
+        console.error("❌ [ADMIN-DASHBOARD] Stats API failed:", response.status, errorText)
+
+        if (response.status === 401 || response.status === 403) {
+          setError("Authentication required. Please log in as an admin.")
+        } else {
+          setError(`Failed to load admin stats (${response.status})`)
+        }
       }
     } catch (error) {
-      console.error("Error loading admin stats:", error)
-      setError("Failed to load admin statistics")
+      console.error("❌ [ADMIN-DASHBOARD] Error fetching admin stats:", error)
+      setError("Network error loading admin stats")
     } finally {
       setLoading(false)
     }
@@ -87,6 +116,9 @@ export function AdminDashboard() {
         <Shield className="w-12 h-12 text-gray-400 mx-auto mb-4" />
         <h2 className="text-xl font-semibold mb-2">Authentication Required</h2>
         <p className="text-gray-600">Please log in to access the admin dashboard.</p>
+        <Button onClick={() => router.push("/login")} className="mt-4">
+          Go to Login
+        </Button>
       </div>
     )
   }
@@ -97,6 +129,9 @@ export function AdminDashboard() {
         <Shield className="w-12 h-12 text-red-400 mx-auto mb-4" />
         <h2 className="text-xl font-semibold mb-2">Access Denied</h2>
         <p className="text-gray-600">You don't have permission to access the admin dashboard.</p>
+        <Button onClick={() => router.push("/")} className="mt-4">
+          Go to Home
+        </Button>
       </div>
     )
   }
@@ -115,8 +150,29 @@ export function AdminDashboard() {
         </p>
       </div>
 
-      {/* Quick Stats */}
-      {loading ? (
+      {/* Error Display */}
+      {error && (
+        <Card className="border-red-200 bg-red-50">
+          <CardContent className="p-6">
+            <div className="flex items-center gap-2 text-red-600">
+              <AlertCircle className="w-5 h-5" />
+              <span className="font-medium">Error loading admin statistics</span>
+            </div>
+            <p className="text-red-600 mt-2">{error}</p>
+            <Button
+              onClick={loadStats}
+              variant="outline"
+              size="sm"
+              className="mt-4 border-red-200 text-red-600 hover:bg-red-100 bg-transparent"
+            >
+              Retry Loading Stats
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Loading State */}
+      {loading && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {[...Array(8)].map((_, i) => (
             <Card key={i}>
@@ -126,14 +182,10 @@ export function AdminDashboard() {
             </Card>
           ))}
         </div>
-      ) : error ? (
-        <Card>
-          <CardContent className="p-6 text-center">
-            <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-            <p className="text-red-600">{error}</p>
-          </CardContent>
-        </Card>
-      ) : (
+      )}
+
+      {/* Stats Overview */}
+      {!loading && !error && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card>
             <CardContent className="p-4">
@@ -189,7 +241,7 @@ export function AdminDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-600">Average Rating</p>
-                  <p className="text-2xl font-bold">{stats.averageRating.toFixed(1)}</p>
+                  <p className="text-2xl font-bold">{stats.averageRating}</p>
                 </div>
                 <Star className="w-8 h-8 text-yellow-500" />
               </div>
@@ -200,8 +252,8 @@ export function AdminDashboard() {
       )}
 
       {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {/* Recipe Management */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {/* Recipe Moderation */}
         <Card
           className="hover:shadow-md transition-shadow cursor-pointer"
           onClick={() => router.push("/admin/recipes")}
@@ -285,7 +337,9 @@ export function AdminDashboard() {
           <CardContent>
             <p className="text-sm text-gray-600 mb-3">Review flagged comments and manage discussions</p>
             <div className="flex items-center justify-between">
-              <Badge variant="secondary">Active</Badge>
+              <Badge variant={stats.flaggedComments > 0 ? "destructive" : "secondary"}>
+                {stats.flaggedComments} flagged
+              </Badge>
               <Button variant="outline" size="sm">
                 Review →
               </Button>
@@ -342,7 +396,7 @@ export function AdminDashboard() {
         )}
       </div>
 
-      {/* Recent Activity */}
+      {/* Quick Actions Summary */}
       <Card>
         <CardHeader>
           <CardTitle>Quick Actions</CardTitle>
@@ -383,6 +437,43 @@ export function AdminDashboard() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Debug Information (only show if there's an error) */}
+      {error && (
+        <Card className="mt-6 border-gray-200">
+          <CardHeader>
+            <CardTitle className="text-gray-600">Debug Information</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2 text-sm">
+              <div>
+                <strong>User:</strong> {user?.username} ({user?.role})
+              </div>
+              <div>
+                <strong>Authenticated:</strong> {isAuthenticated ? "Yes" : "No"}
+              </div>
+              <div>
+                <strong>Is Admin:</strong> {isAdmin ? "Yes" : "No"}
+              </div>
+              <div>
+                <strong>Error:</strong> {error}
+              </div>
+            </div>
+            <Button
+              onClick={() => {
+                console.log("Current user:", user)
+                console.log("Is authenticated:", isAuthenticated)
+                console.log("Is admin:", isAdmin)
+                loadStats()
+              }}
+              className="mt-4"
+              variant="outline"
+            >
+              Debug & Retry
+            </Button>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

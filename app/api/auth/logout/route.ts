@@ -1,43 +1,26 @@
 import { NextResponse } from "next/server"
-import { logoutUser } from "@/lib/auth-system"
+import { cookies } from "next/headers"
 
 export async function POST() {
-  console.log("🚪 [LOGOUT-API] Logout request received")
+  console.log("🔄 [LOGOUT-API] Logout request received")
 
   try {
-    const result = await logoutUser()
+    // Clear authentication cookie
+    const cookieStore = await cookies()
+    cookieStore.delete("auth-token")
 
-    console.log("🔍 [LOGOUT-API] Logout result:", {
-      success: result.success,
-      message: result.message,
+    console.log("✅ [LOGOUT-API] Logout successful")
+
+    return NextResponse.json({
+      success: true,
+      message: "Logout successful",
     })
-
-    if (result.success) {
-      console.log("✅ [LOGOUT-API] Logout successful")
-
-      return NextResponse.json({
-        success: true,
-        message: result.message,
-      })
-    } else {
-      console.log("❌ [LOGOUT-API] Logout failed:", result.message)
-
-      return NextResponse.json(
-        {
-          success: false,
-          message: result.message,
-        },
-        { status: 500 },
-      )
-    }
   } catch (error) {
     console.error("❌ [LOGOUT-API] Logout error:", error)
-
     return NextResponse.json(
       {
         success: false,
-        message: "Internal server error",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "Internal server error",
       },
       { status: 500 },
     )

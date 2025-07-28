@@ -1,10 +1,10 @@
 "use client"
 
 import type React from "react"
-import { createContext, useContext, useEffect, useState } from "react"
+import { createContext, useContext, useState, useEffect } from "react"
 
 interface User {
-  id: number
+  id: string
   username: string
   email: string
   role: string
@@ -14,26 +14,26 @@ interface User {
 
 interface AuthContextType {
   user: User | null
-  loading: boolean
-  login: (email: string, password: string) => Promise<{ success: boolean; message: string }>
+  isAuthenticated: boolean
+  isLoading: boolean
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>
   logout: () => Promise<void>
   checkAuth: () => Promise<void>
-  isAuthenticated: boolean
-  isAdmin: boolean
-  isOwner: boolean
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [isLoading, setIsLoading] = useState(true)
+
+  const isAuthenticated = !!user
 
   // Check authentication status
   const checkAuth = async () => {
-    console.log("🔄 [AUTH-CONTEXT] Checking authentication status")
-
     try {
+      console.log("🔍 [AUTH-CONTEXT] Checking authentication status...")
+
       const response = await fetch("/api/auth/me", {
         method: "GET",
         credentials: "include",
@@ -42,70 +42,63 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         },
       })
 
-      console.log("🔍 [AUTH-CONTEXT] Auth check response:", response.status)
-
       if (response.ok) {
         const data = await response.json()
-        console.log("✅ [AUTH-CONTEXT] Auth check successful:", data.user?.username)
-
         if (data.success && data.user) {
+          console.log("✅ [AUTH-CONTEXT] User authenticated:", data.user.username)
           setUser(data.user)
         } else {
+          console.log("❌ [AUTH-CONTEXT] No valid session found")
           setUser(null)
         }
       } else {
-        console.log("❌ [AUTH-CONTEXT] Auth check failed:", response.status)
+        console.log("❌ [AUTH-CONTEXT] Authentication check failed:", response.status)
         setUser(null)
       }
     } catch (error) {
-      console.error("❌ [AUTH-CONTEXT] Auth check error:", error)
+      console.error("❌ [AUTH-CONTEXT] Error checking auth:", error)
       setUser(null)
     } finally {
-      setLoading(false)
+      setIsLoading(false)
     }
   }
 
   // Login function
-  const login = async (email: string, password: string) => {
-    console.log("🔐 [AUTH-CONTEXT] Attempting login for:", email)
-
+  const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
+      console.log("🔐 [AUTH-CONTEXT] Attempting login for:", email)
+
       const response = await fetch("/api/auth/login", {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
-        credentials: "include",
         body: JSON.stringify({ email, password }),
       })
 
       const data = await response.json()
-      console.log("🔍 [AUTH-CONTEXT] Login response:", {
-        status: response.status,
-        success: data.success,
-        message: data.message,
-      })
 
-      if (data.success && data.user) {
+      if (response.ok && data.success) {
         console.log("✅ [AUTH-CONTEXT] Login successful:", data.user.username)
         setUser(data.user)
-        return { success: true, message: data.message }
+        return { success: true }
       } else {
-        console.log("❌ [AUTH-CONTEXT] Login failed:", data.message)
-        return { success: false, message: data.message || "Login failed" }
+        console.log("❌ [AUTH-CONTEXT] Login failed:", data.error)
+        return { success: false, error: data.error || "Login failed" }
       }
     } catch (error) {
       console.error("❌ [AUTH-CONTEXT] Login error:", error)
-      return { success: false, message: "Network error occurred" }
+      return { success: false, error: "Network error during login" }
     }
   }
 
   // Logout function
   const logout = async () => {
-    console.log("🚪 [AUTH-CONTEXT] Logging out user")
-
     try {
-      const response = await fetch("/api/auth/logout", {
+      console.log("🔄 [AUTH-CONTEXT] Logging out...")
+
+      await fetch("/api/auth/logout", {
         method: "POST",
         credentials: "include",
         headers: {
@@ -113,56 +106,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         },
       })
 
-      const data = await response.json()
-      console.log("🔍 [AUTH-CONTEXT] Logout response:", {
-        status: response.status,
-        success: data.success,
-      })
-
-      if (data.success) {
-        console.log("✅ [AUTH-CONTEXT] Logout successful")
-        setUser(null)
-      } else {
-        console.log("❌ [AUTH-CONTEXT] Logout failed:", data.message)
-      }
+      console.log("✅ [AUTH-CONTEXT] Logout successful")
+      setUser(null)
     } catch (error) {
       console.error("❌ [AUTH-CONTEXT] Logout error:", error)
+      // Still clear user state even if logout request fails
+      setUser(null)
     }
-
-    // Always clear user state on logout attempt
-    setUser(null)
   }
 
   // Check auth on mount
   useEffect(() => {
-    console.log("🔄 [AUTH-CONTEXT] AuthProvider mounted, checking auth")
     checkAuth()
   }, [])
 
-  // Computed values
-  const isAuthenticated = !!user
-  const isAdmin = user?.role === "admin" || user?.role === "owner"
-  const isOwner = user?.role === "owner"
-
-  console.log("🔍 [AUTH-CONTEXT] Current auth state:", {
-    hasUser: !!user,
-    username: user?.username,
-    role: user?.role,
-    isAuthenticated,
-    isAdmin,
-    isOwner,
-    loading,
-  })
-
   const value: AuthContextType = {
     user,
-    loading,
+    isAuthenticated,
+    isLoading,
     login,
     logout,
     checkAuth,
-    isAuthenticated,
-    isAdmin,
-    isOwner,
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

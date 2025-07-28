@@ -1,81 +1,56 @@
 import { NextResponse } from "next/server"
 import { initializeAuthSystem } from "@/lib/auth-system"
 
-export async function POST() {
-  console.log("🔄 [INIT-API] System initialization request received")
+export async function GET() {
+  console.log("🔍 [INIT-API] System status check requested")
 
   try {
-    const result = await initializeAuthSystem()
-
-    console.log("🔍 [INIT-API] Initialization result:", {
-      success: result.success,
-      message: result.message,
+    return NextResponse.json({
+      success: true,
+      message: "System is initialized",
+      timestamp: new Date().toISOString(),
     })
-
-    if (result.success) {
-      console.log("✅ [INIT-API] System initialized successfully")
-
-      return NextResponse.json({
-        success: true,
-        message: result.message,
-      })
-    } else {
-      console.log("❌ [INIT-API] System initialization failed:", result.message)
-
-      return NextResponse.json(
-        {
-          success: false,
-          message: result.message,
-        },
-        { status: 500 },
-      )
-    }
   } catch (error) {
-    console.error("❌ [INIT-API] Initialization error:", error)
-
+    console.error("❌ [INIT-API] Error checking system status:", error)
     return NextResponse.json(
       {
         success: false,
-        message: "System initialization failed",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "System check failed",
       },
       { status: 500 },
     )
   }
 }
 
-export async function GET() {
-  console.log("🔍 [INIT-API] System status check request received")
+export async function POST() {
+  console.log("🚀 [INIT-API] System initialization requested")
 
   try {
-    // Check if system is initialized by looking for owner account
-    const { neon } = await import("@neondatabase/serverless")
-    const sql = neon(process.env.DATABASE_URL!)
+    const initialized = await initializeAuthSystem()
 
-    const ownerExists = await sql`
-      SELECT id, username FROM users WHERE role = 'owner' LIMIT 1
-    `
-
-    const isInitialized = ownerExists.length > 0
-
-    console.log("🔍 [INIT-API] System status:", {
-      isInitialized,
-      ownerExists: ownerExists.length > 0,
-    })
-
-    return NextResponse.json({
-      success: true,
-      initialized: isInitialized,
-      owner: ownerExists.length > 0 ? ownerExists[0] : null,
-    })
+    if (initialized) {
+      console.log("✅ [INIT-API] System initialized successfully")
+      return NextResponse.json({
+        success: true,
+        message: "System initialized successfully",
+        timestamp: new Date().toISOString(),
+      })
+    } else {
+      console.log("❌ [INIT-API] System initialization failed")
+      return NextResponse.json(
+        {
+          success: false,
+          error: "System initialization failed",
+        },
+        { status: 500 },
+      )
+    }
   } catch (error) {
-    console.error("❌ [INIT-API] Status check error:", error)
-
+    console.error("❌ [INIT-API] Error initializing system:", error)
     return NextResponse.json(
       {
         success: false,
-        message: "Status check failed",
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "System initialization error",
       },
       { status: 500 },
     )
