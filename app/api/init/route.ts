@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server"
 import { initializeAuthSystem } from "@/lib/auth-system"
 
+export const dynamic = "force-dynamic"
+
 export async function GET() {
   console.log("🔍 [INIT-API] System status check requested")
 
   try {
     return NextResponse.json({
       success: true,
-      message: "System is initialized",
+      message: "System is running",
       timestamp: new Date().toISOString(),
     })
   } catch (error) {
@@ -15,7 +17,7 @@ export async function GET() {
     return NextResponse.json(
       {
         success: false,
-        error: "System check failed",
+        error: "System status check failed",
       },
       { status: 500 },
     )
@@ -26,9 +28,10 @@ export async function POST() {
   console.log("🚀 [INIT-API] System initialization requested")
 
   try {
-    const initialized = await initializeAuthSystem()
+    // Initialize authentication system
+    const success = await initializeAuthSystem()
 
-    if (initialized) {
+    if (success) {
       console.log("✅ [INIT-API] System initialized successfully")
       return NextResponse.json({
         success: true,
@@ -50,7 +53,8 @@ export async function POST() {
     return NextResponse.json(
       {
         success: false,
-        error: "System initialization error",
+        error: "System initialization failed",
+        details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )

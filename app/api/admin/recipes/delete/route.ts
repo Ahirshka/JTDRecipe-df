@@ -1,6 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { sql } from "@/lib/neon"
+import { neon } from "@neondatabase/serverless"
 import { getCurrentUserFromRequest } from "@/lib/server-auth"
+
+const sql = neon(process.env.DATABASE_URL!)
 
 // Force dynamic rendering
 export const dynamic = "force-dynamic"
@@ -70,32 +72,52 @@ export async function DELETE(request: NextRequest) {
       author: recipe.author_username,
     })
 
-    // Step 5: Delete related ratings
-    console.log("🔍 [DELETE-RECIPE] Step 5: Deleting related ratings...")
+    // Step 5: Create audit log table if it doesn't exist
+    console.log("🔍 [DELETE-RECIPE] Step 5: Ensuring audit log table exists...")
+    try {
+      await sql`
+        CREATE TABLE IF NOT EXISTS recipe_deletion_audit (
+          id SERIAL PRIMARY KEY,
+          recipe_id VARCHAR(50) NOT NULL,
+          recipe_title VARCHAR(255) NOT NULL,
+          deleted_by_user_id VARCHAR(50) NOT NULL,
+          deleted_by_username VARCHAR(50) NOT NULL,
+          deletion_reason TEXT,
+          recipe_data JSONB,
+          deleted_at TIMESTAMP DEFAULT NOW()
+        );
+      `
+      console.log("✅ [DELETE-RECIPE] Audit log table ensured")
+    } catch (error) {
+      console.log("⚠️ [DELETE-RECIPE] Could not create audit log table:", error)
+    }
+
+    // Step 6: Delete related ratings
+    console.log("🔍 [DELETE-RECIPE] Step 6: Deleting related ratings...")
     try {
       const ratingsResult = await sql`
         DELETE FROM ratings
         WHERE recipe_id = ${recipeId}
       `
-      console.log("✅ [DELETE-RECIPE] Ratings deleted")
+      console.log("✅ [DELETE-RECIPE] Ratings deleted:", ratingsResult)
     } catch (error) {
-      console.log("⚠️ [DELETE-RECIPE] Ratings table might not exist or no ratings to delete")
+      console.log("⚠️ [DELETE-RECIPE] Ratings table might not exist or no ratings to delete:", error)
     }
 
-    // Step 6: Delete related comments
-    console.log("🔍 [DELETE-RECIPE] Step 6: Deleting related comments...")
+    // Step 7: Delete related comments
+    console.log("🔍 [DELETE-RECIPE] Step 7: Deleting related comments...")
     try {
       const commentsResult = await sql`
         DELETE FROM comments
         WHERE recipe_id = ${recipeId}
       `
-      console.log("✅ [DELETE-RECIPE] Comments deleted")
+      console.log("✅ [DELETE-RECIPE] Comments deleted:", commentsResult)
     } catch (error) {
-      console.log("⚠️ [DELETE-RECIPE] Comments table might not exist or no comments to delete")
+      console.log("⚠️ [DELETE-RECIPE] Comments table might not exist or no comments to delete:", error)
     }
 
-    // Step 7: Create audit log entry
-    console.log("🔍 [DELETE-RECIPE] Step 7: Creating audit log entry...")
+    // Step 8: Create audit log entry
+    console.log("🔍 [DELETE-RECIPE] Step 8: Creating audit log entry...")
     try {
       await sql`
         INSERT INTO recipe_deletion_audit (
@@ -119,17 +141,17 @@ export async function DELETE(request: NextRequest) {
       console.log("⚠️ [DELETE-RECIPE] Could not create audit log:", error)
     }
 
-    // Step 8: Delete the recipe
-    console.log("🔍 [DELETE-RECIPE] Step 8: Deleting recipe...")
+    // Step 9: Delete the recipe
+    console.log("🔍 [DELETE-RECIPE] Step 9: Deleting recipe...")
     const deleteResult = await sql`
       DELETE FROM recipes
       WHERE id = ${recipeId}
     `
 
-    console.log("✅ [DELETE-RECIPE] Recipe deleted successfully")
+    console.log("✅ [DELETE-RECIPE] Recipe deleted successfully:", deleteResult)
 
-    // Step 9: Verify deletion
-    console.log("🔍 [DELETE-RECIPE] Step 9: Verifying deletion...")
+    // Step 10: Verify deletion
+    console.log("🔍 [DELETE-RECIPE] Step 10: Verifying deletion...")
     const verifyResult = await sql`
       SELECT id FROM recipes WHERE id = ${recipeId}
     `
@@ -141,8 +163,8 @@ export async function DELETE(request: NextRequest) {
 
     console.log("✅ [DELETE-RECIPE] Deletion verified successfully")
 
-    // Step 10: Return success response
-    console.log("🔍 [DELETE-RECIPE] Step 10: Returning success response...")
+    // Step 11: Return success response
+    console.log("🔍 [DELETE-RECIPE] Step 11: Returning success response...")
     const response = {
       success: true,
       message: "Recipe deleted successfully",

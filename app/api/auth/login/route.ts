@@ -2,12 +2,19 @@ import { type NextRequest, NextResponse } from "next/server"
 import { loginUser } from "@/lib/auth-system"
 import { cookies } from "next/headers"
 
+export const dynamic = "force-dynamic"
+
 export async function POST(request: NextRequest) {
   console.log("🔐 [LOGIN-API] Login request received")
 
   try {
-    const { email, password } = await request.json()
+    // Parse request body
+    const body = await request.json()
+    const { email, password } = body
 
+    console.log("📝 [LOGIN-API] Login attempt for email:", email)
+
+    // Validate input
     if (!email || !password) {
       console.log("❌ [LOGIN-API] Missing email or password")
       return NextResponse.json(
@@ -19,13 +26,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log("🔍 [LOGIN-API] Attempting login for:", email)
-
     // Attempt login
-    const result = await loginUser(email, password)
+    const loginResult = await loginUser(email, password)
 
-    if (!result) {
-      console.log("❌ [LOGIN-API] Login failed for:", email)
+    if (!loginResult) {
+      console.log("❌ [LOGIN-API] Login failed - invalid credentials")
       return NextResponse.json(
         {
           success: false,
@@ -35,9 +40,13 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { user, token } = result
+    const { user, token } = loginResult
 
-    console.log("✅ [LOGIN-API] Login successful for:", user.username)
+    console.log("✅ [LOGIN-API] Login successful for user:", {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+    })
 
     // Set authentication cookie
     const cookieStore = await cookies()
@@ -49,27 +58,32 @@ export async function POST(request: NextRequest) {
       path: "/",
     })
 
-    // Return user data (without password hash)
-    const { password_hash, ...userWithoutPassword } = user
+    console.log("🍪 [LOGIN-API] Authentication cookie set")
+
+    // Return success response (without password_hash)
+    const userResponse = {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      is_verified: user.is_verified,
+      created_at: user.created_at,
+      updated_at: user.updated_at,
+    }
 
     return NextResponse.json({
       success: true,
-      user: {
-        id: userWithoutPassword.id.toString(),
-        username: userWithoutPassword.username,
-        email: userWithoutPassword.email,
-        role: userWithoutPassword.role,
-        status: userWithoutPassword.status,
-        is_verified: userWithoutPassword.is_verified,
-      },
       message: "Login successful",
+      user: userResponse,
     })
   } catch (error) {
     console.error("❌ [LOGIN-API] Login error:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Internal server error",
+        error: "Login failed",
+        details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )

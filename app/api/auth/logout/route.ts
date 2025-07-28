@@ -1,26 +1,35 @@
 import { NextResponse } from "next/server"
-import { cookies } from "next/headers"
+import { deleteSession } from "@/lib/auth-system"
+
+export const dynamic = "force-dynamic"
 
 export async function POST() {
-  console.log("🔄 [LOGOUT-API] Logout request received")
+  console.log("🚪 [LOGOUT-API] Logout request received")
 
   try {
-    // Clear authentication cookie
-    const cookieStore = await cookies()
-    cookieStore.delete("auth-token")
+    // Delete session (clears cookie)
+    const success = await deleteSession()
 
-    console.log("✅ [LOGOUT-API] Logout successful")
-
-    return NextResponse.json({
-      success: true,
-      message: "Logout successful",
-    })
+    if (success) {
+      console.log("✅ [LOGOUT-API] Logout successful")
+      return NextResponse.json({
+        success: true,
+        message: "Logout successful",
+      })
+    } else {
+      console.log("⚠️ [LOGOUT-API] Logout had issues but proceeding")
+      return NextResponse.json({
+        success: true,
+        message: "Logout completed",
+      })
+    }
   } catch (error) {
     console.error("❌ [LOGOUT-API] Logout error:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Internal server error",
+        error: "Logout failed",
+        details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     )
