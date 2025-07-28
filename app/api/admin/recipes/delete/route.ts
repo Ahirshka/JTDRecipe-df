@@ -6,20 +6,19 @@ const sql = neon(process.env.DATABASE_URL!)
 export const dynamic = "force-dynamic"
 
 export async function DELETE(request: NextRequest) {
-  console.log("🗑️ [DELETE-RECIPE] Starting recipe deletion request")
+  console.log("🗑️ [ADMIN-DELETE-RECIPE] Recipe deletion request received")
 
   try {
-    // Get session token from cookies
+    // Check authentication
     const sessionToken = request.cookies.get("session_token")?.value
-    console.log("🔍 [DELETE-RECIPE] Session token present:", !!sessionToken)
+    console.log("🔍 [ADMIN-DELETE-RECIPE] Session token present:", !!sessionToken)
 
     if (!sessionToken) {
-      console.log("❌ [DELETE-RECIPE] No session token found")
+      console.log("❌ [ADMIN-DELETE-RECIPE] No session token found")
       return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
     }
 
     // Verify session and get user
-    console.log("🔍 [DELETE-RECIPE] Verifying session...")
     const userResult = await sql`
       SELECT u.id, u.username, u.email, u.role, u.status
       FROM users u
@@ -30,12 +29,12 @@ export async function DELETE(request: NextRequest) {
     `
 
     if (userResult.length === 0) {
-      console.log("❌ [DELETE-RECIPE] Invalid or expired session")
-      return NextResponse.json({ success: false, error: "Invalid session" }, { status: 401 })
+      console.log("❌ [ADMIN-DELETE-RECIPE] Invalid or expired session")
+      return NextResponse.json({ success: false, error: "Invalid or expired session" }, { status: 401 })
     }
 
     const user = userResult[0]
-    console.log("✅ [DELETE-RECIPE] User authenticated:", {
+    console.log("✅ [ADMIN-DELETE-RECIPE] User found:", {
       id: user.id,
       username: user.username,
       role: user.role,
@@ -44,129 +43,154 @@ export async function DELETE(request: NextRequest) {
     // Check if user has admin privileges
     const adminRoles = ["admin", "owner", "moderator"]
     if (!adminRoles.includes(user.role)) {
-      console.log("❌ [DELETE-RECIPE] User does not have admin privileges:", user.role)
+      console.log("❌ [ADMIN-DELETE-RECIPE] User does not have admin privileges:", user.role)
       return NextResponse.json({ success: false, error: "Admin access required" }, { status: 403 })
     }
 
-    console.log("✅ [DELETE-RECIPE] Admin access verified")
+    console.log("✅ [ADMIN-DELETE-RECIPE] Admin access verified")
 
-    // Parse request body
+    // Get recipe ID from request body
     const body = await request.json()
-    const { recipeId } = body
+    const { recipeId, reason } = body
 
-    console.log("📝 [DELETE-RECIPE] Deletion request:", { recipeId })
+    console.log("🔍 [ADMIN-DELETE-RECIPE] Deletion request:", {
+      recipeId,
+      reason: reason || "No reason provided",
+      deletedBy: user.username,
+    })
 
     if (!recipeId) {
+      console.log("❌ [ADMIN-DELETE-RECIPE] No recipe ID provided")
       return NextResponse.json({ success: false, error: "Recipe ID is required" }, { status: 400 })
     }
 
+    // Ensure audit table exists
+    await sql`
+      CREATE TABLE IF NOT EXISTS recipe_deletions (
+        id SERIAL PRIMARY KEY,
+        recipe_id INTEGER NOT NULL,
+        recipe_title VARCHAR(255),
+        recipe_author_id INTEGER,
+        deleted_by INTEGER REFERENCES users(id),
+        deletion_reason TEXT,
+        deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `
+
     // Get recipe details before deletion for audit log
-    console.log("🔍 [DELETE-RECIPE] Getting recipe details for audit...")
-    const recipeResult = await sql`
-      SELECT id, title, author_id, author_username, moderation_status, created_at
+    console.log("📋 [ADMIN-DELETE-RECIPE] Getting recipe details for audit...")
+    const recipeDetails = await sql`
+      SELECT id, title, author_id, status
       FROM recipes
       WHERE id = ${recipeId}
     `
 
-    if (recipeResult.length === 0) {
-      console.log("❌ [DELETE-RECIPE] Recipe not found:", recipeId)
+    if (recipeDetails.length === 0) {
+      console.log("❌ [ADMIN-DELETE-RECIPE] Recipe not found:", recipeId)
       return NextResponse.json({ success: false, error: "Recipe not found" }, { status: 404 })
     }
 
-    const recipe = recipeResult[0]
-    console.log("✅ [DELETE-RECIPE] Recipe found:", {
+    const recipe = recipeDetails[0]
+    console.log("✅ [ADMIN-DELETE-RECIPE] Recipe found for deletion:", {
       id: recipe.id,
       title: recipe.title,
-      author: recipe.author_username,
-      status: recipe.moderation_status,
+      status: recipe.status,
+      authorId: recipe.author_id,
     })
 
-    // Create audit log table if it doesn't exist
-    console.log("🔧 [DELETE-RECIPE] Ensuring audit log table exists...")
-    await sql`
-      CREATE TABLE IF NOT EXISTS recipe_deletion_audit (
-        id SERIAL PRIMARY KEY,
-        recipe_id VARCHAR(50) NOT NULL,
-        recipe_title VARCHAR(255) NOT NULL,
-        recipe_author_id INTEGER NOT NULL,
-        recipe_author_username VARCHAR(50) NOT NULL,
-        deleted_by_id INTEGER NOT NULL,
-        deleted_by_username VARCHAR(50) NOT NULL,
-        deletion_reason TEXT DEFAULT 'Admin deletion',
-        deleted_at TIMESTAMP DEFAULT NOW()
-      )
-    `
+    // Start deletion process
+    console.log("🗑️ [ADMIN-DELETE-RECIPE] Starting deletion process...")
 
-    // Start transaction for deletion
-    console.log("🔄 [DELETE-RECIPE] Starting deletion transaction...")
-
-    // Delete related ratings first
-    console.log("🗑️ [DELETE-RECIPE] Deleting related ratings...")
-    const ratingsDeleted = await sql`
-      DELETE FROM ratings WHERE recipe_id = ${recipeId}
+    // Delete related ratings
+    console.log("🗑️ [ADMIN-DELETE-RECIPE] Deleting related ratings...")
+    const deletedRatings = await sql`
+      DELETE FROM ratings
+      WHERE recipe_id = ${recipeId}
     `
-    console.log(`✅ [DELETE-RECIPE] Deleted ${ratingsDeleted.length} ratings`)
+    console.log("✅ [ADMIN-DELETE-RECIPE] Deleted ratings:", deletedRatings.length)
 
     // Delete related comments
-    console.log("🗑️ [DELETE-RECIPE] Deleting related comments...")
-    const commentsDeleted = await sql`
-      DELETE FROM comments WHERE recipe_id = ${recipeId}
+    console.log("🗑️ [ADMIN-DELETE-RECIPE] Deleting related comments...")
+    const deletedComments = await sql`
+      DELETE FROM comments
+      WHERE recipe_id = ${recipeId}
     `
-    console.log(`✅ [DELETE-RECIPE] Deleted ${commentsDeleted.length} comments`)
+    console.log("✅ [ADMIN-DELETE-RECIPE] Deleted comments:", deletedComments.length)
 
     // Create audit log entry
-    console.log("📝 [DELETE-RECIPE] Creating audit log entry...")
+    console.log("📝 [ADMIN-DELETE-RECIPE] Creating audit log entry...")
     await sql`
-      INSERT INTO recipe_deletion_audit (
-        recipe_id, recipe_title, recipe_author_id, recipe_author_username,
-        deleted_by_id, deleted_by_username, deletion_reason, deleted_at
-      )
-      VALUES (
-        ${recipe.id}, ${recipe.title}, ${recipe.author_id}, ${recipe.author_username},
-        ${user.id}, ${user.username}, 'Admin deletion via management panel', NOW()
+      INSERT INTO recipe_deletions (
+        recipe_id,
+        recipe_title,
+        recipe_author_id,
+        deleted_by,
+        deletion_reason
+      ) VALUES (
+        ${recipe.id},
+        ${recipe.title},
+        ${recipe.author_id},
+        ${user.id},
+        ${reason || "No reason provided"}
       )
     `
-    console.log("✅ [DELETE-RECIPE] Audit log entry created")
+    console.log("✅ [ADMIN-DELETE-RECIPE] Audit log entry created")
 
     // Delete the recipe
-    console.log("🗑️ [DELETE-RECIPE] Deleting recipe...")
-    const deletionResult = await sql`
-      DELETE FROM recipes WHERE id = ${recipeId}
+    console.log("🗑️ [ADMIN-DELETE-RECIPE] Deleting recipe...")
+    const deletedRecipe = await sql`
+      DELETE FROM recipes
+      WHERE id = ${recipeId}
     `
 
-    if (deletionResult.length === 0) {
-      console.log("❌ [DELETE-RECIPE] Recipe deletion failed - no rows affected")
-      return NextResponse.json({ success: false, error: "Recipe deletion failed" }, { status: 500 })
+    if (deletedRecipe.length === 0) {
+      console.log("❌ [ADMIN-DELETE-RECIPE] Failed to delete recipe")
+      return NextResponse.json({ success: false, error: "Failed to delete recipe" }, { status: 500 })
     }
 
-    console.log("✅ [DELETE-RECIPE] Recipe deleted successfully")
+    console.log("✅ [ADMIN-DELETE-RECIPE] Recipe deleted successfully")
 
     // Verify deletion
-    const verifyResult = await sql`
-      SELECT COUNT(*) as count FROM recipes WHERE id = ${recipeId}
+    const verifyDeletion = await sql`
+      SELECT id FROM recipes WHERE id = ${recipeId}
     `
-    const stillExists = Number.parseInt(verifyResult[0]?.count || "0") > 0
 
-    if (stillExists) {
-      console.log("❌ [DELETE-RECIPE] Recipe still exists after deletion attempt")
+    if (verifyDeletion.length > 0) {
+      console.log("❌ [ADMIN-DELETE-RECIPE] Recipe still exists after deletion attempt")
       return NextResponse.json({ success: false, error: "Recipe deletion verification failed" }, { status: 500 })
     }
 
-    console.log("🎉 [DELETE-RECIPE] Recipe deletion completed and verified")
+    console.log("✅ [ADMIN-DELETE-RECIPE] Deletion verified successfully")
 
-    return NextResponse.json({
+    const response = {
       success: true,
-      message: `Recipe "${recipe.title}" deleted successfully`,
+      message: "Recipe deleted successfully",
       deletedRecipe: {
         id: recipe.id,
         title: recipe.title,
-        author: recipe.author_username,
+        authorId: recipe.author_id,
       },
-      deletedBy: user.username,
+      deletedBy: {
+        id: user.id,
+        username: user.username,
+      },
+      reason: reason || "No reason provided",
       deletedAt: new Date().toISOString(),
+      relatedDataDeleted: {
+        ratings: deletedRatings.length,
+        comments: deletedComments.length,
+      },
+    }
+
+    console.log("✅ [ADMIN-DELETE-RECIPE] Deletion completed successfully:", {
+      recipeId: recipe.id,
+      title: recipe.title,
+      deletedBy: user.username,
     })
+
+    return NextResponse.json(response)
   } catch (error) {
-    console.error("❌ [DELETE-RECIPE] Error:", error)
+    console.error("❌ [ADMIN-DELETE-RECIPE] Error:", error)
     return NextResponse.json(
       {
         success: false,

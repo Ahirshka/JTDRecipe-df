@@ -6,20 +6,19 @@ const sql = neon(process.env.DATABASE_URL!)
 export const dynamic = "force-dynamic"
 
 export async function GET(request: NextRequest) {
-  console.log("🔧 [MANAGE-RECIPES] Starting manage recipes request")
+  console.log("🔧 [ADMIN-MANAGE-RECIPES] Getting all recipes for management")
 
   try {
-    // Get session token from cookies
+    // Check authentication
     const sessionToken = request.cookies.get("session_token")?.value
-    console.log("🔍 [MANAGE-RECIPES] Session token present:", !!sessionToken)
+    console.log("🔍 [ADMIN-MANAGE-RECIPES] Session token present:", !!sessionToken)
 
     if (!sessionToken) {
-      console.log("❌ [MANAGE-RECIPES] No session token found")
+      console.log("❌ [ADMIN-MANAGE-RECIPES] No session token found")
       return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
     }
 
     // Verify session and get user
-    console.log("🔍 [MANAGE-RECIPES] Verifying session...")
     const userResult = await sql`
       SELECT u.id, u.username, u.email, u.role, u.status
       FROM users u
@@ -30,12 +29,12 @@ export async function GET(request: NextRequest) {
     `
 
     if (userResult.length === 0) {
-      console.log("❌ [MANAGE-RECIPES] Invalid or expired session")
-      return NextResponse.json({ success: false, error: "Invalid session" }, { status: 401 })
+      console.log("❌ [ADMIN-MANAGE-RECIPES] Invalid or expired session")
+      return NextResponse.json({ success: false, error: "Invalid or expired session" }, { status: 401 })
     }
 
     const user = userResult[0]
-    console.log("✅ [MANAGE-RECIPES] User authenticated:", {
+    console.log("✅ [ADMIN-MANAGE-RECIPES] User found:", {
       id: user.id,
       username: user.username,
       role: user.role,
@@ -44,181 +43,188 @@ export async function GET(request: NextRequest) {
     // Check if user has admin privileges
     const adminRoles = ["admin", "owner", "moderator"]
     if (!adminRoles.includes(user.role)) {
-      console.log("❌ [MANAGE-RECIPES] User does not have admin privileges:", user.role)
+      console.log("❌ [ADMIN-MANAGE-RECIPES] User does not have admin privileges:", user.role)
       return NextResponse.json({ success: false, error: "Admin access required" }, { status: 403 })
     }
 
-    console.log("✅ [MANAGE-RECIPES] Admin access verified")
+    console.log("✅ [ADMIN-MANAGE-RECIPES] Admin access verified")
 
-    // Get URL parameters for filtering and pagination
+    // Get query parameters
     const { searchParams } = new URL(request.url)
+    const status = searchParams.get("status") || "all"
     const page = Number.parseInt(searchParams.get("page") || "1")
     const limit = Number.parseInt(searchParams.get("limit") || "20")
-    const status = searchParams.get("status") || "all"
     const search = searchParams.get("search") || ""
-    const category = searchParams.get("category") || ""
-    const author = searchParams.get("author") || ""
+    const offset = (page - 1) * limit
 
-    console.log("🔍 [MANAGE-RECIPES] Query parameters:", {
+    console.log("🔍 [ADMIN-MANAGE-RECIPES] Query params:", {
+      status,
       page,
       limit,
-      status,
       search,
-      category,
-      author,
+      offset,
     })
 
-    // Build WHERE clause based on filters
-    const whereConditions = []
-    const queryParams = []
+    // Build WHERE clause
+    let whereClause = "WHERE 1=1"
+    const queryParams: any[] = []
+    let paramIndex = 1
 
     if (status !== "all") {
-      whereConditions.push(`moderation_status = $${queryParams.length + 1}`)
+      whereClause += ` AND r.status = $${paramIndex}`
       queryParams.push(status)
+      paramIndex++
     }
 
     if (search) {
-      whereConditions.push(`(title ILIKE $${queryParams.length + 1} OR description ILIKE $${queryParams.length + 2})`)
-      queryParams.push(`%${search}%`, `%${search}%`)
+      whereClause += ` AND (r.title ILIKE $${paramIndex} OR r.description ILIKE $${paramIndex})`
+      queryParams.push(`%${search}%`)
+      paramIndex++
     }
-
-    if (category) {
-      whereConditions.push(`category = $${queryParams.length + 1}`)
-      queryParams.push(category)
-    }
-
-    if (author) {
-      whereConditions.push(`author_username ILIKE $${queryParams.length + 1}`)
-      queryParams.push(`%${author}%`)
-    }
-
-    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(" AND ")}` : ""
-
-    // Calculate offset for pagination
-    const offset = (page - 1) * limit
-
-    console.log("📋 [MANAGE-RECIPES] Fetching recipes with filters...")
 
     // Get total count
-    const countQuery = `SELECT COUNT(*) as total FROM recipes ${whereClause}`
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM recipes r
+      LEFT JOIN users u ON r.author_id = u.id
+      ${whereClause}
+    `
+
+    console.log("📊 [ADMIN-MANAGE-RECIPES] Count query:", countQuery)
+    console.log("📊 [ADMIN-MANAGE-RECIPES] Count params:", queryParams)
+
     const countResult = await sql.unsafe(countQuery, queryParams)
     const totalRecipes = Number.parseInt(countResult[0]?.total || "0")
+
+    console.log("📊 [ADMIN-MANAGE-RECIPES] Total recipes found:", totalRecipes)
 
     // Get recipes with pagination
     const recipesQuery = `
       SELECT 
-        id,
-        title,
-        description,
-        author_id,
-        author_username,
-        category,
-        difficulty,
-        prep_time_minutes,
-        cook_time_minutes,
-        servings,
-        image_url,
-        ingredients,
-        instructions,
-        tags,
-        rating,
-        review_count,
-        view_count,
-        moderation_status,
-        moderation_notes,
-        is_published,
-        created_at,
-        updated_at
-      FROM recipes
+        r.id,
+        r.title,
+        r.description,
+        r.ingredients,
+        r.instructions,
+        r.prep_time,
+        r.cook_time,
+        r.servings,
+        r.difficulty,
+        r.tags,
+        r.image_url,
+        r.status,
+        r.created_at,
+        r.updated_at,
+        u.username as author_name,
+        u.email as author_email,
+        u.id as author_id
+      FROM recipes r
+      LEFT JOIN users u ON r.author_id = u.id
       ${whereClause}
-      ORDER BY created_at DESC
-      LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}
+      ORDER BY r.created_at DESC
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `
 
-    const recipes = await sql.unsafe(recipesQuery, [...queryParams, limit, offset])
+    queryParams.push(limit, offset)
 
-    console.log(`✅ [MANAGE-RECIPES] Found ${recipes.length} recipes (${totalRecipes} total)`)
+    console.log("📋 [ADMIN-MANAGE-RECIPES] Recipes query:", recipesQuery)
+    console.log("📋 [ADMIN-MANAGE-RECIPES] Recipes params:", queryParams)
 
-    // Process recipes to ensure proper data format
-    const processedRecipes = recipes.map((recipe) => {
+    const recipesResult = await sql.unsafe(recipesQuery, queryParams)
+
+    console.log("📋 [ADMIN-MANAGE-RECIPES] Raw recipes found:", recipesResult.length)
+
+    // Format recipes
+    const formattedRecipes = recipesResult.map((recipe: any) => {
+      // Parse JSON fields safely
       let ingredients = []
       let instructions = []
       let tags = []
 
-      // Parse ingredients
       try {
-        if (typeof recipe.ingredients === "string") {
-          ingredients = JSON.parse(recipe.ingredients)
-        } else if (Array.isArray(recipe.ingredients)) {
-          ingredients = recipe.ingredients
-        }
-      } catch (error) {
-        console.warn("Failed to parse ingredients for recipe:", recipe.id, error)
-        ingredients = [recipe.ingredients || "No ingredients specified"]
+        ingredients = typeof recipe.ingredients === "string" ? JSON.parse(recipe.ingredients) : recipe.ingredients || []
+      } catch (e) {
+        console.log("⚠️ [ADMIN-MANAGE-RECIPES] Failed to parse ingredients for recipe:", recipe.id)
+        ingredients = []
       }
 
-      // Parse instructions
       try {
-        if (typeof recipe.instructions === "string") {
-          instructions = JSON.parse(recipe.instructions)
-        } else if (Array.isArray(recipe.instructions)) {
-          instructions = recipe.instructions
-        }
-      } catch (error) {
-        console.warn("Failed to parse instructions for recipe:", recipe.id, error)
-        instructions = [recipe.instructions || "No instructions specified"]
+        instructions =
+          typeof recipe.instructions === "string" ? JSON.parse(recipe.instructions) : recipe.instructions || []
+      } catch (e) {
+        console.log("⚠️ [ADMIN-MANAGE-RECIPES] Failed to parse instructions for recipe:", recipe.id)
+        instructions = []
       }
 
-      // Parse tags
       try {
-        if (typeof recipe.tags === "string") {
-          tags = JSON.parse(recipe.tags)
-        } else if (Array.isArray(recipe.tags)) {
-          tags = recipe.tags
-        }
-      } catch (error) {
-        console.warn("Failed to parse tags for recipe:", recipe.id, error)
+        tags = typeof recipe.tags === "string" ? JSON.parse(recipe.tags) : recipe.tags || []
+      } catch (e) {
+        console.log("⚠️ [ADMIN-MANAGE-RECIPES] Failed to parse tags for recipe:", recipe.id)
         tags = []
       }
 
       return {
-        ...recipe,
+        id: recipe.id,
+        title: recipe.title,
+        description: recipe.description,
         ingredients,
         instructions,
+        prepTime: recipe.prep_time,
+        cookTime: recipe.cook_time,
+        servings: recipe.servings,
+        difficulty: recipe.difficulty,
         tags,
+        imageUrl: recipe.image_url,
+        status: recipe.status,
+        createdAt: recipe.created_at,
+        updatedAt: recipe.updated_at,
+        author: {
+          id: recipe.author_id,
+          name: recipe.author_name,
+          email: recipe.author_email,
+        },
       }
     })
+
+    console.log("✅ [ADMIN-MANAGE-RECIPES] Formatted recipes:", formattedRecipes.length)
 
     // Calculate pagination info
     const totalPages = Math.ceil(totalRecipes / limit)
     const hasNextPage = page < totalPages
     const hasPrevPage = page > 1
 
-    return NextResponse.json({
+    const response = {
       success: true,
-      recipes: processedRecipes,
+      recipes: formattedRecipes,
       pagination: {
         currentPage: page,
         totalPages,
         totalRecipes,
-        limit,
         hasNextPage,
         hasPrevPage,
+        limit,
       },
       filters: {
         status,
         search,
-        category,
-        author,
       },
-      message: `Found ${processedRecipes.length} recipes`,
+      message: "Recipes retrieved successfully",
+    }
+
+    console.log("✅ [ADMIN-MANAGE-RECIPES] Response prepared:", {
+      recipesCount: formattedRecipes.length,
+      totalRecipes,
+      currentPage: page,
+      totalPages,
     })
+
+    return NextResponse.json(response)
   } catch (error) {
-    console.error("❌ [MANAGE-RECIPES] Error:", error)
+    console.error("❌ [ADMIN-MANAGE-RECIPES] Error:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Failed to fetch recipes",
+        error: "Failed to get recipes",
         details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },

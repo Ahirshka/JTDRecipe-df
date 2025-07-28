@@ -1,30 +1,48 @@
-import { NextResponse } from "next/server"
-import { deleteSession } from "@/lib/auth-system"
+import { type NextRequest, NextResponse } from "next/server"
+import { neon } from "@neondatabase/serverless"
+
+const sql = neon(process.env.DATABASE_URL!)
 
 export const dynamic = "force-dynamic"
 
-export async function POST() {
-  console.log("🚪 [LOGOUT-API] Logout request received")
+export async function POST(request: NextRequest) {
+  console.log("🚪 [AUTH-LOGOUT] Logout request received")
 
   try {
-    // Delete session (clears cookie)
-    const success = await deleteSession()
+    // Get session token from cookies
+    const sessionToken = request.cookies.get("session_token")?.value
+    console.log("🔍 [AUTH-LOGOUT] Session token present:", !!sessionToken)
 
-    if (success) {
-      console.log("✅ [LOGOUT-API] Logout successful")
-      return NextResponse.json({
-        success: true,
-        message: "Logout successful",
-      })
-    } else {
-      console.log("⚠️ [LOGOUT-API] Logout had issues but proceeding")
-      return NextResponse.json({
-        success: true,
-        message: "Logout completed",
-      })
+    if (sessionToken) {
+      // Delete session from database
+      console.log("🗑️ [AUTH-LOGOUT] Deleting session from database...")
+      await sql`
+        DELETE FROM user_sessions
+        WHERE session_token = ${sessionToken}
+      `
+      console.log("✅ [AUTH-LOGOUT] Session deleted from database")
     }
+
+    console.log("✅ [AUTH-LOGOUT] Logout completed successfully")
+
+    // Create response
+    const response = NextResponse.json({
+      success: true,
+      message: "Logout successful",
+    })
+
+    // Clear session cookie
+    response.cookies.set("session_token", "", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 0, // Expire immediately
+      path: "/",
+    })
+
+    return response
   } catch (error) {
-    console.error("❌ [LOGOUT-API] Logout error:", error)
+    console.error("❌ [AUTH-LOGOUT] Error:", error)
     return NextResponse.json(
       {
         success: false,

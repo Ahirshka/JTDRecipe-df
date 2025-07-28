@@ -1,245 +1,328 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Users,
   ChefHat,
+  MessageSquare,
   Star,
   TrendingUp,
-  Clock,
+  AlertTriangle,
   CheckCircle,
-  AlertCircle,
-  Settings,
-  Shield,
-  BarChart3,
+  Clock,
   RefreshCw,
-  MessageSquare,
+  Shield,
+  Activity,
 } from "lucide-react"
+import Link from "next/link"
 
 interface AdminStats {
-  totalUsers: number
-  totalRecipes: number
-  pendingRecipes: number
-  approvedRecipes: number
-  rejectedRecipes: number
-  totalComments: number
-  flaggedComments: number
-  totalRatings: number
-  averageRating: number
-  recentUsers: number
-  recentRecipes: number
-  lastUpdated: string
+  users: {
+    total: number
+    active: number
+    verified: number
+    admins: number
+    newThisMonth: number
+  }
+  recipes: {
+    total: number
+    approved: number
+    pending: number
+    rejected: number
+    newThisMonth: number
+  }
+  comments: {
+    total: number
+    active: number
+    flagged: number
+    newThisMonth: number
+  }
+  ratings: {
+    total: number
+    average: number
+    newThisMonth: number
+  }
+  recentActivity: Array<{
+    type: string
+    title: string
+    action: string
+    createdAt: string
+  }>
+}
+
+interface User {
+  id: number
+  username: string
+  email: string
+  role: string
+  status: string
+  isVerified: boolean
 }
 
 export function AdminDashboard() {
-  const router = useRouter()
   const [stats, setStats] = useState<AdminStats | null>(null)
+  const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState("")
-  const [user, setUser] = useState<any>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [retryCount, setRetryCount] = useState(0)
 
-  useEffect(() => {
-    loadUserAndStats()
-  }, [])
+  // Check if user is admin
+  const isAdmin = user && ["admin", "owner", "moderator"].includes(user.role)
 
-  const loadUserAndStats = async () => {
-    console.log("🔄 [ADMIN-DASHBOARD] Loading user and stats...")
-    setLoading(true)
-    setError("")
-
+  // Fetch current user
+  const fetchUser = async () => {
     try {
-      // First, get current user
-      const userResponse = await fetch("/api/auth/me", {
+      console.log("👤 [ADMIN-DASHBOARD] Fetching current user...")
+
+      const response = await fetch("/api/auth/me", {
         method: "GET",
         credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-        },
       })
 
-      console.log("👤 [ADMIN-DASHBOARD] User response status:", userResponse.status)
-
-      if (userResponse.ok) {
-        const userData = await userResponse.json()
-        console.log("👤 [ADMIN-DASHBOARD] User data:", userData)
-
-        if (userData.success && userData.user) {
-          setUser(userData.user)
-
-          // Check if user has admin privileges
-          const adminRoles = ["admin", "owner", "moderator"]
-          if (!adminRoles.includes(userData.user.role)) {
-            setError("You don't have admin privileges")
-            setLoading(false)
-            return
-          }
-
-          // Load stats if user is admin
-          await loadStats()
-        } else {
-          setError("Failed to get user information")
-          setLoading(false)
-        }
-      } else {
-        setError("Authentication required")
-        setLoading(false)
-      }
-    } catch (error) {
-      console.error("❌ [ADMIN-DASHBOARD] Error loading user:", error)
-      setError("Network error loading user information")
-      setLoading(false)
-    }
-  }
-
-  const loadStats = async () => {
-    console.log("📊 [ADMIN-DASHBOARD] Loading admin stats...")
-
-    try {
-      const response = await fetch("/api/admin/stats", {
-        method: "GET",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-cache",
-        },
-      })
-
-      console.log("📡 [ADMIN-DASHBOARD] Stats response status:", response.status)
+      console.log("📡 [ADMIN-DASHBOARD] User fetch response:", response.status)
 
       if (response.ok) {
         const data = await response.json()
-        console.log("📡 [ADMIN-DASHBOARD] Stats response data:", data)
+        console.log("✅ [ADMIN-DASHBOARD] User data received:", {
+          success: data.success,
+          hasUser: !!data.user,
+          username: data.user?.username,
+          role: data.user?.role,
+        })
 
-        if (data.success && data.stats) {
-          console.log("✅ [ADMIN-DASHBOARD] Stats loaded successfully:", data.stats)
-          setStats(data.stats)
-          setError("")
+        if (data.success && data.user) {
+          setUser(data.user)
+          return data.user
         } else {
-          console.log("❌ [ADMIN-DASHBOARD] Stats API returned error:", data.error)
-          setError(data.error || "Failed to load stats")
+          console.log("❌ [ADMIN-DASHBOARD] No user in response")
+          setError("Authentication required")
+          return null
         }
       } else {
-        const errorText = await response.text()
-        console.error("❌ [ADMIN-DASHBOARD] Stats API failed:", response.status, errorText)
-        setError(`Failed to load admin stats (${response.status})`)
+        console.log("❌ [ADMIN-DASHBOARD] User fetch failed:", response.status)
+        setError("Authentication required")
+        return null
       }
     } catch (error) {
-      console.error("❌ [ADMIN-DASHBOARD] Error fetching admin stats:", error)
-      setError("Network error loading admin stats")
+      console.error("❌ [ADMIN-DASHBOARD] Error fetching user:", error)
+      setError("Failed to authenticate")
+      return null
+    }
+  }
+
+  // Fetch admin statistics
+  const fetchStats = async () => {
+    try {
+      console.log("📊 [ADMIN-DASHBOARD] Fetching admin stats...")
+
+      const response = await fetch("/api/admin/stats", {
+        method: "GET",
+        credentials: "include",
+      })
+
+      console.log("📡 [ADMIN-DASHBOARD] Stats fetch response:", response.status)
+
+      if (response.ok) {
+        const data = await response.json()
+        console.log("✅ [ADMIN-DASHBOARD] Stats data received:", {
+          success: data.success,
+          hasStats: !!data.stats,
+          totalUsers: data.stats?.users?.total,
+          totalRecipes: data.stats?.recipes?.total,
+        })
+
+        if (data.success && data.stats) {
+          setStats(data.stats)
+          setError(null)
+        } else {
+          console.log("❌ [ADMIN-DASHBOARD] No stats in response:", data.error)
+          setError(data.error || "Failed to load statistics")
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({}))
+        console.log("❌ [ADMIN-DASHBOARD] Stats fetch failed:", response.status, errorData)
+        setError(errorData.error || `Failed to load statistics (${response.status})`)
+      }
+    } catch (error) {
+      console.error("❌ [ADMIN-DASHBOARD] Error fetching stats:", error)
+      setError("Network error while loading statistics")
+    }
+  }
+
+  // Load data
+  const loadData = async () => {
+    console.log("🔄 [ADMIN-DASHBOARD] Loading dashboard data...")
+    setLoading(true)
+    setError(null)
+
+    try {
+      // First get user
+      const currentUser = await fetchUser()
+
+      if (currentUser && ["admin", "owner", "moderator"].includes(currentUser.role)) {
+        console.log("✅ [ADMIN-DASHBOARD] Admin user verified, fetching stats...")
+        await fetchStats()
+      } else {
+        console.log("❌ [ADMIN-DASHBOARD] User is not admin:", currentUser?.role)
+        setError("Admin access required")
+      }
+    } catch (error) {
+      console.error("❌ [ADMIN-DASHBOARD] Error loading data:", error)
+      setError("Failed to load dashboard data")
     } finally {
       setLoading(false)
     }
   }
 
+  // Retry function
   const handleRetry = () => {
-    console.log("🔄 [ADMIN-DASHBOARD] Retrying stats load...")
-    loadUserAndStats()
+    console.log("🔄 [ADMIN-DASHBOARD] Retrying dashboard load...")
+    setRetryCount((prev) => prev + 1)
+    loadData()
   }
 
+  // Load data on mount and when retry count changes
+  useEffect(() => {
+    loadData()
+  }, [retryCount])
+
+  // Show loading state
   if (loading) {
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold">Admin Dashboard</h1>
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500"></div>
+          <div>
+            <Skeleton className="h-8 w-48 mb-2" />
+            <Skeleton className="h-4 w-64" />
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {[1, 2, 3, 4].map((i) => (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {[...Array(4)].map((_, i) => (
             <Card key={i}>
-              <CardContent className="p-6">
-                <div className="h-20 bg-gray-200 rounded animate-pulse"></div>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-4 w-4" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-8 w-16 mb-2" />
+                <Skeleton className="h-3 w-32" />
               </CardContent>
             </Card>
           ))}
         </div>
 
-        <Card>
-          <CardContent className="p-6 text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4"></div>
-            <p className="text-gray-600">Loading admin dashboard...</p>
-          </CardContent>
-        </Card>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <Skeleton className="h-6 w-32" />
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {[...Array(5)].map((_, i) => (
+                  <Skeleton key={i} className="h-4 w-full" />
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <Skeleton className="h-6 w-32" />
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {[...Array(5)].map((_, i) => (
+                  <Skeleton key={i} className="h-4 w-full" />
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     )
   }
 
+  // Show error state
   if (error) {
     return (
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold">Admin Dashboard</h1>
-          {user && (
-            <Badge variant="outline">
-              {user.username} ({user.role})
-            </Badge>
-          )}
-        </div>
-
         <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
+          <AlertTriangle className="h-4 w-4" />
           <AlertDescription className="flex items-center justify-between">
             <span>{error}</span>
-            <Button variant="outline" size="sm" onClick={handleRetry}>
-              <RefreshCw className="w-4 h-4 mr-2" />
+            <Button variant="outline" size="sm" onClick={handleRetry} className="ml-4 bg-transparent">
+              <RefreshCw className="h-4 w-4 mr-2" />
               Retry
             </Button>
           </AlertDescription>
         </Alert>
 
-        <Card>
-          <CardContent className="p-6 text-center">
-            <Shield className="w-12 h-12 text-red-400 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold mb-2">Dashboard Error</h3>
-            <p className="text-gray-600 mb-4">{error}</p>
-            <div className="space-x-2">
-              <Button onClick={handleRetry}>
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Try Again
-              </Button>
-              {error.includes("Authentication") && (
-                <Button variant="outline" onClick={() => router.push("/login")}>
-                  Go to Login
-                </Button>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        {user && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Shield className="h-5 w-5" />
+                Current User
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                <p>
+                  <strong>Username:</strong> {user.username}
+                </p>
+                <p>
+                  <strong>Email:</strong> {user.email}
+                </p>
+                <p>
+                  <strong>Role:</strong> <Badge variant="outline">{user.role}</Badge>
+                </p>
+                <p>
+                  <strong>Status:</strong>{" "}
+                  <Badge variant={user.status === "active" ? "default" : "destructive"}>{user.status}</Badge>
+                </p>
+                <p>
+                  <strong>Verified:</strong>{" "}
+                  <Badge variant={user.isVerified ? "default" : "secondary"}>{user.isVerified ? "Yes" : "No"}</Badge>
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     )
   }
 
-  if (!user) {
+  // Show access denied if not admin
+  if (!isAdmin) {
     return (
-      <div className="text-center py-12">
-        <Shield className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-        <h2 className="text-xl font-semibold mb-2">Authentication Required</h2>
-        <p className="text-gray-600">Please log in to access the admin dashboard.</p>
-        <Button onClick={() => router.push("/login")} className="mt-4">
-          Go to Login
-        </Button>
+      <div className="space-y-6">
+        <Alert variant="destructive">
+          <Shield className="h-4 w-4" />
+          <AlertDescription>Admin access required. Your current role: {user?.role || "unknown"}</AlertDescription>
+        </Alert>
       </div>
     )
   }
 
-  const adminRoles = ["admin", "owner", "moderator"]
-  if (!adminRoles.includes(user.role)) {
+  // Show dashboard if we have stats
+  if (!stats) {
     return (
-      <div className="text-center py-12">
-        <Shield className="w-12 h-12 text-red-400 mx-auto mb-4" />
-        <h2 className="text-xl font-semibold mb-2">Access Denied</h2>
-        <p className="text-gray-600">You don't have permission to access the admin dashboard.</p>
-        <Badge variant="outline" className="mt-2">
-          Current Role: {user.role}
-        </Badge>
-        <Button onClick={() => router.push("/")} className="mt-4">
-          Go to Home
-        </Button>
+      <div className="space-y-6">
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription className="flex items-center justify-between">
+            <span>No statistics available</span>
+            <Button variant="outline" size="sm" onClick={handleRetry}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
       </div>
     )
   }
@@ -247,246 +330,249 @@ export function AdminDashboard() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="bg-gradient-to-r from-orange-500 to-red-500 text-white p-6 rounded-lg">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold mb-2">Welcome back, {user.username}!</h1>
-            <p className="opacity-90">
-              {user.role === "owner"
-                ? "Owner Dashboard"
-                : user.role === "admin"
-                  ? "Admin Dashboard"
-                  : "Moderator Dashboard"}
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            onClick={handleRetry}
-            className="bg-white/10 border-white/20 text-white hover:bg-white/20"
-          >
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh
-          </Button>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Admin Dashboard</h1>
+          <p className="text-muted-foreground">
+            Welcome back, {user?.username}! Here's what's happening with your recipe platform.
+          </p>
         </div>
+        <Button onClick={handleRetry} variant="outline" size="sm">
+          <RefreshCw className="h-4 w-4 mr-2" />
+          Refresh
+        </Button>
       </div>
 
-      {/* Stats Overview */}
-      {stats && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Total Users</p>
-                  <p className="text-3xl font-bold">{stats.totalUsers}</p>
-                </div>
-                <Users className="w-8 h-8 text-blue-500" />
-              </div>
-              <div className="mt-2 flex items-center text-sm">
-                <TrendingUp className="w-4 h-4 text-green-500 mr-1" />
-                <span className="text-green-600">+{stats.recentUsers} this week</span>
-              </div>
-            </CardContent>
-          </Card>
+      {/* Stats Cards */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {/* Users Card */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Users</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.users.total.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">{stats.users.newThisMonth} new this month</p>
+            <div className="flex gap-2 mt-2">
+              <Badge variant="secondary" className="text-xs">
+                {stats.users.active} active
+              </Badge>
+              <Badge variant="outline" className="text-xs">
+                {stats.users.verified} verified
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Total Recipes</p>
-                  <p className="text-3xl font-bold">{stats.totalRecipes}</p>
-                </div>
-                <ChefHat className="w-8 h-8 text-orange-500" />
-              </div>
-              <div className="mt-2 flex items-center text-sm">
-                <TrendingUp className="w-4 h-4 text-green-500 mr-1" />
-                <span className="text-green-600">+{stats.recentRecipes} this week</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Pending Reviews</p>
-                  <p className="text-3xl font-bold">{stats.pendingRecipes}</p>
-                </div>
-                <Clock className="w-8 h-8 text-yellow-500" />
-              </div>
-              <div className="mt-2">
-                <Badge variant={stats.pendingRecipes > 0 ? "destructive" : "secondary"}>
-                  {stats.pendingRecipes > 0 ? "Needs Attention" : "All Clear"}
+        {/* Recipes Card */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Recipes</CardTitle>
+            <ChefHat className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.recipes.total.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">{stats.recipes.newThisMonth} new this month</p>
+            <div className="flex gap-2 mt-2">
+              <Badge variant="default" className="text-xs">
+                <CheckCircle className="h-3 w-3 mr-1" />
+                {stats.recipes.approved} approved
+              </Badge>
+              {stats.recipes.pending > 0 && (
+                <Badge variant="secondary" className="text-xs">
+                  <Clock className="h-3 w-3 mr-1" />
+                  {stats.recipes.pending} pending
                 </Badge>
-              </div>
-            </CardContent>
-          </Card>
+              )}
+            </div>
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Average Rating</p>
-                  <p className="text-3xl font-bold">{stats.averageRating}</p>
-                </div>
-                <Star className="w-8 h-8 text-yellow-500" />
-              </div>
-              <div className="mt-2 text-sm text-gray-600">From {stats.totalRatings} ratings</div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+        {/* Comments Card */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Comments</CardTitle>
+            <MessageSquare className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.comments.total.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">{stats.comments.newThisMonth} new this month</p>
+            <div className="flex gap-2 mt-2">
+              <Badge variant="default" className="text-xs">
+                {stats.comments.active} active
+              </Badge>
+              {stats.comments.flagged > 0 && (
+                <Badge variant="destructive" className="text-xs">
+                  <AlertTriangle className="h-3 w-3 mr-1" />
+                  {stats.comments.flagged} flagged
+                </Badge>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Ratings Card */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Ratings</CardTitle>
+            <Star className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.ratings.total.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">Avg: {stats.ratings.average.toFixed(1)} stars</p>
+            <div className="flex gap-2 mt-2">
+              <Badge variant="outline" className="text-xs">
+                {stats.ratings.newThisMonth} new this month
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {/* Recipe Moderation */}
-        <Card
-          className="hover:shadow-md transition-shadow cursor-pointer"
-          onClick={() => router.push("/admin/recipes")}
-        >
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2">
-              <ChefHat className="w-5 h-5 text-orange-500" />
-              Recipe Moderation
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600 mb-3">Review and moderate pending recipe submissions</p>
-            <div className="flex items-center justify-between">
-              <Badge variant={stats && stats.pendingRecipes > 0 ? "destructive" : "secondary"}>
-                {stats ? stats.pendingRecipes : 0} pending
-              </Badge>
-              <Button variant="outline" size="sm">
-                Review →
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Recipe Management */}
-        <Card
-          className="hover:shadow-md transition-shadow cursor-pointer"
-          onClick={() => router.push("/admin/recipes/manage")}
-        >
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2">
-              <Settings className="w-5 h-5 text-blue-500" />
-              Manage Recipes
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600 mb-3">Search, filter, and manage all recipes in the system</p>
-            <div className="flex items-center justify-between">
-              <Badge variant="secondary">{stats ? stats.totalRecipes : 0} total</Badge>
-              <Button variant="outline" size="sm">
-                Manage →
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* User Management */}
-        {["admin", "owner"].includes(user.role) && (
-          <Card
-            className="hover:shadow-md transition-shadow cursor-pointer"
-            onClick={() => router.push("/admin/users")}
-          >
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Link href="/admin/users">
+          <Card className="hover:bg-muted/50 transition-colors cursor-pointer">
             <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-green-500" />
-                User Management
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                Manage Users
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-gray-600 mb-3">Manage user accounts, roles, and permissions</p>
-              <div className="flex items-center justify-between">
-                <Badge variant="secondary">{stats ? stats.totalUsers : 0} users</Badge>
-                <Button variant="outline" size="sm">
-                  Manage →
-                </Button>
-              </div>
+              <p className="text-xs text-muted-foreground">View and moderate user accounts</p>
             </CardContent>
           </Card>
-        )}
+        </Link>
 
-        {/* Comments Moderation */}
-        <Card
-          className="hover:shadow-md transition-shadow cursor-pointer"
-          onClick={() => router.push("/admin/comments")}
-        >
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2">
-              <MessageSquare className="w-5 h-5 text-purple-500" />
-              Comment Moderation
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600 mb-3">Review flagged comments and manage discussions</p>
-            <div className="flex items-center justify-between">
-              <Badge variant={stats && stats.flaggedComments > 0 ? "destructive" : "secondary"}>
-                {stats ? stats.flaggedComments : 0} flagged
-              </Badge>
-              <Button variant="outline" size="sm">
-                Review →
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Analytics */}
-        {["admin", "owner"].includes(user.role) && (
-          <Card className="hover:shadow-md transition-shadow cursor-pointer">
+        <Link href="/admin/recipes">
+          <Card className="hover:bg-muted/50 transition-colors cursor-pointer">
             <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2">
-                <BarChart3 className="w-5 h-5 text-indigo-500" />
-                Analytics
+              <CardTitle className="text-sm flex items-center gap-2">
+                <ChefHat className="h-4 w-4" />
+                Pending Recipes
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-gray-600 mb-3">View detailed analytics and usage statistics</p>
-              <div className="flex items-center justify-between">
-                <Badge variant="secondary">Reports</Badge>
-                <Button variant="outline" size="sm">
-                  View →
-                </Button>
-              </div>
+              <p className="text-xs text-muted-foreground">Review and approve recipes</p>
+              {stats.recipes.pending > 0 && (
+                <Badge variant="secondary" className="mt-2">
+                  {stats.recipes.pending} pending
+                </Badge>
+              )}
             </CardContent>
           </Card>
-        )}
+        </Link>
 
-        {/* System Settings */}
-        {user.role === "owner" && (
-          <Card className="hover:shadow-md transition-shadow cursor-pointer">
+        <Link href="/admin/recipes/manage">
+          <Card className="hover:bg-muted/50 transition-colors cursor-pointer">
             <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2">
-                <Settings className="w-5 h-5 text-gray-500" />
-                System Settings
+              <CardTitle className="text-sm flex items-center gap-2">
+                <ChefHat className="h-4 w-4" />
+                Manage Recipes
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-gray-600 mb-3">Configure system settings and preferences</p>
-              <div className="flex items-center justify-between">
-                <Badge variant="secondary">Owner Only</Badge>
-                <Button variant="outline" size="sm">
-                  Configure →
-                </Button>
-              </div>
+              <p className="text-xs text-muted-foreground">View and manage all recipes</p>
             </CardContent>
           </Card>
-        )}
+        </Link>
+
+        <Link href="/admin/comments">
+          <Card className="hover:bg-muted/50 transition-colors cursor-pointer">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <MessageSquare className="h-4 w-4" />
+                Moderate Comments
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-xs text-muted-foreground">Review flagged comments</p>
+              {stats.comments.flagged > 0 && (
+                <Badge variant="destructive" className="mt-2">
+                  {stats.comments.flagged} flagged
+                </Badge>
+              )}
+            </CardContent>
+          </Card>
+        </Link>
       </div>
 
-      {/* Success Message */}
-      {stats && (
-        <Alert>
-          <CheckCircle className="h-4 w-4" />
-          <AlertDescription>
-            Admin dashboard loaded successfully. Statistics last updated: {new Date(stats.lastUpdated).toLocaleString()}
-          </AlertDescription>
-        </Alert>
-      )}
+      {/* Recent Activity */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="h-5 w-5" />
+              Recent Activity
+            </CardTitle>
+            <CardDescription>Latest actions on your platform</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {stats.recentActivity.length > 0 ? (
+                stats.recentActivity.map((activity, index) => (
+                  <div key={index} className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="flex-shrink-0">
+                        {activity.type === "user" && <Users className="h-4 w-4 text-blue-500" />}
+                        {activity.type === "recipe" && <ChefHat className="h-4 w-4 text-green-500" />}
+                        {activity.type === "comment" && <MessageSquare className="h-4 w-4 text-orange-500" />}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">{activity.title}</p>
+                        <p className="text-xs text-muted-foreground">{activity.action}</p>
+                      </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {new Date(activity.createdAt).toLocaleDateString()}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-muted-foreground">No recent activity</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingUp className="h-5 w-5" />
+              Platform Health
+            </CardTitle>
+            <CardDescription>Key metrics and status</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm">User Verification Rate</span>
+                <Badge variant="outline">
+                  {stats.users.total > 0 ? Math.round((stats.users.verified / stats.users.total) * 100) : 0}%
+                </Badge>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm">Recipe Approval Rate</span>
+                <Badge variant="outline">
+                  {stats.recipes.total > 0 ? Math.round((stats.recipes.approved / stats.recipes.total) * 100) : 0}%
+                </Badge>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm">Average Rating</span>
+                <Badge variant="outline">{stats.ratings.average.toFixed(1)} ⭐</Badge>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm">Active Users</span>
+                <Badge variant={stats.users.active > stats.users.total * 0.8 ? "default" : "secondary"}>
+                  {stats.users.active} / {stats.users.total}
+                </Badge>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }
-
-export default AdminDashboard
