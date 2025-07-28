@@ -1,50 +1,63 @@
-import { NextResponse } from "next/server"
-import { getCurrentSession } from "@/lib/auth-system"
+import { type NextRequest, NextResponse } from "next/server"
+import { neon } from "@neondatabase/serverless"
+
+const sql = neon(process.env.DATABASE_URL!)
 
 export const dynamic = "force-dynamic"
 
-export async function GET() {
-  console.log("👤 [AUTH-ME] Current user request received")
+export async function GET(request: NextRequest) {
+  console.log("👤 [AUTH-ME] Getting current user")
 
   try {
-    // Get current session
-    const session = await getCurrentSession()
+    // Get session token from cookies
+    const sessionToken = request.cookies.get("session_token")?.value
+    console.log("🔍 [AUTH-ME] Session token present:", !!sessionToken)
 
-    if (!session.success || !session.user) {
-      console.log("❌ [AUTH-ME] No valid session found")
-      return NextResponse.json(
-        {
-          success: false,
-          error: session.error || "No valid session",
-        },
-        { status: 401 },
-      )
+    if (!sessionToken) {
+      console.log("❌ [AUTH-ME] No session token found")
+      return NextResponse.json({ success: false, error: "No session token" }, { status: 401 })
     }
 
-    console.log("✅ [AUTH-ME] Current user found:", {
-      id: session.user.id,
-      username: session.user.username,
-      role: session.user.role,
+    // Verify session and get user
+    console.log("🔍 [AUTH-ME] Verifying session...")
+    const userResult = await sql`
+      SELECT u.id, u.username, u.email, u.role, u.status, u.is_verified, u.created_at
+      FROM users u
+      JOIN user_sessions s ON u.id = s.user_id
+      WHERE s.session_token = ${sessionToken}
+        AND s.expires_at > NOW()
+        AND u.status = 'active'
+    `
+
+    if (userResult.length === 0) {
+      console.log("❌ [AUTH-ME] Invalid or expired session")
+      return NextResponse.json({ success: false, error: "Invalid or expired session" }, { status: 401 })
+    }
+
+    const user = userResult[0]
+    console.log("✅ [AUTH-ME] User found:", {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      status: user.status,
     })
 
-    // Return user data (without password_hash)
-    const userResponse = {
-      id: session.user.id,
-      username: session.user.username,
-      email: session.user.email,
-      role: session.user.role,
-      status: session.user.status,
-      is_verified: session.user.is_verified,
-      created_at: session.user.created_at,
-      updated_at: session.user.updated_at,
-    }
-
+    // Return user data (excluding sensitive information)
     return NextResponse.json({
       success: true,
-      user: userResponse,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        status: user.status,
+        isVerified: user.is_verified,
+        createdAt: user.created_at,
+      },
+      message: "User retrieved successfully",
     })
   } catch (error) {
-    console.error("❌ [AUTH-ME] Error getting current user:", error)
+    console.error("❌ [AUTH-ME] Error:", error)
     return NextResponse.json(
       {
         success: false,

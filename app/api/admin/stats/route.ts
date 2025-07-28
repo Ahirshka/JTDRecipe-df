@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { neon } from "@neondatabase/serverless"
-import { getCurrentUserFromRequest } from "@/lib/server-auth"
 
 const sql = neon(process.env.DATABASE_URL!)
 
@@ -10,15 +9,32 @@ export async function GET(request: NextRequest) {
   console.log("📊 [ADMIN-STATS] Starting admin stats request")
 
   try {
-    // Check authentication and admin role
-    console.log("🔍 [ADMIN-STATS] Checking authentication...")
-    const user = await getCurrentUserFromRequest(request)
+    // Get session token from cookies
+    const sessionToken = request.cookies.get("session_token")?.value
+    console.log("🔍 [ADMIN-STATS] Session token present:", !!sessionToken)
 
-    if (!user) {
-      console.log("❌ [ADMIN-STATS] No authenticated user found")
+    if (!sessionToken) {
+      console.log("❌ [ADMIN-STATS] No session token found")
       return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
     }
 
+    // Verify session and get user
+    console.log("🔍 [ADMIN-STATS] Verifying session...")
+    const userResult = await sql`
+      SELECT u.id, u.username, u.email, u.role, u.status
+      FROM users u
+      JOIN user_sessions s ON u.id = s.user_id
+      WHERE s.session_token = ${sessionToken}
+        AND s.expires_at > NOW()
+        AND u.status = 'active'
+    `
+
+    if (userResult.length === 0) {
+      console.log("❌ [ADMIN-STATS] Invalid or expired session")
+      return NextResponse.json({ success: false, error: "Invalid session" }, { status: 401 })
+    }
+
+    const user = userResult[0]
     console.log("✅ [ADMIN-STATS] User authenticated:", {
       id: user.id,
       username: user.username,
@@ -34,51 +50,33 @@ export async function GET(request: NextRequest) {
 
     console.log("✅ [ADMIN-STATS] Admin access verified")
 
-    // Initialize stats object
-    const stats = {
-      users: { total: 0, active: 0, verified: 0, admins: 0 },
-      recipes: { total: 0, approved: 0, pending: 0, rejected: 0 },
-      comments: { total: 0, flagged: 0 },
-      ratings: { total: 0, average: 0 },
-    }
+    // Initialize default stats
+    let totalUsers = 0
+    let totalRecipes = 0
+    let pendingRecipes = 0
+    let approvedRecipes = 0
+    let rejectedRecipes = 0
+    let totalComments = 0
+    let flaggedComments = 0
+    let totalRatings = 0
+    let averageRating = 0
+    let recentUsers = 0
+    let recentRecipes = 0
 
     // Get user statistics
     console.log("📊 [ADMIN-STATS] Fetching user statistics...")
     try {
-      // Ensure users table exists
-      await sql`
-        CREATE TABLE IF NOT EXISTS users (
-          id SERIAL PRIMARY KEY,
-          username VARCHAR(50) NOT NULL UNIQUE,
-          email VARCHAR(255) NOT NULL UNIQUE,
-          password_hash TEXT NOT NULL,
-          role VARCHAR(20) NOT NULL DEFAULT 'user',
-          status VARCHAR(20) NOT NULL DEFAULT 'active',
-          is_verified BOOLEAN NOT NULL DEFAULT false,
-          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-        );
+      const userStats = await sql`SELECT COUNT(*) as count FROM users`
+      totalUsers = Number.parseInt(userStats[0]?.count || "0")
+      console.log("✅ [ADMIN-STATS] Total users:", totalUsers)
+
+      const recentUserStats = await sql`
+        SELECT COUNT(*) as count 
+        FROM users 
+        WHERE created_at >= NOW() - INTERVAL '7 days'
       `
-
-      const userStats = await sql`
-        SELECT 
-          COUNT(*) as total,
-          COUNT(CASE WHEN status = 'active' THEN 1 END) as active,
-          COUNT(CASE WHEN is_verified = true THEN 1 END) as verified,
-          COUNT(CASE WHEN role IN ('admin', 'owner', 'moderator') THEN 1 END) as admins
-        FROM users;
-      `
-
-      if (userStats.length > 0) {
-        stats.users = {
-          total: Number.parseInt(userStats[0].total) || 0,
-          active: Number.parseInt(userStats[0].active) || 0,
-          verified: Number.parseInt(userStats[0].verified) || 0,
-          admins: Number.parseInt(userStats[0].admins) || 0,
-        }
-      }
-
-      console.log("✅ [ADMIN-STATS] User statistics fetched:", stats.users)
+      recentUsers = Number.parseInt(recentUserStats[0]?.count || "0")
+      console.log("✅ [ADMIN-STATS] Recent users:", recentUsers)
     } catch (error) {
       console.error("❌ [ADMIN-STATS] Error fetching user statistics:", error)
     }
@@ -86,54 +84,41 @@ export async function GET(request: NextRequest) {
     // Get recipe statistics
     console.log("📊 [ADMIN-STATS] Fetching recipe statistics...")
     try {
-      // Ensure recipes table exists
-      await sql`
-        CREATE TABLE IF NOT EXISTS recipes (
-          id VARCHAR(50) PRIMARY KEY,
-          title VARCHAR(255) NOT NULL,
-          description TEXT,
-          author_id INTEGER NOT NULL,
-          author_username VARCHAR(50) NOT NULL,
-          category VARCHAR(50) NOT NULL,
-          difficulty VARCHAR(20) NOT NULL,
-          prep_time_minutes INTEGER NOT NULL CHECK (prep_time_minutes >= 0),
-          cook_time_minutes INTEGER NOT NULL CHECK (cook_time_minutes >= 0),
-          servings INTEGER NOT NULL CHECK (servings > 0),
-          image_url TEXT,
-          ingredients JSONB NOT NULL DEFAULT '[]'::jsonb,
-          instructions JSONB NOT NULL DEFAULT '[]'::jsonb,
-          tags JSONB DEFAULT '[]'::jsonb,
-          rating DECIMAL(3,2) DEFAULT 0 CHECK (rating >= 0 AND rating <= 5),
-          review_count INTEGER DEFAULT 0 CHECK (review_count >= 0),
-          view_count INTEGER DEFAULT 0 CHECK (view_count >= 0),
-          moderation_status VARCHAR(20) NOT NULL DEFAULT 'pending',
-          moderation_notes TEXT,
-          is_published BOOLEAN NOT NULL DEFAULT false,
-          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-          search_vector TSVECTOR
-        );
+      const recipeStats = await sql`SELECT COUNT(*) as count FROM recipes`
+      totalRecipes = Number.parseInt(recipeStats[0]?.count || "0")
+      console.log("✅ [ADMIN-STATS] Total recipes:", totalRecipes)
+
+      const pendingStats = await sql`
+        SELECT COUNT(*) as count 
+        FROM recipes 
+        WHERE moderation_status = 'pending'
       `
+      pendingRecipes = Number.parseInt(pendingStats[0]?.count || "0")
+      console.log("✅ [ADMIN-STATS] Pending recipes:", pendingRecipes)
 
-      const recipeStats = await sql`
-        SELECT 
-          COUNT(*) as total,
-          COUNT(CASE WHEN moderation_status = 'approved' THEN 1 END) as approved,
-          COUNT(CASE WHEN moderation_status = 'pending' THEN 1 END) as pending,
-          COUNT(CASE WHEN moderation_status = 'rejected' THEN 1 END) as rejected
-        FROM recipes;
+      const approvedStats = await sql`
+        SELECT COUNT(*) as count 
+        FROM recipes 
+        WHERE moderation_status = 'approved'
       `
+      approvedRecipes = Number.parseInt(approvedStats[0]?.count || "0")
+      console.log("✅ [ADMIN-STATS] Approved recipes:", approvedRecipes)
 
-      if (recipeStats.length > 0) {
-        stats.recipes = {
-          total: Number.parseInt(recipeStats[0].total) || 0,
-          approved: Number.parseInt(recipeStats[0].approved) || 0,
-          pending: Number.parseInt(recipeStats[0].pending) || 0,
-          rejected: Number.parseInt(recipeStats[0].rejected) || 0,
-        }
-      }
+      const rejectedStats = await sql`
+        SELECT COUNT(*) as count 
+        FROM recipes 
+        WHERE moderation_status = 'rejected'
+      `
+      rejectedRecipes = Number.parseInt(rejectedStats[0]?.count || "0")
+      console.log("✅ [ADMIN-STATS] Rejected recipes:", rejectedRecipes)
 
-      console.log("✅ [ADMIN-STATS] Recipe statistics fetched:", stats.recipes)
+      const recentRecipeStats = await sql`
+        SELECT COUNT(*) as count 
+        FROM recipes 
+        WHERE created_at >= NOW() - INTERVAL '7 days'
+      `
+      recentRecipes = Number.parseInt(recentRecipeStats[0]?.count || "0")
+      console.log("✅ [ADMIN-STATS] Recent recipes:", recentRecipes)
     } catch (error) {
       console.error("❌ [ADMIN-STATS] Error fetching recipe statistics:", error)
     }
@@ -141,35 +126,17 @@ export async function GET(request: NextRequest) {
     // Get comment statistics
     console.log("📊 [ADMIN-STATS] Fetching comment statistics...")
     try {
-      // Ensure comments table exists
-      await sql`
-        CREATE TABLE IF NOT EXISTS comments (
-          id SERIAL PRIMARY KEY,
-          recipe_id VARCHAR(50) NOT NULL,
-          user_id INTEGER NOT NULL,
-          username VARCHAR(50) NOT NULL,
-          content TEXT NOT NULL,
-          is_flagged BOOLEAN DEFAULT false,
-          created_at TIMESTAMP DEFAULT NOW(),
-          updated_at TIMESTAMP DEFAULT NOW()
-        );
+      const commentStats = await sql`SELECT COUNT(*) as count FROM comments`
+      totalComments = Number.parseInt(commentStats[0]?.count || "0")
+      console.log("✅ [ADMIN-STATS] Total comments:", totalComments)
+
+      const flaggedStats = await sql`
+        SELECT COUNT(*) as count 
+        FROM comments 
+        WHERE is_flagged = true
       `
-
-      const commentStats = await sql`
-        SELECT 
-          COUNT(*) as total,
-          COUNT(CASE WHEN is_flagged = true THEN 1 END) as flagged
-        FROM comments;
-      `
-
-      if (commentStats.length > 0) {
-        stats.comments = {
-          total: Number.parseInt(commentStats[0].total) || 0,
-          flagged: Number.parseInt(commentStats[0].flagged) || 0,
-        }
-      }
-
-      console.log("✅ [ADMIN-STATS] Comment statistics fetched:", stats.comments)
+      flaggedComments = Number.parseInt(flaggedStats[0]?.count || "0")
+      console.log("✅ [ADMIN-STATS] Flagged comments:", flaggedComments)
     } catch (error) {
       console.error("❌ [ADMIN-STATS] Error fetching comment statistics:", error)
     }
@@ -177,47 +144,41 @@ export async function GET(request: NextRequest) {
     // Get rating statistics
     console.log("📊 [ADMIN-STATS] Fetching rating statistics...")
     try {
-      // Ensure ratings table exists
-      await sql`
-        CREATE TABLE IF NOT EXISTS ratings (
-          id SERIAL PRIMARY KEY,
-          recipe_id VARCHAR(50) NOT NULL,
-          user_id INTEGER NOT NULL,
-          rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
-          created_at TIMESTAMP DEFAULT NOW(),
-          updated_at TIMESTAMP DEFAULT NOW(),
-          UNIQUE(recipe_id, user_id)
-        );
-      `
+      const ratingStats = await sql`SELECT COUNT(*) as count FROM ratings`
+      totalRatings = Number.parseInt(ratingStats[0]?.count || "0")
+      console.log("✅ [ADMIN-STATS] Total ratings:", totalRatings)
 
-      const ratingStats = await sql`
-        SELECT 
-          COUNT(*) as total,
-          COALESCE(AVG(rating), 0) as average
-        FROM ratings;
-      `
-
-      if (ratingStats.length > 0) {
-        stats.ratings = {
-          total: Number.parseInt(ratingStats[0].total) || 0,
-          average: Number.parseFloat(ratingStats[0].average) || 0,
-        }
-      }
-
-      console.log("✅ [ADMIN-STATS] Rating statistics fetched:", stats.ratings)
+      const avgStats = await sql`SELECT AVG(rating) as avg FROM ratings`
+      averageRating = Number.parseFloat(avgStats[0]?.avg || "0")
+      console.log("✅ [ADMIN-STATS] Average rating:", averageRating)
     } catch (error) {
       console.error("❌ [ADMIN-STATS] Error fetching rating statistics:", error)
     }
 
-    console.log("🎉 [ADMIN-STATS] All statistics fetched successfully:", stats)
+    const stats = {
+      totalUsers,
+      totalRecipes,
+      pendingRecipes,
+      approvedRecipes,
+      rejectedRecipes,
+      totalComments,
+      flaggedComments,
+      totalRatings,
+      averageRating: Number(averageRating.toFixed(1)),
+      recentUsers,
+      recentRecipes,
+      lastUpdated: new Date().toISOString(),
+    }
+
+    console.log("🎉 [ADMIN-STATS] All statistics compiled:", stats)
 
     return NextResponse.json({
       success: true,
       stats,
-      timestamp: new Date().toISOString(),
+      message: "Admin statistics retrieved successfully",
     })
   } catch (error) {
-    console.error("❌ [ADMIN-STATS] Error fetching admin statistics:", error)
+    console.error("❌ [ADMIN-STATS] Error:", error)
     return NextResponse.json(
       {
         success: false,
