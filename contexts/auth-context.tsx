@@ -40,6 +40,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const response = await fetch("/api/auth/me", {
         method: "GET",
         credentials: "include",
+        headers: {
+          "Cache-Control": "no-cache",
+        },
       })
 
       console.log("📡 [AUTH-CONTEXT] Auth check response status:", response.status)
@@ -61,6 +64,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } else {
         console.log("❌ [AUTH-CONTEXT] Auth check failed with status:", response.status)
+        const errorData = await response.json().catch(() => ({}))
+        console.log("❌ [AUTH-CONTEXT] Error details:", errorData)
         setUser(null)
       }
     } catch (error) {
@@ -97,6 +102,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           role: data.user.role,
         })
         setUser(data.user)
+
+        // Force a re-check of auth status to ensure cookies are working
+        setTimeout(() => {
+          checkAuth()
+        }, 100)
+
         return { success: true, message: data.message || "Login successful" }
       } else {
         console.log("❌ [AUTH-CONTEXT] Login failed:", data.error || data.message)
@@ -139,10 +150,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  // Check auth on mount
+  // Check auth on mount and periodically
   useEffect(() => {
     console.log("🚀 [AUTH-CONTEXT] AuthProvider mounted, checking authentication...")
     checkAuth()
+
+    // Set up periodic auth check every 5 minutes
+    const interval = setInterval(
+      () => {
+        console.log("⏰ [AUTH-CONTEXT] Periodic auth check...")
+        checkAuth()
+      },
+      5 * 60 * 1000,
+    )
+
+    return () => {
+      clearInterval(interval)
+    }
+  }, [])
+
+  // Listen for storage events (for cross-tab logout)
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "auth-logout") {
+        console.log("🔄 [AUTH-CONTEXT] Cross-tab logout detected")
+        setUser(null)
+      }
+    }
+
+    window.addEventListener("storage", handleStorageChange)
+    return () => {
+      window.removeEventListener("storage", handleStorageChange)
+    }
   }, [])
 
   const contextValue: AuthContextType = {

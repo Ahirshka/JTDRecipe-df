@@ -1,9 +1,10 @@
 import { cookies } from "next/headers"
 import { neon } from "@neondatabase/serverless"
-import { verifyToken } from "./auth-system"
+import jwt from "jsonwebtoken"
 import type { NextRequest } from "next/server"
 
 const sql = neon(process.env.DATABASE_URL!)
+const JWT_SECRET = process.env.JWT_SECRET || "fallback-secret-key-for-development"
 
 export interface ServerUser {
   id: string
@@ -13,7 +14,16 @@ export interface ServerUser {
   status: string
   is_verified?: boolean
   created_at: string
-  last_login_at?: string
+  updated_at?: string
+}
+
+interface TokenPayload {
+  userId: string
+  email: string
+  role: string
+  username: string
+  iat?: number
+  exp?: number
 }
 
 // Get current user from cookies (server-side)
@@ -22,7 +32,18 @@ export async function getCurrentUser(): Promise<ServerUser | null> {
     console.log("🔄 [SERVER-AUTH] Getting current user from cookies")
 
     const cookieStore = await cookies()
-    const token = cookieStore.get("auth-token")?.value
+
+    // Try multiple cookie names
+    let token = cookieStore.get("auth-token")?.value
+    if (!token) token = cookieStore.get("auth_token")?.value
+    if (!token) token = cookieStore.get("session_token")?.value
+
+    console.log("🔍 [SERVER-AUTH] Cookie search results:", {
+      authToken: !!cookieStore.get("auth-token")?.value,
+      authTokenAlt: !!cookieStore.get("auth_token")?.value,
+      sessionToken: !!cookieStore.get("session_token")?.value,
+      foundToken: !!token,
+    })
 
     if (!token) {
       console.log("❌ [SERVER-AUTH] No auth token found in cookies")
@@ -32,9 +53,20 @@ export async function getCurrentUser(): Promise<ServerUser | null> {
     console.log("✅ [SERVER-AUTH] Auth token found, verifying...")
 
     // Verify JWT token
-    const payload = verifyToken(token)
-    if (!payload) {
-      console.log("❌ [SERVER-AUTH] Invalid or expired token")
+    let payload: TokenPayload
+    try {
+      payload = jwt.verify(token, JWT_SECRET, {
+        issuer: "recipe-site",
+        audience: "recipe-site-users",
+      }) as TokenPayload
+
+      console.log("✅ [SERVER-AUTH] Token verified:", {
+        userId: payload.userId,
+        email: payload.email,
+        role: payload.role,
+      })
+    } catch (jwtError) {
+      console.log("❌ [SERVER-AUTH] JWT verification failed:", jwtError)
       return null
     }
 
@@ -69,7 +101,7 @@ export async function getCurrentUser(): Promise<ServerUser | null> {
       status: user.status,
       is_verified: user.is_verified || false,
       created_at: user.created_at,
-      last_login_at: user.updated_at,
+      updated_at: user.updated_at,
     }
   } catch (error) {
     console.error("❌ [SERVER-AUTH] Error getting current user:", error)
@@ -77,41 +109,51 @@ export async function getCurrentUser(): Promise<ServerUser | null> {
   }
 }
 
-// Get current user from request (required export)
+// Get current user from request
 export async function getCurrentUserFromRequest(request: NextRequest): Promise<ServerUser | null> {
   try {
     console.log("🔍 [SERVER-AUTH] Getting current user from request...")
-    console.log("🔍 [SERVER-AUTH] Request URL:", request.url)
 
-    const token = request.cookies.get("auth-token")?.value
+    // Try multiple cookie names
+    let token = request.cookies.get("auth-token")?.value
+    if (!token) token = request.cookies.get("auth_token")?.value
+    if (!token) token = request.cookies.get("session_token")?.value
+
+    console.log("🔍 [SERVER-AUTH] Request cookie search results:", {
+      authToken: !!request.cookies.get("auth-token")?.value,
+      authTokenAlt: !!request.cookies.get("auth_token")?.value,
+      sessionToken: !!request.cookies.get("session_token")?.value,
+      foundToken: !!token,
+    })
 
     if (!token) {
       console.log("❌ [SERVER-AUTH] No auth token found in request cookies")
-
-      // Log all available cookies for debugging
-      const allCookies = Array.from(request.cookies.entries()).map(([name, cookie]) => ({
-        name,
-        hasValue: !!cookie.value,
-        valuePreview: cookie.value ? cookie.value.substring(0, 20) + "..." : "empty",
-      }))
-      console.log("🔍 [SERVER-AUTH] Available request cookies:", allCookies)
-
       return null
     }
 
     console.log("✅ [SERVER-AUTH] Auth token found in request, verifying...")
 
     // Verify JWT token
-    const payload = verifyToken(token)
-    if (!payload) {
-      console.log("❌ [SERVER-AUTH] Invalid or expired token")
+    let payload: TokenPayload
+    try {
+      payload = jwt.verify(token, JWT_SECRET, {
+        issuer: "recipe-site",
+        audience: "recipe-site-users",
+      }) as TokenPayload
+
+      console.log("✅ [SERVER-AUTH] Request token verified:", {
+        userId: payload.userId,
+        email: payload.email,
+        role: payload.role,
+      })
+    } catch (jwtError) {
+      console.log("❌ [SERVER-AUTH] Request JWT verification failed:", jwtError)
       return null
     }
 
     console.log("✅ [SERVER-AUTH] Token verified, fetching user:", payload.userId)
 
-    // Get user from database with detailed logging
-    console.log("🔍 [SERVER-AUTH] Querying database for user...")
+    // Get user from database
     const users = await sql`
       SELECT id, username, email, role, status, is_verified, created_at, updated_at
       FROM users 
@@ -119,22 +161,8 @@ export async function getCurrentUserFromRequest(request: NextRequest): Promise<S
       AND status = 'active'
     `
 
-    console.log("🔍 [SERVER-AUTH] Database query result:", {
-      found: users.length,
-      userId: payload.userId,
-    })
-
     if (users.length === 0) {
       console.log("❌ [SERVER-AUTH] User not found in database for ID:", payload.userId)
-
-      // Additional debugging: check if user exists with different ID format
-      try {
-        const allUsers = await sql`SELECT id, username, role FROM users LIMIT 5`
-        console.log("🔍 [SERVER-AUTH] Sample users in database:", allUsers)
-      } catch (debugError) {
-        console.log("❌ [SERVER-AUTH] Could not query sample users:", debugError)
-      }
-
       return null
     }
 
@@ -144,16 +172,6 @@ export async function getCurrentUserFromRequest(request: NextRequest): Promise<S
       username: user.username,
       role: user.role,
       status: user.status,
-      is_verified: user.is_verified,
-    })
-
-    // Additional admin role verification
-    const adminRoles = ["admin", "owner", "moderator"]
-    const isAdminUser = adminRoles.includes(user.role)
-    console.log("🔍 [SERVER-AUTH] Admin role check:", {
-      userRole: user.role,
-      isAdmin: isAdminUser,
-      adminRoles: adminRoles,
     })
 
     return {
@@ -164,7 +182,7 @@ export async function getCurrentUserFromRequest(request: NextRequest): Promise<S
       status: user.status,
       is_verified: user.is_verified || false,
       created_at: user.created_at,
-      last_login_at: user.updated_at,
+      updated_at: user.updated_at,
     }
   } catch (error) {
     console.error("❌ [SERVER-AUTH] Error getting current user from request:", error)
@@ -187,7 +205,7 @@ export async function requireAuth(request?: NextRequest): Promise<ServerUser | n
   return user
 }
 
-// Require authentication from request (required export)
+// Require authentication from request
 export async function requireAuthFromRequest(request: NextRequest): Promise<ServerUser> {
   const user = await getCurrentUserFromRequest(request)
   if (!user) {
@@ -234,26 +252,6 @@ export async function requireAdmin(request?: NextRequest): Promise<ServerUser> {
     console.error("❌ [SERVER-AUTH] Admin check failed:", error)
     throw error
   }
-}
-
-// Require owner role for server-side operations
-export async function requireOwner(request?: NextRequest): Promise<ServerUser> {
-  console.log("🔒 [SERVER-AUTH] Requiring owner role")
-
-  const user = request ? await getCurrentUserFromRequest(request) : await getCurrentUser()
-
-  if (!user) {
-    console.log("❌ [SERVER-AUTH] No authenticated user")
-    throw new Error("Authentication required")
-  }
-
-  if (user.role !== "owner") {
-    console.log("❌ [SERVER-AUTH] User does not have owner role:", user.role)
-    throw new Error("Owner access required")
-  }
-
-  console.log("✅ [SERVER-AUTH] Owner access verified for:", user.username)
-  return user
 }
 
 // Check if user is admin
@@ -315,237 +313,4 @@ export function isOwner(user: ServerUser | null): boolean {
   })
 
   return hasOwnerAccess
-}
-
-// Check if user has specific role
-export function hasRole(user: ServerUser | null, role: string): boolean {
-  if (!user) {
-    console.log("❌ [SERVER-AUTH] Role check: no user provided")
-    return false
-  }
-
-  const hasAccess = user.role === role
-  console.log(`🔍 [SERVER-AUTH] Role check (${role}) for ${user.username}: ${hasAccess ? "granted" : "denied"}`)
-  return hasAccess
-}
-
-// Check if user has any of the specified roles
-export function hasAnyRole(user: ServerUser | null, roles: string[]): boolean {
-  if (!user) {
-    console.log("❌ [SERVER-AUTH] Any role check: no user provided")
-    return false
-  }
-
-  const hasAccess = roles.includes(user.role)
-  console.log(
-    `🔍 [SERVER-AUTH] Any role check (${roles.join(", ")}) for ${user.username}: ${hasAccess ? "granted" : "denied"}`,
-  )
-  return hasAccess
-}
-
-// Check if user can moderate
-export function canModerate(user: ServerUser | null): boolean {
-  return isModerator(user)
-}
-
-// Check if user can access admin features
-export function canAccessAdmin(user: ServerUser | null): boolean {
-  return isAdmin(user) || isModerator(user)
-}
-
-// Require specific permission level
-export async function requirePermission(request: NextRequest, requiredRole: string): Promise<ServerUser> {
-  try {
-    const user = await getCurrentUserFromRequest(request)
-    if (!user) {
-      console.log("❌ [SERVER-AUTH] Authentication required for permission check")
-      throw new Error("Authentication required")
-    }
-
-    const roleHierarchy: Record<string, number> = {
-      user: 1,
-      verified: 2,
-      moderator: 3,
-      admin: 4,
-      owner: 5,
-    }
-
-    const userLevel = roleHierarchy[user.role] || 0
-    const requiredLevel = roleHierarchy[requiredRole] || 0
-
-    if (userLevel < requiredLevel) {
-      console.log(`❌ [SERVER-AUTH] Insufficient permissions: ${user.role} < ${requiredRole}`)
-      throw new Error(`Insufficient permissions. Required: ${requiredRole}, Current: ${user.role}`)
-    }
-
-    console.log(`✅ [SERVER-AUTH] Permission granted: ${user.role} >= ${requiredRole}`)
-    return user
-  } catch (error) {
-    console.error("❌ [SERVER-AUTH] Error checking permissions:", error)
-    throw error
-  }
-}
-
-// Get user role level
-export function getUserRoleLevel(user: ServerUser | null): number {
-  if (!user) return 0
-
-  const roleHierarchy: Record<string, number> = {
-    user: 1,
-    verified: 2,
-    moderator: 3,
-    admin: 4,
-    owner: 5,
-  }
-
-  return roleHierarchy[user.role] || 0
-}
-
-// Check if user is verified
-export function isVerified(user: ServerUser | null): boolean {
-  return user?.is_verified === true
-}
-
-// Require verified user
-export async function requireVerified(request: NextRequest): Promise<ServerUser> {
-  try {
-    const user = await getCurrentUserFromRequest(request)
-    if (!user) {
-      console.log("❌ [SERVER-AUTH] Authentication required for verification check")
-      throw new Error("Authentication required")
-    }
-
-    if (!isVerified(user)) {
-      console.log("❌ [SERVER-AUTH] Email verification required")
-      throw new Error("Email verification required")
-    }
-
-    console.log("✅ [SERVER-AUTH] Verified user access granted")
-    return user
-  } catch (error) {
-    console.error("❌ [SERVER-AUTH] Error checking verification:", error)
-    throw error
-  }
-}
-
-// Set authentication cookie
-export async function setAuthCookie(token: string): Promise<void> {
-  try {
-    console.log("🔍 [SERVER-AUTH] Setting authentication cookie")
-
-    const cookieStore = await cookies()
-
-    // Set the primary auth token cookie
-    cookieStore.set("auth-token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 7, // 7 days
-      path: "/",
-    })
-
-    console.log("✅ [SERVER-AUTH] Authentication cookie set successfully")
-  } catch (error) {
-    console.error("❌ [SERVER-AUTH] Error setting authentication cookie:", error)
-    throw error
-  }
-}
-
-// Clear authentication cookie
-export async function clearAuthCookie(): Promise<void> {
-  try {
-    console.log("🔍 [SERVER-AUTH] Clearing authentication cookie")
-
-    const cookieStore = await cookies()
-    const cookieNames = ["auth-token", "auth_token", "auth_session", "session", "session_token"]
-
-    for (const cookieName of cookieNames) {
-      cookieStore.delete(cookieName)
-    }
-
-    console.log("✅ [SERVER-AUTH] Authentication cookies cleared successfully")
-  } catch (error) {
-    console.error("❌ [SERVER-AUTH] Error clearing authentication cookies:", error)
-    throw error
-  }
-}
-
-// Create session for user
-export async function createSession(userId: string): Promise<string> {
-  try {
-    console.log("🔄 [SERVER-AUTH] Creating new session for user:", userId)
-
-    // Generate session token using the auth library
-    const { generateToken } = await import("@/lib/auth-system")
-    const user = await sql`SELECT * FROM users WHERE id = ${userId}`
-
-    if (user.length === 0) {
-      throw new Error("User not found")
-    }
-
-    const sessionToken = generateToken({
-      userId: user[0].id.toString(),
-      email: user[0].email,
-      role: user[0].role,
-    })
-
-    console.log("✅ [SERVER-AUTH] Session created successfully")
-    return sessionToken
-  } catch (error) {
-    console.error("❌ [SERVER-AUTH] Error creating session:", error)
-    throw error
-  }
-}
-
-// Destroy session
-export async function destroySession(sessionToken: string): Promise<void> {
-  try {
-    console.log("🔄 [SERVER-AUTH] Destroying session")
-    // For JWT tokens, we just need to clear the cookie
-    // The token will expire naturally
-    await clearAuthCookie()
-    console.log("✅ [SERVER-AUTH] Session destroyed successfully")
-  } catch (error) {
-    console.error("❌ [SERVER-AUTH] Error destroying session:", error)
-    throw error
-  }
-}
-
-// Get user by ID (utility function)
-export async function getUserById(id: number): Promise<ServerUser | null> {
-  console.log("🔍 [SERVER-AUTH] Getting user by ID:", id)
-
-  try {
-    const users = await sql`
-      SELECT id, username, email, role, status, is_verified, created_at, updated_at
-      FROM users 
-      WHERE id = ${id}
-    `
-
-    if (users.length === 0) {
-      console.log("❌ [SERVER-AUTH] User not found by ID:", id)
-      return null
-    }
-
-    const user = users[0] as any
-    console.log("✅ [SERVER-AUTH] User found by ID:", {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-    })
-
-    return {
-      id: user.id.toString(),
-      username: user.username,
-      email: user.email,
-      role: user.role,
-      status: user.status,
-      is_verified: user.is_verified || false,
-      created_at: user.created_at,
-      last_login_at: user.updated_at,
-    }
-  } catch (error) {
-    console.error("❌ [SERVER-AUTH] Error getting user by ID:", error)
-    return null
-  }
 }

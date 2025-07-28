@@ -1,7 +1,4 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { neon } from "@neondatabase/serverless"
-
-const sql = neon(process.env.DATABASE_URL!)
 
 export const dynamic = "force-dynamic"
 
@@ -9,19 +6,16 @@ export async function POST(request: NextRequest) {
   console.log("🚪 [AUTH-LOGOUT] Logout request received")
 
   try {
-    // Get session token from cookies
+    // Get all possible token cookies
+    const authToken = request.cookies.get("auth-token")?.value
+    const authTokenAlt = request.cookies.get("auth_token")?.value
     const sessionToken = request.cookies.get("session_token")?.value
-    console.log("🔍 [AUTH-LOGOUT] Session token present:", !!sessionToken)
 
-    if (sessionToken) {
-      // Delete session from database
-      console.log("🗑️ [AUTH-LOGOUT] Deleting session from database...")
-      await sql`
-        DELETE FROM user_sessions
-        WHERE session_token = ${sessionToken}
-      `
-      console.log("✅ [AUTH-LOGOUT] Session deleted from database")
-    }
+    console.log("🔍 [AUTH-LOGOUT] Found cookies:", {
+      authToken: !!authToken,
+      authTokenAlt: !!authTokenAlt,
+      sessionToken: !!sessionToken,
+    })
 
     console.log("✅ [AUTH-LOGOUT] Logout completed successfully")
 
@@ -31,14 +25,20 @@ export async function POST(request: NextRequest) {
       message: "Logout successful",
     })
 
-    // Clear session cookie
-    response.cookies.set("session_token", "", {
+    // Clear all possible cookie names
+    const cookieOptions = {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      sameSite: "lax" as const,
       maxAge: 0, // Expire immediately
       path: "/",
-    })
+    }
+
+    response.cookies.set("auth-token", "", cookieOptions)
+    response.cookies.set("auth_token", "", cookieOptions)
+    response.cookies.set("session_token", "", cookieOptions)
+
+    console.log("🍪 [AUTH-LOGOUT] All authentication cookies cleared")
 
     return response
   } catch (error) {

@@ -1,9 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { neon } from "@neondatabase/serverless"
 import bcrypt from "bcryptjs"
-import { v4 as uuidv4 } from "uuid"
+import jwt from "jsonwebtoken"
 
 const sql = neon(process.env.DATABASE_URL!)
+const JWT_SECRET = process.env.JWT_SECRET || "fallback-secret-key-for-development"
 
 export const dynamic = "force-dynamic"
 
@@ -21,7 +22,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Email and password are required" }, { status: 400 })
     }
 
-    // Ensure tables exist
+    // Ensure users table exists
     await sql`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
@@ -36,20 +37,10 @@ export async function POST(request: NextRequest) {
       )
     `
 
-    await sql`
-      CREATE TABLE IF NOT EXISTS user_sessions (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        session_token VARCHAR(255) UNIQUE NOT NULL,
-        expires_at TIMESTAMP NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `
-
     // Find user by email
     console.log("🔍 [AUTH-LOGIN] Looking up user...")
     const users = await sql`
-      SELECT id, username, email, password_hash, role, status, is_verified
+      SELECT id, username, email, password_hash, role, status, is_verified, created_at, updated_at
       FROM users
       WHERE email = ${email}
     `
@@ -84,25 +75,21 @@ export async function POST(request: NextRequest) {
 
     console.log("✅ [AUTH-LOGIN] Password verified successfully")
 
-    // Create session
-    const sessionToken = uuidv4()
-    const expiresAt = new Date()
-    expiresAt.setDate(expiresAt.getDate() + 7) // 7 days
+    // Generate JWT token
+    const tokenPayload = {
+      userId: user.id.toString(),
+      email: user.email,
+      role: user.role,
+      username: user.username,
+    }
 
-    console.log("🔑 [AUTH-LOGIN] Creating session...")
-    await sql`
-      INSERT INTO user_sessions (user_id, session_token, expires_at)
-      VALUES (${user.id}, ${sessionToken}, ${expiresAt})
-    `
+    const token = jwt.sign(tokenPayload, JWT_SECRET, {
+      expiresIn: "7d",
+      issuer: "recipe-site",
+      audience: "recipe-site-users",
+    })
 
-    // Clean up old sessions
-    await sql`
-      DELETE FROM user_sessions
-      WHERE user_id = ${user.id}
-        AND expires_at < NOW()
-    `
-
-    console.log("✅ [AUTH-LOGIN] Session created successfully")
+    console.log("🔑 [AUTH-LOGIN] JWT token generated")
 
     // Update last login
     await sql`
@@ -118,25 +105,40 @@ export async function POST(request: NextRequest) {
       email: user.email,
       role: user.role,
       status: user.status,
-      isVerified: user.is_verified,
+      is_verified: user.is_verified,
+      created_at: user.created_at,
+      updated_at: user.updated_at,
     }
 
     console.log("✅ [AUTH-LOGIN] Login successful for user:", user.username)
 
-    // Create response with session cookie
+    // Create response
     const response = NextResponse.json({
       success: true,
       user: userResponse,
       message: "Login successful",
+      token: token, // Also return token in response for debugging
     })
 
-    // Set session cookie
-    response.cookies.set("session_token", sessionToken, {
+    // Set multiple cookie formats for compatibility
+    const cookieOptions = {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      sameSite: "lax" as const,
       maxAge: 60 * 60 * 24 * 7, // 7 days
       path: "/",
+    }
+
+    // Set primary auth token cookie
+    response.cookies.set("auth-token", token, cookieOptions)
+
+    // Set backup cookie names for compatibility
+    response.cookies.set("auth_token", token, cookieOptions)
+    response.cookies.set("session_token", token, cookieOptions)
+
+    console.log("🍪 [AUTH-LOGIN] Authentication cookies set:", {
+      tokenLength: token.length,
+      cookieOptions,
     })
 
     return response

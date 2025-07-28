@@ -1,41 +1,78 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { neon } from "@neondatabase/serverless"
+import jwt from "jsonwebtoken"
 
 const sql = neon(process.env.DATABASE_URL!)
+const JWT_SECRET = process.env.JWT_SECRET || "fallback-secret-key-for-development"
 
 export const dynamic = "force-dynamic"
+
+interface TokenPayload {
+  userId: string
+  email: string
+  role: string
+  username: string
+  iat?: number
+  exp?: number
+}
 
 export async function GET(request: NextRequest) {
   console.log("👤 [AUTH-ME] Getting current user")
 
   try {
-    // Get session token from cookies
-    const sessionToken = request.cookies.get("session_token")?.value
-    console.log("🔍 [AUTH-ME] Session token present:", !!sessionToken)
+    // Try to get token from multiple cookie names
+    let token = request.cookies.get("auth-token")?.value
+    if (!token) token = request.cookies.get("auth_token")?.value
+    if (!token) token = request.cookies.get("session_token")?.value
 
-    if (!sessionToken) {
-      console.log("❌ [AUTH-ME] No session token found")
-      return NextResponse.json({ success: false, error: "No session token" }, { status: 401 })
+    console.log("🔍 [AUTH-ME] Token search results:", {
+      authToken: !!request.cookies.get("auth-token")?.value,
+      authTokenAlt: !!request.cookies.get("auth_token")?.value,
+      sessionToken: !!request.cookies.get("session_token")?.value,
+      foundToken: !!token,
+    })
+
+    if (!token) {
+      console.log("❌ [AUTH-ME] No authentication token found")
+      return NextResponse.json({ success: false, error: "No authentication token" }, { status: 401 })
     }
 
-    // Verify session and get user
-    console.log("🔍 [AUTH-ME] Verifying session...")
-    const userResult = await sql`
-      SELECT u.id, u.username, u.email, u.role, u.status, u.is_verified, u.created_at
-      FROM users u
-      JOIN user_sessions s ON u.id = s.user_id
-      WHERE s.session_token = ${sessionToken}
-        AND s.expires_at > NOW()
-        AND u.status = 'active'
+    // Verify JWT token
+    console.log("🔍 [AUTH-ME] Verifying JWT token...")
+    let payload: TokenPayload
+    try {
+      payload = jwt.verify(token, JWT_SECRET, {
+        issuer: "recipe-site",
+        audience: "recipe-site-users",
+      }) as TokenPayload
+
+      console.log("✅ [AUTH-ME] JWT token verified:", {
+        userId: payload.userId,
+        email: payload.email,
+        role: payload.role,
+        username: payload.username,
+      })
+    } catch (jwtError) {
+      console.log("❌ [AUTH-ME] JWT verification failed:", jwtError)
+      return NextResponse.json({ success: false, error: "Invalid or expired token" }, { status: 401 })
+    }
+
+    // Get user from database to ensure they still exist and are active
+    console.log("🔍 [AUTH-ME] Fetching user from database...")
+    const users = await sql`
+      SELECT id, username, email, role, status, is_verified, created_at, updated_at
+      FROM users
+      WHERE id = ${payload.userId}
+        AND status = 'active'
     `
 
-    if (userResult.length === 0) {
-      console.log("❌ [AUTH-ME] Invalid or expired session")
-      return NextResponse.json({ success: false, error: "Invalid or expired session" }, { status: 401 })
+    if (users.length === 0) {
+      console.log("❌ [AUTH-ME] User not found or inactive:", payload.userId)
+      return NextResponse.json({ success: false, error: "User not found or inactive" }, { status: 401 })
     }
 
-    const user = userResult[0]
-    console.log("✅ [AUTH-ME] User found:", {
+    const user = users[0]
+    console.log("✅ [AUTH-ME] User found and active:", {
       id: user.id,
       username: user.username,
       role: user.role,
@@ -51,8 +88,9 @@ export async function GET(request: NextRequest) {
         email: user.email,
         role: user.role,
         status: user.status,
-        isVerified: user.is_verified,
-        createdAt: user.created_at,
+        is_verified: user.is_verified,
+        created_at: user.created_at,
+        updated_at: user.updated_at,
       },
       message: "User retrieved successfully",
     })
