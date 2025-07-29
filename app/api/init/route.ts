@@ -11,7 +11,7 @@ export async function POST() {
 
   try {
     // Create users table
-    console.log("👥 [INIT] Creating users table...")
+    console.log("📋 [INIT] Creating users table...")
     await sql`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
@@ -21,29 +21,13 @@ export async function POST() {
         role VARCHAR(50) DEFAULT 'user',
         status VARCHAR(50) DEFAULT 'active',
         is_verified BOOLEAN DEFAULT false,
-        is_profile_verified BOOLEAN DEFAULT false,
-        warning_count INTEGER DEFAULT 0,
-        suspension_reason TEXT,
-        suspension_expires_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `
 
-    // Create user_sessions table
-    console.log("🔐 [INIT] Creating user_sessions table...")
-    await sql`
-      CREATE TABLE IF NOT EXISTS user_sessions (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        session_token VARCHAR(255) UNIQUE NOT NULL,
-        expires_at TIMESTAMP NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `
-
     // Create recipes table
-    console.log("🍳 [INIT] Creating recipes table...")
+    console.log("📋 [INIT] Creating recipes table...")
     await sql`
       CREATE TABLE IF NOT EXISTS recipes (
         id SERIAL PRIMARY KEY,
@@ -60,15 +44,41 @@ export async function POST() {
         author_id INTEGER REFERENCES users(id),
         status VARCHAR(50) DEFAULT 'pending',
         moderation_status VARCHAR(50) DEFAULT 'pending',
-        moderated_by INTEGER REFERENCES users(id),
-        moderated_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `
 
-    // Create pending_recipes table
-    console.log("⏳ [INIT] Creating pending_recipes table...")
+    // Create comments table
+    console.log("📋 [INIT] Creating comments table...")
+    await sql`
+      CREATE TABLE IF NOT EXISTS comments (
+        id SERIAL PRIMARY KEY,
+        recipe_id INTEGER REFERENCES recipes(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES users(id),
+        content TEXT NOT NULL,
+        status VARCHAR(50) DEFAULT 'active',
+        is_flagged BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `
+
+    // Create ratings table
+    console.log("📋 [INIT] Creating ratings table...")
+    await sql`
+      CREATE TABLE IF NOT EXISTS ratings (
+        id SERIAL PRIMARY KEY,
+        recipe_id INTEGER REFERENCES recipes(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES users(id),
+        rating INTEGER CHECK (rating >= 1 AND rating <= 5),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(recipe_id, user_id)
+      )
+    `
+
+    // Create pending recipes table
+    console.log("📋 [INIT] Creating pending_recipes table...")
     await sql`
       CREATE TABLE IF NOT EXISTS pending_recipes (
         id SERIAL PRIMARY KEY,
@@ -89,8 +99,8 @@ export async function POST() {
       )
     `
 
-    // Create rejected_recipes table
-    console.log("❌ [INIT] Creating rejected_recipes table...")
+    // Create rejected recipes table
+    console.log("📋 [INIT] Creating rejected_recipes table...")
     await sql`
       CREATE TABLE IF NOT EXISTS rejected_recipes (
         id SERIAL PRIMARY KEY,
@@ -106,54 +116,10 @@ export async function POST() {
       )
     `
 
-    // Create comments table
-    console.log("💬 [INIT] Creating comments table...")
-    await sql`
-      CREATE TABLE IF NOT EXISTS comments (
-        id SERIAL PRIMARY KEY,
-        recipe_id INTEGER REFERENCES recipes(id) ON DELETE CASCADE,
-        user_id INTEGER REFERENCES users(id),
-        content TEXT NOT NULL,
-        status VARCHAR(50) DEFAULT 'active',
-        is_flagged BOOLEAN DEFAULT false,
-        flagged_by INTEGER REFERENCES users(id),
-        flagged_at TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `
-
-    // Create ratings table
-    console.log("⭐ [INIT] Creating ratings table...")
-    await sql`
-      CREATE TABLE IF NOT EXISTS ratings (
-        id SERIAL PRIMARY KEY,
-        recipe_id INTEGER REFERENCES recipes(id) ON DELETE CASCADE,
-        user_id INTEGER REFERENCES users(id),
-        rating INTEGER CHECK (rating >= 1 AND rating <= 5),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(recipe_id, user_id)
-      )
-    `
-
-    // Create email_tokens table
-    console.log("📧 [INIT] Creating email_tokens table...")
-    await sql`
-      CREATE TABLE IF NOT EXISTS email_tokens (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        token VARCHAR(255) UNIQUE NOT NULL,
-        token_type VARCHAR(50) NOT NULL,
-        expires_at TIMESTAMP NOT NULL,
-        used BOOLEAN DEFAULT false,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `
-
     console.log("✅ [INIT] All tables created successfully")
 
     // Check if owner account already exists
-    console.log("👑 [INIT] Checking for existing owner account...")
+    console.log("👤 [INIT] Checking for existing owner account...")
     const existingOwner = await sql`
       SELECT id, username, email, role 
       FROM users 
@@ -166,206 +132,116 @@ export async function POST() {
         username: existingOwner[0].username,
         email: existingOwner[0].email,
       })
+    } else {
+      // Create owner account
+      console.log("👤 [INIT] Creating owner account...")
+      const ownerPasswordHash = await bcrypt.hash("Morton2121", 12)
 
-      return NextResponse.json({
-        success: true,
-        message: "System already initialized",
-        owner: {
-          id: existingOwner[0].id,
-          username: existingOwner[0].username,
-          email: existingOwner[0].email,
-          role: existingOwner[0].role,
-        },
-      })
+      await sql`
+        INSERT INTO users (username, email, password_hash, role, status, is_verified)
+        VALUES ('aaronhirshka', 'aaronhirshka@gmail.com', ${ownerPasswordHash}, 'owner', 'active', true)
+        ON CONFLICT (email) DO UPDATE SET
+          role = 'owner',
+          status = 'active',
+          is_verified = true,
+          updated_at = CURRENT_TIMESTAMP
+      `
+
+      console.log("✅ [INIT] Owner account created/updated")
     }
 
-    // Create owner account
-    console.log("👑 [INIT] Creating owner account...")
-    const ownerEmail = "aaronhirshka@gmail.com"
-    const ownerUsername = "aaronhirshka"
-    const ownerPassword = "Morton2121"
+    // Create sample users if they don't exist
+    console.log("👥 [INIT] Creating sample users...")
 
-    const passwordHash = await bcrypt.hash(ownerPassword, 12)
-
-    const newOwner = await sql`
-      INSERT INTO users (
-        username, 
-        email, 
-        password_hash, 
-        role, 
-        status, 
-        is_verified, 
-        is_profile_verified
-      )
-      VALUES (
-        ${ownerUsername}, 
-        ${ownerEmail}, 
-        ${passwordHash}, 
-        'owner', 
-        'active', 
-        true, 
-        true
-      )
-      RETURNING id, username, email, role, status, is_verified, created_at
-    `
-
-    console.log("✅ [INIT] Owner account created successfully:", {
-      id: newOwner[0].id,
-      username: newOwner[0].username,
-      email: newOwner[0].email,
-      role: newOwner[0].role,
-    })
-
-    // Create some sample data
-    console.log("📝 [INIT] Creating sample data...")
-
-    // Create a sample admin user
     const adminPasswordHash = await bcrypt.hash("admin123", 12)
-    const sampleAdmin = await sql`
-      INSERT INTO users (
-        username, 
-        email, 
-        password_hash, 
-        role, 
-        status, 
-        is_verified, 
-        is_profile_verified
-      )
-      VALUES (
-        'admin', 
-        'admin@recipe-site.com', 
-        ${adminPasswordHash}, 
-        'admin', 
-        'active', 
-        true, 
-        true
-      )
-      RETURNING id, username, email, role
-    `
-
-    // Create a sample moderator user
     const modPasswordHash = await bcrypt.hash("mod123", 12)
-    const sampleMod = await sql`
-      INSERT INTO users (
-        username, 
-        email, 
-        password_hash, 
-        role, 
-        status, 
-        is_verified, 
-        is_profile_verified
-      )
-      VALUES (
-        'moderator', 
-        'mod@recipe-site.com', 
-        ${modPasswordHash}, 
-        'moderator', 
-        'active', 
-        true, 
-        true
-      )
-      RETURNING id, username, email, role
-    `
-
-    // Create a sample regular user
     const userPasswordHash = await bcrypt.hash("user123", 12)
-    const sampleUser = await sql`
-      INSERT INTO users (
-        username, 
-        email, 
-        password_hash, 
-        role, 
-        status, 
-        is_verified, 
-        is_profile_verified
-      )
-      VALUES (
-        'testuser', 
-        'user@recipe-site.com', 
-        ${userPasswordHash}, 
-        'user', 
-        'active', 
-        true, 
-        true
-      )
-      RETURNING id, username, email, role
+
+    // Admin user
+    await sql`
+      INSERT INTO users (username, email, password_hash, role, status, is_verified)
+      VALUES ('admin', 'admin@recipe-site.com', ${adminPasswordHash}, 'admin', 'active', true)
+      ON CONFLICT (email) DO UPDATE SET
+        role = 'admin',
+        status = 'active',
+        is_verified = true,
+        updated_at = CURRENT_TIMESTAMP
     `
 
-    console.log("✅ [INIT] Sample users created:", {
-      admin: sampleAdmin[0].username,
-      moderator: sampleMod[0].username,
-      user: sampleUser[0].username,
-    })
+    // Moderator user
+    await sql`
+      INSERT INTO users (username, email, password_hash, role, status, is_verified)
+      VALUES ('moderator', 'mod@recipe-site.com', ${modPasswordHash}, 'moderator', 'active', true)
+      ON CONFLICT (email) DO UPDATE SET
+        role = 'moderator',
+        status = 'active',
+        is_verified = true,
+        updated_at = CURRENT_TIMESTAMP
+    `
+
+    // Regular user
+    await sql`
+      INSERT INTO users (username, email, password_hash, role, status, is_verified)
+      VALUES ('testuser', 'user@recipe-site.com', ${userPasswordHash}, 'user', 'active', true)
+      ON CONFLICT (email) DO UPDATE SET
+        role = 'user',
+        status = 'active',
+        is_verified = true,
+        updated_at = CURRENT_TIMESTAMP
+    `
+
+    console.log("✅ [INIT] Sample users created/updated")
 
     // Create sample recipes
-    const sampleRecipe1 = await sql`
-      INSERT INTO recipes (
-        title,
-        description,
-        ingredients,
-        instructions,
-        prep_time,
-        cook_time,
-        servings,
-        difficulty,
-        tags,
-        author_id,
-        status,
-        moderation_status
-      )
-      VALUES (
-        'Classic Chocolate Chip Cookies',
-        'Delicious homemade chocolate chip cookies that are crispy on the outside and chewy on the inside.',
-        '["2 1/4 cups all-purpose flour", "1 tsp baking soda", "1 tsp salt", "1 cup butter, softened", "3/4 cup granulated sugar", "3/4 cup brown sugar", "2 large eggs", "2 tsp vanilla extract", "2 cups chocolate chips"]',
-        '["Preheat oven to 375°F", "Mix flour, baking soda, and salt in a bowl", "Cream butter and sugars", "Beat in eggs and vanilla", "Gradually add flour mixture", "Stir in chocolate chips", "Drop spoonfuls on baking sheet", "Bake 9-11 minutes"]',
-        15,
-        10,
-        24,
-        'easy',
-        '["dessert", "cookies", "chocolate", "baking"]',
-        ${newOwner[0].id},
-        'approved',
-        'approved'
-      )
-      RETURNING id, title
-    `
+    console.log("🍳 [INIT] Creating sample recipes...")
 
-    const sampleRecipe2 = await sql`
-      INSERT INTO recipes (
-        title,
-        description,
-        ingredients,
-        instructions,
-        prep_time,
-        cook_time,
-        servings,
-        difficulty,
-        tags,
-        author_id,
-        status,
-        moderation_status
-      )
-      VALUES (
-        'Spaghetti Carbonara',
-        'A classic Italian pasta dish with eggs, cheese, and pancetta.',
-        '["1 lb spaghetti", "6 oz pancetta, diced", "4 large eggs", "1 cup Parmesan cheese, grated", "2 cloves garlic, minced", "Salt and pepper to taste", "Fresh parsley for garnish"]',
-        '["Cook spaghetti according to package directions", "Cook pancetta until crispy", "Whisk eggs and cheese together", "Drain pasta, reserve 1 cup pasta water", "Toss hot pasta with pancetta", "Remove from heat, add egg mixture", "Toss quickly, adding pasta water as needed", "Season and serve immediately"]',
-        10,
-        15,
-        4,
-        'medium',
-        '["pasta", "italian", "dinner", "eggs", "cheese"]',
-        ${sampleAdmin[0].id},
-        'approved',
-        'approved'
-      )
-      RETURNING id, title
-    `
+    const users = await sql`SELECT id FROM users WHERE role = 'owner' LIMIT 1`
+    const ownerId = users[0]?.id
 
-    console.log("✅ [INIT] Sample recipes created:", {
-      recipe1: sampleRecipe1[0].title,
-      recipe2: sampleRecipe2[0].title,
-    })
+    if (ownerId) {
+      await sql`
+        INSERT INTO recipes (
+          title, description, ingredients, instructions, 
+          prep_time, cook_time, servings, difficulty, 
+          tags, author_id, status, moderation_status
+        )
+        VALUES (
+          'Classic Chocolate Chip Cookies',
+          'Delicious homemade chocolate chip cookies that are crispy on the outside and chewy on the inside.',
+          '["2 1/4 cups all-purpose flour", "1 tsp baking soda", "1 tsp salt", "1 cup butter, softened", "3/4 cup granulated sugar", "3/4 cup brown sugar", "2 large eggs", "2 tsp vanilla extract", "2 cups chocolate chips"]',
+          '["Preheat oven to 375°F", "Mix flour, baking soda, and salt in a bowl", "Cream butter and sugars", "Beat in eggs and vanilla", "Gradually add flour mixture", "Stir in chocolate chips", "Drop rounded tablespoons on ungreased cookie sheets", "Bake 9-11 minutes until golden brown"]',
+          15, 10, 24, 'easy',
+          '["dessert", "cookies", "chocolate", "baking"]',
+          ${ownerId}, 'approved', 'approved'
+        )
+        ON CONFLICT DO NOTHING
+      `
+
+      await sql`
+        INSERT INTO recipes (
+          title, description, ingredients, instructions, 
+          prep_time, cook_time, servings, difficulty, 
+          tags, author_id, status, moderation_status
+        )
+        VALUES (
+          'Spaghetti Carbonara',
+          'A classic Italian pasta dish with eggs, cheese, and pancetta.',
+          '["1 lb spaghetti", "6 oz pancetta, diced", "4 large eggs", "1 cup Parmesan cheese, grated", "2 cloves garlic, minced", "Salt and black pepper", "2 tbsp olive oil"]',
+          '["Cook spaghetti according to package directions", "Cook pancetta until crispy", "Whisk eggs and Parmesan in a bowl", "Drain pasta, reserve 1 cup pasta water", "Toss hot pasta with pancetta", "Remove from heat, add egg mixture", "Toss quickly, adding pasta water as needed", "Season with salt and pepper"]',
+          10, 15, 4, 'medium',
+          '["pasta", "italian", "dinner", "eggs"]',
+          ${ownerId}, 'approved', 'approved'
+        )
+        ON CONFLICT DO NOTHING
+      `
+
+      console.log("✅ [INIT] Sample recipes created")
+    }
+
+    // Get final counts
+    const userCount = await sql`SELECT COUNT(*) as count FROM users`
+    const recipeCount = await sql`SELECT COUNT(*) as count FROM recipes`
+    const commentCount = await sql`SELECT COUNT(*) as count FROM comments`
 
     console.log("🎉 [INIT] System initialization completed successfully!")
 
@@ -373,30 +249,26 @@ export async function POST() {
       success: true,
       message: "System initialized successfully",
       data: {
-        owner: {
-          id: newOwner[0].id,
-          username: newOwner[0].username,
-          email: newOwner[0].email,
-          role: newOwner[0].role,
-          password: ownerPassword, // Only for initial setup
+        tablesCreated: ["users", "recipes", "comments", "ratings", "pending_recipes", "rejected_recipes"],
+        accounts: {
+          owner: "aaronhirshka@gmail.com / Morton2121",
+          admin: "admin@recipe-site.com / admin123",
+          moderator: "mod@recipe-site.com / mod123",
+          user: "user@recipe-site.com / user123",
         },
-        sampleUsers: {
-          admin: { username: "admin", email: "admin@recipe-site.com", password: "admin123" },
-          moderator: { username: "moderator", email: "mod@recipe-site.com", password: "mod123" },
-          user: { username: "testuser", email: "user@recipe-site.com", password: "user123" },
+        counts: {
+          users: Number.parseInt(userCount[0]?.count || "0"),
+          recipes: Number.parseInt(recipeCount[0]?.count || "0"),
+          comments: Number.parseInt(commentCount[0]?.count || "0"),
         },
-        sampleRecipes: [
-          { id: sampleRecipe1[0].id, title: sampleRecipe1[0].title },
-          { id: sampleRecipe2[0].id, title: sampleRecipe2[0].title },
-        ],
       },
     })
   } catch (error) {
-    console.error("❌ [INIT] Initialization error:", error)
+    console.error("❌ [INIT] Initialization failed:", error)
     return NextResponse.json(
       {
         success: false,
-        error: "Failed to initialize system",
+        error: "System initialization failed",
         details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
