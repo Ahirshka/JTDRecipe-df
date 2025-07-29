@@ -9,44 +9,29 @@ const JWT_SECRET = process.env.JWT_SECRET || "fallback-secret-key-for-developmen
 export const dynamic = "force-dynamic"
 
 export async function POST(request: NextRequest) {
-  console.log("🔐 [AUTH-LOGIN] Login request received")
+  console.log("🔐 [AUTH-LOGIN] Login attempt started")
 
   try {
     const body = await request.json()
     const { email, password } = body
 
-    console.log("🔍 [AUTH-LOGIN] Login attempt for email:", email)
+    console.log("📧 [AUTH-LOGIN] Login attempt for email:", email)
 
     if (!email || !password) {
       console.log("❌ [AUTH-LOGIN] Missing email or password")
       return NextResponse.json({ success: false, error: "Email and password are required" }, { status: 400 })
     }
 
-    // Ensure users table exists
-    await sql`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        username VARCHAR(255) UNIQUE NOT NULL,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password_hash VARCHAR(255) NOT NULL,
-        role VARCHAR(50) DEFAULT 'user',
-        status VARCHAR(50) DEFAULT 'active',
-        is_verified BOOLEAN DEFAULT false,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `
-
     // Find user by email
-    console.log("🔍 [AUTH-LOGIN] Looking up user...")
+    console.log("🔍 [AUTH-LOGIN] Looking up user in database...")
     const users = await sql`
       SELECT id, username, email, password_hash, role, status, is_verified, created_at, updated_at
       FROM users
-      WHERE email = ${email}
+      WHERE email = ${email.toLowerCase()}
     `
 
     if (users.length === 0) {
-      console.log("❌ [AUTH-LOGIN] User not found for email:", email)
+      console.log("❌ [AUTH-LOGIN] User not found:", email)
       return NextResponse.json({ success: false, error: "Invalid email or password" }, { status: 401 })
     }
 
@@ -65,17 +50,18 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify password
-    console.log("🔍 [AUTH-LOGIN] Verifying password...")
+    console.log("🔒 [AUTH-LOGIN] Verifying password...")
     const isValidPassword = await bcrypt.compare(password, user.password_hash)
 
     if (!isValidPassword) {
-      console.log("❌ [AUTH-LOGIN] Invalid password for user:", user.username)
+      console.log("❌ [AUTH-LOGIN] Invalid password for user:", email)
       return NextResponse.json({ success: false, error: "Invalid email or password" }, { status: 401 })
     }
 
     console.log("✅ [AUTH-LOGIN] Password verified successfully")
 
     // Generate JWT token
+    console.log("🎫 [AUTH-LOGIN] Generating JWT token...")
     const tokenPayload = {
       userId: user.id.toString(),
       email: user.email,
@@ -89,17 +75,17 @@ export async function POST(request: NextRequest) {
       audience: "recipe-site-users",
     })
 
-    console.log("🔑 [AUTH-LOGIN] JWT token generated")
+    console.log("✅ [AUTH-LOGIN] JWT token generated successfully")
 
-    // Update last login
+    // Update last login time
     await sql`
-      UPDATE users
-      SET updated_at = CURRENT_TIMESTAMP
+      UPDATE users 
+      SET updated_at = CURRENT_TIMESTAMP 
       WHERE id = ${user.id}
     `
 
-    // Prepare user response (without password_hash)
-    const userResponse = {
+    // Create response with user data
+    const userData = {
       id: user.id,
       username: user.username,
       email: user.email,
@@ -110,17 +96,20 @@ export async function POST(request: NextRequest) {
       updated_at: user.updated_at,
     }
 
-    console.log("✅ [AUTH-LOGIN] Login successful for user:", user.username)
+    console.log("🎉 [AUTH-LOGIN] Login successful for user:", {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+    })
 
     // Create response
     const response = NextResponse.json({
       success: true,
-      user: userResponse,
+      user: userData,
       message: "Login successful",
-      token: token, // Also return token in response for debugging
     })
 
-    // Set multiple cookie formats for compatibility
+    // Set multiple cookies for maximum compatibility
     const cookieOptions = {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -129,21 +118,15 @@ export async function POST(request: NextRequest) {
       path: "/",
     }
 
-    // Set primary auth token cookie
     response.cookies.set("auth-token", token, cookieOptions)
-
-    // Set backup cookie names for compatibility
     response.cookies.set("auth_token", token, cookieOptions)
     response.cookies.set("session_token", token, cookieOptions)
 
-    console.log("🍪 [AUTH-LOGIN] Authentication cookies set:", {
-      tokenLength: token.length,
-      cookieOptions,
-    })
+    console.log("🍪 [AUTH-LOGIN] Authentication cookies set")
 
     return response
   } catch (error) {
-    console.error("❌ [AUTH-LOGIN] Error:", error)
+    console.error("❌ [AUTH-LOGIN] Login error:", error)
     return NextResponse.json(
       {
         success: false,

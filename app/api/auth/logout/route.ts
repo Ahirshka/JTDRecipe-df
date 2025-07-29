@@ -3,29 +3,16 @@ import { type NextRequest, NextResponse } from "next/server"
 export const dynamic = "force-dynamic"
 
 export async function POST(request: NextRequest) {
-  console.log("🚪 [AUTH-LOGOUT] Logout request received")
+  console.log("🚪 [AUTH-LOGOUT] Logout request started")
 
   try {
-    // Get all possible token cookies
-    const authToken = request.cookies.get("auth-token")?.value
-    const authTokenAlt = request.cookies.get("auth_token")?.value
-    const sessionToken = request.cookies.get("session_token")?.value
-
-    console.log("🔍 [AUTH-LOGOUT] Found cookies:", {
-      authToken: !!authToken,
-      authTokenAlt: !!authTokenAlt,
-      sessionToken: !!sessionToken,
-    })
-
-    console.log("✅ [AUTH-LOGOUT] Logout completed successfully")
-
     // Create response
     const response = NextResponse.json({
       success: true,
-      message: "Logout successful",
+      message: "Logged out successfully",
     })
 
-    // Clear all possible cookie names
+    // Clear all possible authentication cookies
     const cookieOptions = {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -38,11 +25,11 @@ export async function POST(request: NextRequest) {
     response.cookies.set("auth_token", "", cookieOptions)
     response.cookies.set("session_token", "", cookieOptions)
 
-    console.log("🍪 [AUTH-LOGOUT] All authentication cookies cleared")
+    console.log("✅ [AUTH-LOGOUT] Authentication cookies cleared")
 
     return response
   } catch (error) {
-    console.error("❌ [AUTH-LOGOUT] Error:", error)
+    console.error("❌ [AUTH-LOGOUT] Logout error:", error)
     return NextResponse.json(
       {
         success: false,

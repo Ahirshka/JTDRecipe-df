@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { neon } from "@neondatabase/serverless"
+import { getCurrentUserFromRequest } from "@/lib/server-auth"
 
 const sql = neon(process.env.DATABASE_URL!)
 
@@ -9,33 +10,16 @@ export async function GET(request: NextRequest) {
   console.log("📊 [ADMIN-STATS] Getting admin statistics")
 
   try {
-    // Check authentication first
-    const sessionToken = request.cookies.get("session_token")?.value
-    console.log("🔍 [ADMIN-STATS] Session token present:", !!sessionToken)
+    // Get current user and verify authentication
+    console.log("🔍 [ADMIN-STATS] Verifying user authentication...")
+    const user = await getCurrentUserFromRequest(request)
 
-    if (!sessionToken) {
-      console.log("❌ [ADMIN-STATS] No session token found")
+    if (!user) {
+      console.log("❌ [ADMIN-STATS] No authenticated user found")
       return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 })
     }
 
-    // Verify session and get user
-    console.log("🔍 [ADMIN-STATS] Verifying session...")
-    const userResult = await sql`
-      SELECT u.id, u.username, u.email, u.role, u.status, u.is_verified
-      FROM users u
-      JOIN user_sessions s ON u.id = s.user_id
-      WHERE s.session_token = ${sessionToken}
-        AND s.expires_at > NOW()
-        AND u.status = 'active'
-    `
-
-    if (userResult.length === 0) {
-      console.log("❌ [ADMIN-STATS] Invalid or expired session")
-      return NextResponse.json({ success: false, error: "Invalid or expired session" }, { status: 401 })
-    }
-
-    const user = userResult[0]
-    console.log("✅ [ADMIN-STATS] User found:", {
+    console.log("✅ [ADMIN-STATS] User authenticated:", {
       id: user.id,
       username: user.username,
       role: user.role,
@@ -44,8 +28,19 @@ export async function GET(request: NextRequest) {
     // Check if user has admin privileges
     const adminRoles = ["admin", "owner", "moderator"]
     if (!adminRoles.includes(user.role)) {
-      console.log("❌ [ADMIN-STATS] User does not have admin privileges:", user.role)
-      return NextResponse.json({ success: false, error: "Admin access required" }, { status: 403 })
+      console.log("❌ [ADMIN-STATS] User does not have admin privileges:", {
+        username: user.username,
+        role: user.role,
+        requiredRoles: adminRoles,
+      })
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Admin access required",
+          details: `Your role '${user.role}' does not have admin privileges. Required: ${adminRoles.join(", ")}`,
+        },
+        { status: 403 },
+      )
     }
 
     console.log("✅ [ADMIN-STATS] Admin access verified for:", user.username)
@@ -110,41 +105,6 @@ export async function GET(request: NextRequest) {
       )
     `
 
-    await sql`
-      CREATE TABLE IF NOT EXISTS pending_recipes (
-        id SERIAL PRIMARY KEY,
-        title VARCHAR(255) NOT NULL,
-        description TEXT,
-        ingredients JSONB,
-        instructions JSONB,
-        prep_time INTEGER,
-        cook_time INTEGER,
-        servings INTEGER,
-        difficulty VARCHAR(50),
-        tags JSONB,
-        image_url VARCHAR(500),
-        author_id INTEGER REFERENCES users(id),
-        status VARCHAR(50) DEFAULT 'pending',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `
-
-    await sql`
-      CREATE TABLE IF NOT EXISTS rejected_recipes (
-        id SERIAL PRIMARY KEY,
-        original_recipe_id INTEGER,
-        title VARCHAR(255) NOT NULL,
-        description TEXT,
-        ingredients JSONB,
-        instructions JSONB,
-        author_id INTEGER REFERENCES users(id),
-        rejection_reason TEXT,
-        rejected_by INTEGER REFERENCES users(id),
-        rejected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `
-
     console.log("✅ [ADMIN-STATS] Tables verified/created")
 
     // Get comprehensive statistics
@@ -156,7 +116,7 @@ export async function GET(request: NextRequest) {
         COUNT(*) as total_users,
         COUNT(CASE WHEN status = 'active' THEN 1 END) as active_users,
         COUNT(CASE WHEN is_verified = true THEN 1 END) as verified_users,
-        COUNT(CASE WHEN role = 'admin' OR role = 'owner' OR role = 'moderator' THEN 1 END) as admin_users,
+        COUNT(CASE WHEN role IN ('admin', 'owner', 'moderator') THEN 1 END) as admin_users,
         COUNT(CASE WHEN created_at >= NOW() - INTERVAL '30 days' THEN 1 END) as new_users_30d
       FROM users
     `
@@ -189,14 +149,6 @@ export async function GET(request: NextRequest) {
         ROUND(AVG(rating), 2) as average_rating,
         COUNT(CASE WHEN created_at >= NOW() - INTERVAL '30 days' THEN 1 END) as new_ratings_30d
       FROM ratings
-    `
-
-    // Pending recipes from pending_recipes table
-    const pendingRecipeStats = await sql`
-      SELECT 
-        COUNT(*) as pending_count
-      FROM pending_recipes
-      WHERE status = 'pending'
     `
 
     // Recent activity
@@ -244,9 +196,7 @@ export async function GET(request: NextRequest) {
       recipes: {
         total: Number.parseInt(recipeStats[0]?.total_recipes || "0"),
         approved: Number.parseInt(recipeStats[0]?.approved_recipes || "0"),
-        pending:
-          Number.parseInt(recipeStats[0]?.pending_recipes || "0") +
-          Number.parseInt(pendingRecipeStats[0]?.pending_count || "0"),
+        pending: Number.parseInt(recipeStats[0]?.pending_recipes || "0"),
         rejected: Number.parseInt(recipeStats[0]?.rejected_recipes || "0"),
         newThisMonth: Number.parseInt(recipeStats[0]?.new_recipes_30d || "0"),
       },
@@ -267,13 +217,20 @@ export async function GET(request: NextRequest) {
         action: activity.action,
         createdAt: activity.created_at,
       })),
+      currentUser: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        hasAdminAccess: true,
+      },
     }
 
-    console.log("✅ [ADMIN-STATS] Statistics compiled:", {
+    console.log("✅ [ADMIN-STATS] Statistics compiled successfully:", {
       totalUsers: stats.users.total,
       totalRecipes: stats.recipes.total,
       pendingRecipes: stats.recipes.pending,
       totalComments: stats.comments.total,
+      currentUserRole: user.role,
     })
 
     return NextResponse.json({
